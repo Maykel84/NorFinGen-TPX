@@ -1,0 +1,368 @@
+"""Warstwa persystencji — psycopg2 + Supabase Postgres.
+
+save_all(data) jest główną funkcją używaną jako persist_fn w generators/backfill.py
+(zob. run_backfill.py / run_daily.py). Przyjmuje instancję Order, SupplierInvoice,
+SalaryTransaction lub Voucher (to wszystko, co backfill.py faktycznie emituje) —
+albo równoważny dict (np. z .model_dump()), żeby zostać zgodna z sygnaturą
+save_all(data: dict) z zadania. Każdy zapis jest idempotentny: INSERT ... ON
+CONFLICT DO NOTHING na naturalnym kluczu biznesowym (np. invoice_number,
+(customer_id, order_date), (year, month), (date, description)) — wielokrotne
+uruchomienie run_backfill.py / run_daily.py dla tego samego zakresu dat nie
+tworzy duplikatów.
+
+seed_reference_data() zasila tabele Warstwy 1 (departments, employees,
+employments, customers, suppliers, accounts, vat_types, products) z
+norfingen.seed.roster — to dane referencyjne, nigdy emitowane przez generatory
+W2/W3, więc trzeba je wgrać raz na początku (run_backfill.py i run_daily()
+wywołują ją zawsze, idempotentnie, na wszelki wypadek pustej bazy).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional, Union
+
+import psycopg2
+
+from norfingen.config import settings
+from norfingen.generators.voucher import Voucher
+from norfingen.models.order import Order
+from norfingen.models.salary import SalaryTransaction
+from norfingen.models.supplier_invoice import SupplierInvoice
+from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, SUPPLIERS, numeric_id
+
+SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+
+# Plan kont NS 4102 i kody MVA nie są emitowane przez żaden generator — to
+# stałe dane referencyjne. Źródło: docs/norfingen_warstwa1_schemas.html.
+# (number, name, type, vat_type_id)
+ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
+    (1200, "Maskiner og anlegg", "ASSETS", None),
+    (1500, "Kundefordringer", "ASSETS", None),
+    (1910, "Bankinnskudd, driftskonto", "ASSETS", None),
+    (1940, "Bankinnskudd, skattetrekkskonto", "ASSETS", None),
+    (2000, "Aksjekapital", "EQUITY_AND_LIABILITY", None),
+    (2400, "Leverandørgjeld", "EQUITY_AND_LIABILITY", None),
+    (2700, "Skyldig arbeidsgiveravgift", "EQUITY_AND_LIABILITY", None),
+    (2710, "Skyldig lønn", "EQUITY_AND_LIABILITY", None),
+    (2740, "Skyldig skattetrekk", "EQUITY_AND_LIABILITY", None),
+    (2770, "Skyldig merverdiavgift", "EQUITY_AND_LIABILITY", None),
+    (2930, "Skyldige feriepenger", "EQUITY_AND_LIABILITY", None),
+    (3000, "Salgsinntekter, IT-tjenester", "OPERATING_INCOME", 3),
+    (3100, "Lisensintekter", "OPERATING_INCOME", 3),
+    (5000, "Lønn, fast", "OPERATING_EXPENSE", None),
+    (5400, "Arbeidsgiveravgift", "OPERATING_EXPENSE", None),
+    (5900, "Annen personalkostnad", "OPERATING_EXPENSE", None),
+    (6300, "Husleie og leie av lokaler", "OPERATING_EXPENSE", 1),
+    (6410, "Lisenser og programvare", "OPERATING_EXPENSE", 1),
+    (6540, "Inventar og utstyr", "OPERATING_EXPENSE", 1),
+    (6700, "Fremmed tjeneste", "OPERATING_EXPENSE", 1),
+    (6800, "Kontorkostnader", "OPERATING_EXPENSE", 1),
+    (6900, "Telefon og internett", "OPERATING_EXPENSE", 1),
+    (7000, "Reisekostnader", "OPERATING_EXPENSE", 1),
+    (7500, "Forsikringspremier", "OPERATING_EXPENSE", 1),
+]
+
+# (id, name, number, percentage, vat_code) — id zgodny z TripletexRef(id=...)
+# używanym w kodzie (SALES_VAT_TYPE_REF=3, PURCHASE_VAT_TYPE_REF=1).
+VAT_TYPES_SEED: list[tuple[int, str, Optional[str], float, str]] = [
+    (0, "Utenfor MVA-loven", "0", 0.0, "0"),
+    (1, "Inngående MVA, høy sats", "1", 25.0, "1"),
+    (3, "Utgående MVA, høy sats", "3", 25.0, "3"),
+    (6, "Fritatt / eksport", "6", 0.0, "6"),
+]
+
+NORWAY_COUNTRY_ID = 161
+NOK_CURRENCY_ID = 1
+
+_conn = None
+
+
+def get_connection():
+    """Leniwie tworzy i cache'uje jedno połączenie psycopg2 — backfill robi
+    setki/tysiące małych insertów, więc otwieranie nowego połączenia na każdy
+    obiekt byłoby zbyt kosztowne."""
+    global _conn
+    if _conn is None or _conn.closed:
+        if not settings.DATABASE_URL:
+            raise RuntimeError("DATABASE_URL nie jest ustawione w środowisku (.env)")
+        _conn = psycopg2.connect(settings.DATABASE_URL)
+    return _conn
+
+
+def close_connection() -> None:
+    global _conn
+    if _conn is not None and not _conn.closed:
+        _conn.close()
+    _conn = None
+
+
+def ensure_schema() -> None:
+    """Wykonuje db/schema.sql (16× CREATE TABLE IF NOT EXISTS) — bezpieczne do
+    wielokrotnego wywołania, idempotentne."""
+    sql = SCHEMA_PATH.read_text()
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(sql)
+    conn.commit()
+
+
+def seed_reference_data() -> None:
+    """Zasila tabele referencyjne Warstwy 1 z norfingen.seed.roster + statyczny
+    plan kont/kody MVA. Idempotentne (ON CONFLICT DO NOTHING) — bezpieczne do
+    wywołania przy każdym starcie run_backfill.py / run_daily()."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        for d in DEPARTMENTS:
+            cur.execute(
+                "INSERT INTO departments (id, name, number) VALUES (%s, %s, %s) "
+                "ON CONFLICT (id) DO NOTHING",
+                (d.number, d.name, str(d.number)),
+            )
+
+        for vat_type in VAT_TYPES_SEED:
+            cur.execute(
+                "INSERT INTO vat_types (id, name, number, percentage, vat_code) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                vat_type,
+            )
+
+        for account in ACCOUNTS_SEED:
+            cur.execute(
+                "INSERT INTO accounts (number, name, type, vat_type_id) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (number) DO NOTHING",
+                account,
+            )
+
+        for product in PRODUCTS:
+            cur.execute(
+                "INSERT INTO products (id, name, number, sales_price, vat_type_id, currency_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (numeric_id(product.number), product.name, product.number, product.default_price, 3, NOK_CURRENCY_ID),
+            )
+
+        for employee in EMPLOYEES:
+            emp_id = numeric_id(employee.number)
+            cur.execute(
+                "INSERT INTO employees (id, first_name, last_name, employee_number, department_id) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (emp_id, employee.first_name, employee.last_name, employee.number, employee.department_number),
+            )
+            cur.execute(
+                "INSERT INTO employments (employee_id, start_date, employment_type, remuneration_type, "
+                "weekly_working_hours, percentage, payroll_tax_zone) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (employee_id) DO NOTHING",
+                (emp_id, employee.start_date, "ORDINARY", "FIXED_SALARY", 37.5, 100.0, "ZONE_1"),
+            )
+
+        for customer in CUSTOMERS:
+            cur.execute(
+                "INSERT INTO customers (id, name, customer_number, city, country_id, currency_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (numeric_id(customer.number), customer.name, customer.number, customer.city, NORWAY_COUNTRY_ID, NOK_CURRENCY_ID),
+            )
+
+        for supplier in SUPPLIERS:
+            cur.execute(
+                "INSERT INTO suppliers (id, name, supplier_number, country_id, currency_id) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (numeric_id(supplier.number), supplier.name, supplier.number, NORWAY_COUNTRY_ID, NOK_CURRENCY_ID),
+            )
+
+    conn.commit()
+
+
+def _upsert_get_id(cur, insert_sql: str, insert_params: tuple, select_sql: str, select_params: tuple) -> int:
+    """INSERT ... ON CONFLICT DO NOTHING RETURNING id; jeśli konflikt (brak
+    wiersza), pobiera istniejące id przez select_sql. Wzorzec wymagany, bo
+    ON CONFLICT DO NOTHING nie zwraca wiersza gdy nic nie wstawiono."""
+    cur.execute(insert_sql, insert_params)
+    row = cur.fetchone()
+    if row is not None:
+        return row[0]
+    cur.execute(select_sql, select_params)
+    row = cur.fetchone()
+    return row[0]
+
+
+def _ref_id(ref) -> Optional[int]:
+    return ref.id if ref is not None else None
+
+
+def _save_order(cur, order: Order) -> None:
+    order_id = _upsert_get_id(
+        cur,
+        """INSERT INTO orders
+               (customer_id, order_date, delivery_date, invoice_date, invoices_due_in,
+                invoices_due_in_type, department_id, currency_id, is_prioritize_vat, comment, our_contact_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (customer_id, order_date) DO NOTHING
+           RETURNING id""",
+        (
+            order.customer.id,
+            order.orderDate,
+            order.deliveryDate,
+            order.invoiceDate,
+            order.invoicesDueIn,
+            order.invoicesDueInType.value,
+            _ref_id(order.department),
+            _ref_id(order.currency),
+            order.isPrioritizeVat,
+            order.comment,
+            _ref_id(order.ourContact),
+        ),
+        "SELECT id FROM orders WHERE customer_id = %s AND order_date = %s",
+        (order.customer.id, order.orderDate),
+    )
+
+    for line in order.orderLines:
+        cur.execute(
+            """INSERT INTO order_lines
+                   (order_id, product_id, count, unit_price_excluding_vat_currency, vat_type_id,
+                    discount, amount_excluding_vat_currency, amount_currency)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (order_id, product_id) DO NOTHING""",
+            (
+                order_id,
+                _ref_id(line.product),
+                line.count,
+                line.unitPriceExcludingVatCurrency,
+                _ref_id(line.vatType),
+                line.discount,
+                line.amountExcludingVatCurrency,
+                line.amountCurrency,
+            ),
+        )
+
+
+def _save_supplier_invoice(cur, invoice: SupplierInvoice) -> None:
+    cur.execute(
+        """INSERT INTO supplier_invoices
+               (invoice_number, supplier_id, invoice_date, received_date, payment_due_date,
+                amount_currency, amount_excluding_vat_currency, vat_amount_currency, currency_id,
+                account_number, vat_type_id, comment, status)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (invoice_number) DO NOTHING""",
+        (
+            invoice.invoiceNumber,
+            invoice.supplier.id,
+            invoice.invoiceDate,
+            invoice.receivedDate,
+            invoice.paymentDueDate,
+            invoice.amountCurrency,
+            invoice.amountExcludingVatCurrency,
+            invoice.vatAmountCurrency,
+            _ref_id(invoice.currency),
+            _ref_id(invoice.account),
+            _ref_id(invoice.vatType),
+            invoice.comment,
+            invoice.status.value,
+        ),
+    )
+
+
+def _save_salary_transaction(cur, transaction: SalaryTransaction) -> None:
+    transaction_id = _upsert_get_id(
+        cur,
+        """INSERT INTO salary_transactions (date, year, month, status)
+           VALUES (%s, %s, %s, %s)
+           ON CONFLICT (year, month) DO NOTHING
+           RETURNING id""",
+        (transaction.date, transaction.year, transaction.month, transaction.status.value),
+        "SELECT id FROM salary_transactions WHERE year = %s AND month = %s",
+        (transaction.year, transaction.month),
+    )
+
+    for payslip in transaction.payslips:
+        payslip_id = _upsert_get_id(
+            cur,
+            """INSERT INTO payslips (transaction_id, employee_id, date, amount)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (transaction_id, employee_id) DO NOTHING
+               RETURNING id""",
+            (transaction_id, payslip.employee.id, payslip.date, payslip.amount),
+            "SELECT id FROM payslips WHERE transaction_id = %s AND employee_id = %s",
+            (transaction_id, payslip.employee.id),
+        )
+
+        for spec in payslip.specifications:
+            cur.execute(
+                """INSERT INTO salary_specifications (payslip_id, wage_type_id, description, amount)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (payslip_id, wage_type_id) DO NOTHING""",
+                (payslip_id, spec.wageType.id, spec.description, spec.amount),
+            )
+
+
+def _save_voucher(cur, voucher: Voucher) -> None:
+    voucher_id = _upsert_get_id(
+        cur,
+        """INSERT INTO vouchers (date, description, voucher_type)
+           VALUES (%s, %s, %s)
+           ON CONFLICT (date, description) DO NOTHING
+           RETURNING id""",
+        (voucher.date, voucher.description, voucher.voucherType.value),
+        "SELECT id FROM vouchers WHERE date = %s AND description = %s",
+        (voucher.date, voucher.description),
+    )
+
+    for posting in voucher.postings:
+        cur.execute(
+            """INSERT INTO postings
+                   (voucher_id, date, description, account_number, amount, currency,
+                    vat_type_id, vat_amount, customer_id, supplier_id, employee_id, department_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (voucher_id, account_number, amount) DO NOTHING""",
+            (
+                voucher_id,
+                posting.date,
+                posting.description,
+                posting.account.number,
+                posting.amount,
+                posting.currency,
+                _ref_id(posting.vatType),
+                posting.vatAmount,
+                _ref_id(posting.customer),
+                _ref_id(posting.supplier),
+                _ref_id(posting.employee),
+                _ref_id(posting.department),
+            ),
+        )
+
+
+def _model_from_dict(data: dict):
+    """Rekonstrukcja modelu Pydantic z dict (np. .model_dump()) na podstawie
+    charakterystycznych pól — pozwala save_all() przyjmować dict zgodnie z
+    sygnaturą save_all(data: dict) z zadania, nie tylko żywe instancje modeli."""
+    if "voucherType" in data:
+        return Voucher.model_validate(data)
+    if "orderLines" in data:
+        return Order.model_validate(data)
+    if "invoiceNumber" in data:
+        return SupplierInvoice.model_validate(data)
+    if "payslips" in data:
+        return SalaryTransaction.model_validate(data)
+    raise ValueError(f"save_all: nie można rozpoznać typu danych z kluczy {sorted(data)}")
+
+
+def save_all(data: Union[Order, SupplierInvoice, SalaryTransaction, Voucher, dict]) -> None:
+    """Idempotentny zapis jednego obiektu wygenerowanego przez generatory W2/W3
+    do Supabase. Używana jako persist_fn w generators/backfill.py — backfill
+    woła ją raz na każdy Order/SupplierInvoice/SalaryTransaction/Voucher,
+    razem z dzieckami (orderLines/payslips+specifications/postings)."""
+    if isinstance(data, dict):
+        data = _model_from_dict(data)
+
+    conn = get_connection()
+    with conn.cursor() as cur:
+        if isinstance(data, Order):
+            _save_order(cur, data)
+        elif isinstance(data, SupplierInvoice):
+            _save_supplier_invoice(cur, data)
+        elif isinstance(data, SalaryTransaction):
+            _save_salary_transaction(cur, data)
+        elif isinstance(data, Voucher):
+            _save_voucher(cur, data)
+        else:
+            raise TypeError(f"save_all: nieobsługiwany typ {type(data)!r}")
+    conn.commit()

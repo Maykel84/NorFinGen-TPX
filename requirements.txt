@@ -1,0 +1,7 @@
+pydantic>=2.6,<3
+SQLAlchemy>=2.0,<3
+psycopg2-binary>=2.9,<3
+python-dotenv>=1.0,<2
+requests>=2.31,<3
+Faker>=24.0,<25
+python-dateutil>=2.9,<3

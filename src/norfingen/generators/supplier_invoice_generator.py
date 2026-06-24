@@ -1,0 +1,145 @@
+"""Generator miesięcznych SupplierInvoice (Warstwa 2) + Vouchery kosztowe (Warstwa 3).
+
+W przeciwieństwie do Order — Voucher dla SupplierInvoice musi być tworzony jawnie
+(zob. docs/norfingen_warstwa3_schemas.html, wzorce W2/W3). Ten moduł zwraca
+zarówno listę faktur (per sygnatura z zadania), jak i pomocniczą funkcję budującą
+odpowiadający im Voucher — używaną przez backfill.py przy zapisie do ledgera.
+
+Reguła L05 (Sandvik IT Solutions): jeśli kwota netto >= capitalization_threshold
+(30 000 NOK) → konto kapitalizacji (1200, środek trwały), inaczej → zwykłe konto
+kosztowe (6540).
+"""
+
+from __future__ import annotations
+
+import calendar
+import random
+from datetime import date
+
+from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid, expected_vat_amount
+from norfingen.models.base import TripletexRef
+from norfingen.models.supplier_invoice import SupplierInvoice
+from norfingen.seed.roster import SUPPLIERS, SupplierSeed, numeric_id
+
+GROSS_UP_FACTOR = 1.25  # amountCurrency (incl. VAT) = netto * 1.25, VAT 25%
+
+QUARTERLY_MONTHS_MAR_JUN_SEP_DEC = {3, 6, 9, 12}
+QUARTERLY_MONTHS_JAN_APR_JUL_OCT = {1, 4, 7, 10}
+SANDVIK_MIN_PER_YEAR = 3
+SANDVIK_MAX_PER_YEAR = 5
+
+
+def _sandvik_months_for_year(year: int) -> set[int]:
+    """L05 — 3-5x rocznie w losowych miesiącach, deterministyczne per rok."""
+    rng = random.Random(f"L05-{year}")
+    count = rng.randint(SANDVIK_MIN_PER_YEAR, SANDVIK_MAX_PER_YEAR)
+    return set(rng.sample(range(1, 13), count))
+
+
+def _month_day(year: int, month: int, day: int) -> date:
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(day, last_day))
+
+
+def _next_invoice_number(supplier: SupplierSeed, year: int, sequence: int) -> str:
+    return f"{supplier.number}-{year}-{sequence:03d}"
+
+
+def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierInvoice]:
+    invoices: list[SupplierInvoice] = []
+    sandvik_months = _sandvik_months_for_year(year)
+    rng = random.Random(f"supplier-invoices-{year}-{month}")
+
+    for supplier in SUPPLIERS:
+        seq = month  # jedna faktura per miesiąc dla większości dostawców -> wystarczy numer miesiąca
+
+        if supplier.number == "L01":
+            netto = supplier.amount_min  # stałe 85 000
+            invoice_date = _month_day(year, month, 1)
+        elif supplier.number == "L02":
+            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            invoice_date = _month_day(year, month, 5)
+        elif supplier.number == "L03":
+            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            invoice_date = _month_day(year, month, 15)
+        elif supplier.number == "L04":
+            netto = supplier.amount_min  # stałe 45 000
+            invoice_date = _month_day(year, month, 1)
+        elif supplier.number == "L05":
+            if month not in sandvik_months:
+                continue
+            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            invoice_date = _month_day(year, month, rng.randint(1, 28))
+        elif supplier.number == "L06":
+            if month not in QUARTERLY_MONTHS_MAR_JUN_SEP_DEC:
+                continue
+            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            invoice_date = _month_day(year, month, 10)
+        elif supplier.number == "L07":
+            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            invoice_date = _month_day(year, month, 20)
+        elif supplier.number == "L08":
+            if month not in QUARTERLY_MONTHS_JAN_APR_JUL_OCT:
+                continue
+            netto = supplier.amount_min  # stałe 38 000
+            invoice_date = _month_day(year, month, 1)
+        else:
+            raise ValueError(f"Nieznany dostawca: {supplier.number}")
+
+        netto = round(netto, 2)
+        account_number = _account_for_invoice(supplier, netto)
+
+        invoice = SupplierInvoice(
+            invoiceNumber=_next_invoice_number(supplier, year, seq),
+            supplier=TripletexRef(id=numeric_id(supplier.number)),
+            invoiceDate=invoice_date,
+            amountCurrency=round(netto * GROSS_UP_FACTOR, 2),
+            account=TripletexRef(id=account_number),
+            comment=supplier.cost_category,
+        )
+        invoices.append(invoice)
+
+    return invoices
+
+
+def _account_for_invoice(supplier: SupplierSeed, netto: float) -> int:
+    if (
+        supplier.capitalization_threshold is not None
+        and netto >= supplier.capitalization_threshold
+        and supplier.capitalization_account is not None
+    ):
+        return supplier.capitalization_account
+    return supplier.gl_account
+
+
+def build_voucher_for_invoice(invoice: SupplierInvoice, supplier: SupplierSeed) -> Voucher:
+    """Buduje Voucher INCOMING_INVOICE dla SupplierInvoice — generator jawnie
+    (wzorce W2/W3): DR konto kosztowe/kapitalizacji (excl. VAT, vatType "1") /
+    CR 2400 Leverandørgjeld (incl. VAT)."""
+    netto = round(invoice.amountExcludingVatCurrency, 2)
+    account_number = _account_for_invoice(supplier, netto)
+    vat_amount = expected_vat_amount(netto)
+
+    voucher = Voucher(
+        date=invoice.invoiceDate,
+        description=f"{invoice.invoiceNumber} — {supplier.name}",
+        voucherType=VoucherType.INCOMING_INVOICE,
+        postings=[
+            Posting(
+                date=invoice.invoiceDate,
+                account=acct(account_number),
+                amount=netto,
+                vatType=invoice.vatType,
+                vatAmount=vat_amount,
+                supplier=invoice.supplier,
+            ),
+            Posting(
+                date=invoice.invoiceDate,
+                account=acct(2400),
+                amount=-round(invoice.amountCurrency, 2),
+                supplier=invoice.supplier,
+            ),
+        ],
+    )
+    assert_voucher_valid(voucher)
+    return voucher

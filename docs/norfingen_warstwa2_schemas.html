@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NorFinGen — Warstwa 2: Dokumenty źródłowe</title>
+<style>
+  :root {
+    --bg: #13141a;
+    --surface: #1c1e27;
+    --surface2: #242633;
+    --border: #2e3042;
+    --border-soft: #252737;
+    --text: #d4d2c9;
+    --text-muted: #7a7894;
+    --text-dim: #4a4860;
+
+    --blue: #5b8def;
+    --blue-dim: #1e2d4a;
+    --blue-soft: #2a3a5c;
+    --green: #4caf82;
+    --green-dim: #152d22;
+    --amber: #d4924a;
+    --amber-dim: #2e1f0e;
+    --purple: #8b6fd4;
+    --purple-dim: #1e1830;
+    --red: #c45f5f;
+    --teal: #4ab8c4;
+    --teal-dim: #102830;
+
+    --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 6px;
+    z-index: 100;
+    overflow-x: auto;
+  }
+
+  .nav-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    margin-right: 16px;
+    padding-right: 16px;
+    border-right: 1px solid var(--border);
+  }
+
+  .nav-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    transition: all 0.15s;
+  }
+  .nav-pill:hover { opacity: 0.85; }
+
+  .pill-src     { background: #152d1e; color: var(--green);  border-color: #1e3d2a; }
+  .pill-payroll { background: #1e2030; color: var(--teal);   border-color: #1a3040; }
+  .pill-voucher { background: var(--amber-dim); color: var(--amber); border-color: #3a2a14; }
+  .pill-pl      { background: var(--purple-dim); color: var(--purple); border-color: #2d2248; }
+
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.7; }
+
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 80px 24px 80px;
+  }
+
+  .page-header {
+    margin-bottom: 48px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .page-header h1 {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .page-header p { color: var(--text-muted); font-size: 13px; }
+
+  .layer-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #152d1e;
+    border: 1px solid #1e3d2a;
+    color: var(--green);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 12px;
+  }
+
+  .summary-bar {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 32px;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .stat-box { flex: 1; min-width: 110px; text-align: center; }
+
+  .stat-val {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 700;
+    display: block;
+    line-height: 1.2;
+  }
+
+  .stat-lbl { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  .entity-section {
+    margin-bottom: 56px;
+    scroll-margin-top: 70px;
+  }
+
+  .entity-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .entity-header h2 {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .entity-header .endpoint {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--surface2);
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  .entity-desc {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 16px;
+    max-width: 680px;
+  }
+
+  .type-src     h2 { color: var(--green);  }
+  .type-payroll h2 { color: var(--teal);   }
+  .type-voucher h2 { color: var(--amber);  }
+  .type-pl      h2 { color: var(--purple); }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .tag-req  { background: #2d1c1c; color: var(--red);   border: 1px solid #4a2020; }
+  .tag-auto { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+  .tag-no   { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+  thead {
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  thead th {
+    padding: 9px 14px;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border-soft);
+    transition: background 0.1s;
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+
+  tbody td { padding: 9px 14px; vertical-align: top; }
+
+  td.field-name  { font-family: var(--font-mono); font-size: 12px; color: var(--blue); white-space: nowrap; }
+  td.field-type  { font-family: var(--font-mono); font-size: 11px; color: var(--amber); white-space: nowrap; }
+  td.field-value { font-size: 12px; color: var(--text); max-width: 340px; }
+
+  .mono-val { font-family: var(--font-mono); font-size: 11px; color: var(--green); }
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 12px 0;
+    line-height: 1.7;
+  }
+  .callout strong { color: var(--amber); font-weight: 600; }
+
+  .callout-green {
+    border-left-color: var(--green);
+  }
+  .callout-green strong { color: var(--green); }
+
+  .callout-red {
+    border-left-color: var(--red);
+  }
+  .callout-red strong { color: var(--red); }
+
+  .subsection-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 20px 0 8px;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 48px 0;
+  }
+
+  /* Voucher pattern block */
+  .voucher-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.9;
+  }
+
+  .voucher-block .v-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--amber);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .voucher-block .v-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .v-dr { color: var(--red);          }
+  .v-cr { color: var(--green);        }
+  .v-ac { color: var(--blue);         }
+  .v-vt { color: var(--amber);        }
+  .v-cm { color: var(--text-dim);     font-size: 11px; }
+
+  /* P&L */
+  .pl-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 2;
+  }
+
+  .pl-income   { color: var(--green);  }
+  .pl-cost     { color: var(--red);    }
+  .pl-divider  { color: var(--border); letter-spacing: 0; }
+  .pl-result   { color: var(--purple); font-weight: 700; }
+  .pl-margin   { color: var(--amber);  }
+  .pl-label    { color: var(--text-muted); }
+  .pl-note     { color: var(--text-dim); font-size: 11px; }
+
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 0;
+  }
+  .flow-arrow span { color: var(--amber); }
+
+  /* month badge */
+  .month-badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: #1a2440;
+    color: var(--teal);
+    border: 1px solid #1e3040;
+  }
+
+  .month-badge-red {
+    background: #2d1c1c;
+    color: var(--red);
+    border-color: #4a2020;
+  }
+
+  .special-badge {
+    background: #2a200e;
+    color: var(--amber);
+    border: 1px solid #3a2a14;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+
+  footer {
+    text-align: center;
+    padding: 32px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    margin-top: 48px;
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="nav-title">NorFinGen / W2</span>
+  <a href="#product"   class="nav-pill pill-src"><span class="dot"></span>Product</a>
+  <a href="#order"     class="nav-pill pill-src"><span class="dot"></span>Order + OrderLine</a>
+  <a href="#supplier-invoice" class="nav-pill pill-src"><span class="dot"></span>SupplierInvoice</a>
+  <a href="#salary"    class="nav-pill pill-payroll"><span class="dot"></span>SalaryTransaction</a>
+  <a href="#feriepenger" class="nav-pill pill-payroll"><span class="dot"></span>Feriepenger</a>
+  <a href="#voucher-patterns" class="nav-pill pill-voucher"><span class="dot"></span>Voucher Patterns</a>
+  <a href="#pl"        class="nav-pill pill-pl"><span class="dot"></span>P&amp;L</a>
+</nav>
+
+<main>
+
+  <div class="page-header">
+    <div class="layer-badge"><span class="dot"></span> Warstwa 2 — Dokumenty źródłowe</div>
+    <h1>NorFinGen — Field-level schema</h1>
+    <p>Encje Tier 1 · Source of truth: Tripletex Public API v2 · Warstwa 2 zależy od wszystkich encji Warstwy 1</p>
+  </div>
+
+  <div class="summary-bar">
+    <div class="stat-box">
+      <span class="stat-val" style="color:var(--green)">5</span>
+      <div class="stat-lbl">encji W2</div>
+    </div>
+    <div class="stat-box">
+      <span class="stat-val" style="color:var(--blue)">6</span>
+      <div class="stat-lbl">produktów</div>
+    </div>
+    <div class="stat-box">
+      <span class="stat-val" style="color:var(--green)">~133</span>
+      <div class="stat-lbl">Order / rok</div>
+    </div>
+    <div class="stat-box">
+      <span class="stat-val" style="color:var(--amber)">~48</span>
+      <div class="stat-lbl">SupplierInvoice / rok</div>
+    </div>
+    <div class="stat-box">
+      <span class="stat-val" style="color:var(--teal)">12</span>
+      <div class="stat-lbl">SalaryTransaction / rok</div>
+    </div>
+    <div class="stat-box">
+      <span class="stat-val" style="color:var(--purple)">~24,5M</span>
+      <div class="stat-lbl">NOK przychodów / rok</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ PRODUCT -->
+  <div class="entity-section type-src" id="product">
+    <div class="entity-header">
+      <h2>Product</h2>
+      <span class="endpoint">POST /v2/product</span>
+    </div>
+    <p class="entity-desc">Prerekvizyt dla OrderLine. Standaryzuje ceny i VatType na poziomie katalogu — OrderLine może nadpisać cenę, ale dziedziczy VAT z produktu jeśli nie poda własnego.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pole</th><th>Typ</th><th>Wymagane</th><th>Wartość NorFinGen</th></tr></thead>
+        <tbody>
+          <tr><td class="field-name">id</td><td class="field-type">integer</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">sekwencyjnie</td></tr>
+          <tr><td class="field-name">name</td><td class="field-type">string</td><td><span class="tag tag-req">tak</span></td><td class="field-value">nazwa usługi / produktu</td></tr>
+          <tr><td class="field-name">number</td><td class="field-type">string</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">"P01" – "P06"</td></tr>
+          <tr><td class="field-name">description</td><td class="field-type">string</td><td><span class="tag tag-no">nie</span></td><td class="field-value">krótki opis</td></tr>
+          <tr><td class="field-name">salesPrice</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">domyślna cena excl. VAT — nadpisywana w OrderLine</td></tr>
+          <tr><td class="field-name">vatType</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">vatCode "3" (25%) dla wszystkich</td></tr>
+          <tr><td class="field-name">currency</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">{code: "NOK"}</td></tr>
+          <tr><td class="field-name">isInactive</td><td class="field-type">boolean</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">false</td></tr>
+          <tr><td class="field-name">url</td><td class="field-type">string</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">/v2/product/{id}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">Katalog produktów NorFinGen</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Nazwa</th><th>Typ</th><th>Konto GL</th><th>Cena domyślna (NOK excl. VAT)</th></tr></thead>
+        <tbody>
+          <tr><td class="field-type">P01</td><td>IT Support — Enterprise</td><td>Subskrypcja mies.</td><td class="mono-val">3000</td><td class="mono-val">220 000</td></tr>
+          <tr><td class="field-type">P02</td><td>IT Support — Mid-market</td><td>Subskrypcja mies.</td><td class="mono-val">3000</td><td class="mono-val">160 000</td></tr>
+          <tr><td class="field-type">P03</td><td>IT Support — SMB</td><td>Subskrypcja mies.</td><td class="mono-val">3000</td><td class="mono-val">75 000</td></tr>
+          <tr><td class="field-type">P04</td><td>Software License — Enterprise</td><td>Licencja mies.</td><td class="mono-val">3100</td><td class="mono-val">95 000</td></tr>
+          <tr><td class="field-type">P05</td><td>Software License — Mid-market</td><td>Licencja mies.</td><td class="mono-val">3100</td><td class="mono-val">70 000</td></tr>
+          <tr><td class="field-type">P06</td><td>IT Consulting</td><td>Projekt / zlecenie</td><td class="mono-val">3000</td><td class="mono-val">zmienne</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ═══════════ ORDER + ORDERLINE -->
+  <div class="entity-section type-src" id="order">
+    <div class="entity-header">
+      <h2>Order + OrderLine</h2>
+      <span class="endpoint">POST /v2/order &nbsp;·&nbsp; POST /v2/order/orderline</span>
+    </div>
+    <p class="entity-desc">Dokumenty sprzedaży. Wypełniony <code style="font-family:var(--font-mono);color:var(--blue)">invoiceDate</code> wyzwala automatyczne utworzenie Vouchera przez Tripletex — generator nie tworzy Vouchera sprzedaży ręcznie.</p>
+
+    <div class="subsection-label">Order</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pole</th><th>Typ</th><th>Wymagane</th><th>Wartość NorFinGen</th></tr></thead>
+        <tbody>
+          <tr><td class="field-name">id</td><td class="field-type">integer</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">sekwencyjnie</td></tr>
+          <tr><td class="field-name">customer</td><td class="field-type">object ref</td><td><span class="tag tag-req">tak</span></td><td class="field-value mono-val">{id: N} — K01–K12</td></tr>
+          <tr><td class="field-name">orderDate</td><td class="field-type">date</td><td><span class="tag tag-req">tak</span></td><td class="field-value">1. dzień miesiąca</td></tr>
+          <tr><td class="field-name">deliveryDate</td><td class="field-type">date</td><td><span class="tag tag-no">nie</span></td><td class="field-value">ostatni dzień miesiąca</td></tr>
+          <tr><td class="field-name">invoiceDate</td><td class="field-type">date</td><td><span class="tag tag-no">nie</span></td><td class="field-value">= orderDate — wyzwala Voucher</td></tr>
+          <tr><td class="field-name">invoicesDueIn</td><td class="field-type">integer</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">30</td></tr>
+          <tr><td class="field-name">invoicesDueInType</td><td class="field-type">enum</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">DAYS</td></tr>
+          <tr><td class="field-name">orderLines</td><td class="field-type">array</td><td><span class="tag tag-no">nie</span></td><td class="field-value">min. 1 linia (patrz OrderLine)</td></tr>
+          <tr><td class="field-name">department</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">{id: 1} — Salg</td></tr>
+          <tr><td class="field-name">currency</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">{code: "NOK"}</td></tr>
+          <tr><td class="field-name">isPrioritizeVat</td><td class="field-type">boolean</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">false</td></tr>
+          <tr><td class="field-name">comment</td><td class="field-type">string</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">"Månedlig faktura — [mies. rok]"</td></tr>
+          <tr><td class="field-name">ourContact</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value">E01 lub E11 (Salg)</td></tr>
+          <tr><td class="field-name">url</td><td class="field-type">string</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">/v2/order/{id}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">OrderLine</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pole</th><th>Typ</th><th>Wymagane</th><th>Wartość NorFinGen</th></tr></thead>
+        <tbody>
+          <tr><td class="field-name">id</td><td class="field-type">integer</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">sekwencyjnie</td></tr>
+          <tr><td class="field-name">order</td><td class="field-type">object ref</td><td><span class="tag tag-req">tak</span></td><td class="field-value mono-val">{id: N} — parent Order</td></tr>
+          <tr><td class="field-name">product</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">{id: N} — P01–P06</td></tr>
+          <tr><td class="field-name">count</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">1.0 (subskrypcje) / zmienne (konsulting)</td></tr>
+          <tr><td class="field-name">unitPriceExcludingVatCurrency</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">cena jednostkowa excl. VAT</td></tr>
+          <tr><td class="field-name">vatType</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">vatCode "3" (25%)</td></tr>
+          <tr><td class="field-name">discount</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">0.0</td></tr>
+          <tr><td class="field-name">amountExcludingVatCurrency</td><td class="field-type">number</td><td><span class="tag tag-auto">auto</span></td><td class="field-value">count × unitPrice</td></tr>
+          <tr><td class="field-name">amountCurrency</td><td class="field-type">number</td><td><span class="tag tag-auto">auto</span></td><td class="field-value">kwota incl. VAT (wyliczana)</td></tr>
+          <tr><td class="field-name">url</td><td class="field-type">string</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">/v2/order/orderline/{id}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">Wzorce generacji miesięcznej</div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Typ</th><th>Klienci</th><th>Linie</th><th>Rytm</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>A — IT Support</strong></td>
+            <td>K01–K05, K07–K09, K11, K12</td>
+            <td>1 linia (P01/P02/P03 per segment)</td>
+            <td>co miesiąc, 1. dzień</td>
+          </tr>
+          <tr>
+            <td><strong>B — IT Support + Licencja</strong></td>
+            <td>K01, K03, K07, K11</td>
+            <td>2 linie (P0x + P04/P05) w jednym Order</td>
+            <td>co miesiąc, 1. dzień</td>
+          </tr>
+          <tr>
+            <td><strong>C — Licencja only</strong></td>
+            <td>K10</td>
+            <td>1 linia (P05)</td>
+            <td>co miesiąc, 1. dzień</td>
+          </tr>
+          <tr>
+            <td><strong>D — Consulting</strong></td>
+            <td>K06</td>
+            <td>1 linia (P06, count = dni pracy)</td>
+            <td>2–4 × rocznie, losowy miesiąc</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">Projekcja przychodów miesięcznych</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Segment</th><th>Klienci</th><th>IT Support / mies.</th><th>Licencja / mies.</th><th>Łącznie / mies.</th></tr></thead>
+        <tbody>
+          <tr><td>Enterprise</td><td>K01, K03, K08, K11</td><td class="mono-val">4 × 220 000</td><td class="mono-val">3 × 95 000</td><td class="mono-val">1 165 000</td></tr>
+          <tr><td>Mid-market</td><td>K02, K05, K07</td><td class="mono-val">3 × 160 000</td><td class="mono-val">1 × 70 000</td><td class="mono-val">550 000</td></tr>
+          <tr><td>License only</td><td>K10</td><td class="mono-val">—</td><td class="mono-val">1 × 70 000</td><td class="mono-val">70 000</td></tr>
+          <tr><td>SMB</td><td>K04, K09, K12</td><td class="mono-val">3 × 75 000</td><td class="mono-val">—</td><td class="mono-val">225 000</td></tr>
+          <tr><td>Consulting</td><td>K06</td><td class="mono-val">~35 000 śr.</td><td class="mono-val">—</td><td class="mono-val">35 000</td></tr>
+          <tr style="background:var(--surface2)"><td><strong>Razem</strong></td><td></td><td></td><td></td><td class="mono-val"><strong>~2 045 000</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout callout-green">
+      <strong>Roczna projekcja:</strong> ~24,5M NOK — 70% docelowych 35M NOK. Podział strumieni: usługi 3000 (~70%) / licencje 3100 (~30%). Kalibracja kwot — Etap 3.
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ═══════════ SUPPLIER INVOICE -->
+  <div class="entity-section type-src" id="supplier-invoice">
+    <div class="entity-header">
+      <h2>SupplierInvoice</h2>
+      <span class="endpoint">POST /v2/supplierInvoice</span>
+    </div>
+    <p class="entity-desc">Dokumenty kosztowe. W przeciwieństwie do Order — Voucher musi być tworzony jawnie. Generator podaje konto kosztowe przy każdej fakturze.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pole</th><th>Typ</th><th>Wymagane</th><th>Wartość NorFinGen</th></tr></thead>
+        <tbody>
+          <tr><td class="field-name">id</td><td class="field-type">integer</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">sekwencyjnie</td></tr>
+          <tr><td class="field-name">invoiceNumber</td><td class="field-type">string</td><td><span class="tag tag-req">tak</span></td><td class="field-value mono-val">"[L0x]-YYYY-NNN"</td></tr>
+          <tr><td class="field-name">supplier</td><td class="field-type">object ref</td><td><span class="tag tag-req">tak</span></td><td class="field-value mono-val">{id: N} — L01–L08</td></tr>
+          <tr><td class="field-name">invoiceDate</td><td class="field-type">date</td><td><span class="tag tag-req">tak</span></td><td class="field-value">data faktury od dostawcy</td></tr>
+          <tr><td class="field-name">receivedDate</td><td class="field-type">date</td><td><span class="tag tag-no">nie</span></td><td class="field-value">= invoiceDate</td></tr>
+          <tr><td class="field-name">paymentDueDate</td><td class="field-type">date</td><td><span class="tag tag-no">nie</span></td><td class="field-value">invoiceDate + 30 dni</td></tr>
+          <tr><td class="field-name">amountCurrency</td><td class="field-type">number</td><td><span class="tag tag-req">tak</span></td><td class="field-value">kwota incl. VAT</td></tr>
+          <tr><td class="field-name">amountExcludingVatCurrency</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">kwota excl. VAT (wyliczana)</td></tr>
+          <tr><td class="field-name">vatAmountCurrency</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">kwota VAT — amount × 0.20</td></tr>
+          <tr><td class="field-name">currency</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">{code: "NOK"}</td></tr>
+          <tr><td class="field-name">account</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value">konto kosztowe DR — 6xxx/7xxx lub 1200</td></tr>
+          <tr><td class="field-name">vatType</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">vatCode "1" — input VAT 25%</td></tr>
+          <tr><td class="field-name">comment</td><td class="field-type">string</td><td><span class="tag tag-no">nie</span></td><td class="field-value">opis faktury</td></tr>
+          <tr><td class="field-name">voucher</td><td class="field-type">object ref</td><td><span class="tag tag-auto">auto</span></td><td class="field-value">tworzony przy zatwierdzeniu</td></tr>
+          <tr><td class="field-name">status</td><td class="field-type">enum</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">UNPAID → PAID</td></tr>
+          <tr><td class="field-name">url</td><td class="field-type">string</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">/v2/supplierInvoice/{id}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">Rytm i kwoty — 8 dostawców</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Supplier</th><th>Konto GL</th><th>Kwota netto (NOK)</th><th>Rytm</th><th>Uwagi</th></tr></thead>
+        <tbody>
+          <tr><td class="field-type">L01</td><td>Microsoft Norge AS</td><td class="mono-val">6410</td><td class="mono-val">85 000</td><td>miesięcznie, 1.</td><td></td></tr>
+          <tr><td class="field-type">L02</td><td>Telenor Norge AS</td><td class="mono-val">6900</td><td class="mono-val">~18 000 ±5%</td><td>miesięcznie, 5.</td><td></td></tr>
+          <tr><td class="field-type">L03</td><td>Reitan Convenience AS</td><td class="mono-val">6800</td><td class="mono-val">8 000–14 000</td><td>miesięcznie, ~15.</td><td>losowe w zakresie</td></tr>
+          <tr><td class="field-type">L04</td><td>Statsbygg</td><td class="mono-val">6300</td><td class="mono-val">45 000</td><td>miesięcznie, 1.</td><td>stały czynsz</td></tr>
+          <tr><td class="field-type">L05</td><td>Sandvik IT Solutions AS</td><td class="mono-val">6540 / 1200</td><td class="mono-val">15 000–80 000</td><td>3–5 × rocznie</td><td style="color:var(--amber);font-size:11px">⚠ split kapitalizacja</td></tr>
+          <tr><td class="field-type">L06</td><td>Advokatfirma Thommessen</td><td class="mono-val">6700</td><td class="mono-val">25 000–60 000</td><td>kwartalnie (Mar/Jun/Sep/Dec)</td><td></td></tr>
+          <tr><td class="field-type">L07</td><td>Avis Norge AS</td><td class="mono-val">7000</td><td class="mono-val">12 000–28 000</td><td>miesięcznie, ~20.</td><td>wyższe w Q1/Q3</td></tr>
+          <tr><td class="field-type">L08</td><td>Nordic Insurance Partners AS</td><td class="mono-val">7500</td><td class="mono-val">38 000</td><td>kwartalnie (Jan/Apr/Jul/Oct)</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>Przypadek L05 — split kapitalizacja:</strong> Jeśli <span style="font-family:var(--font-mono)">amountExcludingVat &lt; 30 000 NOK</span> → DR 6540 (koszt okresu). Jeśli <span style="font-family:var(--font-mono)">≥ 30 000 NOK</span> → DR 1200 (środek trwały). Dla kwot ≥ 30k: jawny Voucher z podziałem postingów zamiast pola <span style="font-family:var(--font-mono)">account</span> na poziomie SupplierInvoice.
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Kategoria</th><th>Netto / mies. (NOK)</th></tr></thead>
+        <tbody>
+          <tr><td>L01 Microsoft — licencje</td><td class="mono-val">85 000</td></tr>
+          <tr><td>L02 Telenor — telecom</td><td class="mono-val">18 000</td></tr>
+          <tr><td>L03 Reitan — biuro</td><td class="mono-val">11 000</td></tr>
+          <tr><td>L04 Statsbygg — czynsz</td><td class="mono-val">45 000</td></tr>
+          <tr><td>L05 Sandvik — sprzęt (śr.)</td><td class="mono-val">18 000</td></tr>
+          <tr><td>L06 Thommessen — prawne (śr.)</td><td class="mono-val">14 000</td></tr>
+          <tr><td>L07 Avis — transport (śr.)</td><td class="mono-val">18 000</td></tr>
+          <tr><td>L08 Nordic Insurance (śr.)</td><td class="mono-val">13 000</td></tr>
+          <tr style="background:var(--surface2)"><td><strong>Razem / mies.</strong></td><td class="mono-val"><strong>~222 000</strong></td></tr>
+          <tr style="background:var(--surface2)"><td><strong>Razem / rok</strong></td><td class="mono-val"><strong>~2 664 000</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ═══════════ SALARY -->
+  <div class="entity-section type-payroll" id="salary">
+    <div class="entity-header">
+      <h2>SalaryTransaction + Payslip</h2>
+      <span class="endpoint">POST /v2/salaryV2/transaction &nbsp;·&nbsp; POST /v2/salaryV2/payslip</span>
+    </div>
+    <p class="entity-desc">Miesięczna lista płac. Jeden SalaryTransaction na miesiąc, jeden Payslip na pracownika. Generator tworzy Vouchery jawnie — dwa osobne: lista płac + AGA.</p>
+
+    <div class="subsection-label">Model norweskiego payrollu</div>
+    <div class="voucher-block">
+      <div style="font-family:var(--font-mono);font-size:12px;line-height:2;color:var(--text-muted)">
+        Brutto (lønn)<br>
+        &nbsp;&nbsp;├─ <span class="v-dr">Skattetrekk (~33%)</span> &nbsp;→&nbsp; <span class="v-ac">2740</span> &nbsp;→&nbsp; przelew → <span class="v-ac">1940</span> (skattetrekkskonto)<br>
+        &nbsp;&nbsp;└─ <span class="v-cr">Netto (wypłata)</span> &nbsp;→&nbsp; <span class="v-ac">2710</span> &nbsp;→&nbsp; przelew → <span class="v-ac">1910</span> (driftskonto)<br><br>
+        Osobno: <span style="color:var(--teal)">AGA pracodawcy (14,1% od brutto)</span><br>
+        &nbsp;&nbsp;DR <span class="v-ac">5400</span> → CR <span class="v-ac">2700</span> → przelew → <span class="v-ac">1910</span>
+      </div>
+    </div>
+
+    <div class="subsection-label">SalaryTransaction</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pole</th><th>Typ</th><th>Wymagane</th><th>Wartość NorFinGen</th></tr></thead>
+        <tbody>
+          <tr><td class="field-name">id</td><td class="field-type">integer</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">sekwencyjnie</td></tr>
+          <tr><td class="field-name">date</td><td class="field-type">date</td><td><span class="tag tag-req">tak</span></td><td class="field-value">ostatni roboczy dzień miesiąca</td></tr>
+          <tr><td class="field-name">year</td><td class="field-type">integer</td><td><span class="tag tag-req">tak</span></td><td class="field-value">rok</td></tr>
+          <tr><td class="field-name">month</td><td class="field-type">integer</td><td><span class="tag tag-req">tak</span></td><td class="field-value mono-val">1–12</td></tr>
+          <tr><td class="field-name">status</td><td class="field-type">enum</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">OPEN → PROCESSED</td></tr>
+          <tr><td class="field-name">payslips</td><td class="field-type">array</td><td><span class="tag tag-no">nie</span></td><td class="field-value">lista Payslip (1 per pracownik)</td></tr>
+          <tr><td class="field-name">url</td><td class="field-type">string</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">/v2/salaryV2/transaction/{id}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">Payslip</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pole</th><th>Typ</th><th>Wymagane</th><th>Wartość NorFinGen</th></tr></thead>
+        <tbody>
+          <tr><td class="field-name">id</td><td class="field-type">integer</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">sekwencyjnie</td></tr>
+          <tr><td class="field-name">transaction</td><td class="field-type">object ref</td><td><span class="tag tag-req">tak</span></td><td class="field-value mono-val">{id: N} — parent SalaryTransaction</td></tr>
+          <tr><td class="field-name">employee</td><td class="field-type">object ref</td><td><span class="tag tag-req">tak</span></td><td class="field-value mono-val">{id: N} — E01–E16</td></tr>
+          <tr><td class="field-name">date</td><td class="field-type">date</td><td><span class="tag tag-no">nie</span></td><td class="field-value">= transaction.date</td></tr>
+          <tr><td class="field-name">amount</td><td class="field-type">number</td><td><span class="tag tag-auto">auto</span></td><td class="field-value">netto — wyliczane z specifications</td></tr>
+          <tr><td class="field-name">specifications</td><td class="field-type">array</td><td><span class="tag tag-no">nie</span></td><td class="field-value">linie lønnsart (patrz niżej)</td></tr>
+          <tr><td class="field-name">url</td><td class="field-type">string</td><td><span class="tag tag-auto">auto</span></td><td class="field-value mono-val">/v2/salaryV2/payslip/{id}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">SalarySpecification — kody lønnsart</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Kod</th><th>Nazwa</th><th>Kwota</th><th>Miesiące</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="mono-val">100</td>
+            <td>Fast lønn</td>
+            <td>roczna_stawka / 12</td>
+            <td><span class="month-badge">1–12</span></td>
+          </tr>
+          <tr>
+            <td class="mono-val">920</td>
+            <td>Skattetrekk</td>
+            <td>ujemne, brutto × 33%</td>
+            <td><span class="month-badge">1–5</span> <span class="month-badge">7–12</span> <span class="month-badge-red">nie w czerwcu</span></td>
+          </tr>
+          <tr>
+            <td class="mono-val">260</td>
+            <td>Feriepenger</td>
+            <td>brutto_rok_poprz. × 12%</td>
+            <td><span class="special-badge">tylko czerwiec</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">Logika obliczeń per pracownik</div>
+    <div class="voucher-block">
+      <div class="v-title">Styczeń – Maj, Lipiec – Grudzień (11 miesięcy)</div>
+      <span class="v-cm">brutto_miesiecznie</span> &nbsp;=&nbsp; roczna_stawka / 12<br>
+      <span class="v-cm">skattetrekk</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;=&nbsp; round(brutto × 0.33)<br>
+      <span class="v-cm">netto</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;=&nbsp; brutto − skattetrekk<br>
+      <span class="v-cm">aga</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;=&nbsp; round(brutto × 0.141)&nbsp;&nbsp;<span style="color:var(--text-dim)">← koszt pracodawcy, nie odliczany od wypłaty</span>
+    </div>
+    <div class="voucher-block">
+      <div class="v-title">Czerwiec — feriepenger (patrz sekcja niżej)</div>
+      <span class="v-cm">feriepenger</span> &nbsp;=&nbsp; brutto_rok_poprz. × 0.12<br>
+      <span class="v-cm">skattetrekk</span> &nbsp;=&nbsp; 0 &nbsp;&nbsp;<span style="color:var(--text-dim)">← feriepenger zwolnione z potrącenia</span><br>
+      <span class="v-cm">netto</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;=&nbsp; feriepenger<br>
+      <span class="v-cm">aga</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;=&nbsp; round(feriepenger × 0.141)
+    </div>
+
+    <div class="subsection-label">Zmienność historyczna rosteru — backfill</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Okres</th><th>Aktywni pracownicy</th><th>Łączne brutto / mies.</th></tr></thead>
+        <tbody>
+          <tr><td class="mono-val">2019-01 – 2020-02</td><td>E01–E06 (6 os.)</td><td class="mono-val">450 000</td></tr>
+          <tr><td class="mono-val">2020-03 – 2021-05</td><td>E01–E08 (8 os.)</td><td class="mono-val">630 000</td></tr>
+          <tr><td class="mono-val">2021-06 – 2022-08</td><td>E01–E10 (10 os.)</td><td class="mono-val">730 000</td></tr>
+          <tr><td class="mono-val">2022-09 – dziś</td><td>E01–E16 (16 os.)</td><td class="mono-val">955 000</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>Backfill:</strong> Generator musi używać właściwego agregatu dla każdego miesiąca historycznego — nie aktualnego pełnego rosteru wstecznie.
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ═══════════ FERIEPENGER -->
+  <div class="entity-section type-payroll" id="feriepenger">
+    <div class="entity-header">
+      <h2>Feriepenger</h2>
+      <span class="endpoint">SalarySpecification kod 260 · wypłata w czerwcu</span>
+    </div>
+    <p class="entity-desc">Obowiązkowy element norweskiego payrollu. Niezależny strumień od regularnych wynagrodzeń — podstawa z roku poprzedniego, brak potrącenia podatkowego, osobne konto rezerwy.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Parametr</th><th>Wartość</th><th>Podstawa prawna</th></tr></thead>
+        <tbody>
+          <tr><td>Stawka NorFinGen</td><td class="mono-val">12%</td><td>Ferieloven (min. 10,2%) — standard IT</td></tr>
+          <tr><td>Podstawa obliczenia</td><td>brutto z roku poprzedniego</td><td>nie rok bieżący</td></tr>
+          <tr><td>Miesiąc wypłaty</td><td><span class="special-badge">Czerwiec</span></td><td>branżowy standard w Norwegii</td></tr>
+          <tr><td>Skattetrekk w czerwcu</td><td class="mono-val">0%</td><td>feriepenger zwolnione z potrącenia</td></tr>
+          <tr><td>AGA od feriepenger</td><td class="mono-val">14,1%</td><td>naliczane przy wypłacie</td></tr>
+          <tr><td>Konto rezerwy</td><td class="mono-val">2930 Skyldige feriepenger</td><td>zobowiązanie bilansowe</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection-label">Tryb księgowania — Tryb B (uproszczony, używany przez NorFinGen)</div>
+    <div class="callout">
+      Przez 11 miesięcy — zwykły payroll, brak rezerwy miesięcznej. W czerwcu — osobny Voucher feriepenger. Tryb A (miesięczna rezerwa na 2930) możliwy do wprowadzenia w Etapie 4.
+    </div>
+
+    <div class="subsection-label">Agregaty feriepenger — pełny roster (16 os.)</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pozycja</th><th>11 zwykłych miesięcy / mies.</th><th>Czerwiec (feriepenger)</th></tr></thead>
+        <tbody>
+          <tr><td>Brutto / feriepenger</td><td class="mono-val">955 000</td><td class="mono-val">1 375 200</td></tr>
+          <tr><td>Skattetrekk</td><td class="mono-val">315 150 (33%)</td><td class="mono-val" style="color:var(--text-muted)">0</td></tr>
+          <tr><td>Netto wypłata</td><td class="mono-val">639 850</td><td class="mono-val">1 375 200</td></tr>
+          <tr><td>AGA (14,1%)</td><td class="mono-val">134 655</td><td class="mono-val">193 903</td></tr>
+          <tr style="background:var(--surface2)"><td><strong>Koszt pracodawcy</strong></td><td class="mono-val"><strong>1 089 655</strong></td><td class="mono-val"><strong>1 569 103</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ═══════════ VOUCHER PATTERNS -->
+  <div class="entity-section type-voucher" id="voucher-patterns">
+    <div class="entity-header">
+      <h2>Voucher Patterns — W2</h2>
+    </div>
+    <p class="entity-desc">Każdy typ dokumentu źródłowego generuje konkretny pattern Voucherów i Postingów. Referencyjna mapa dla implementacji Warstwy 3.</p>
+
+    <div class="voucher-block">
+      <div class="v-title">Order z invoiceDate — automatyczny (voucherType: INVOICE)</div>
+      <span class="v-dr">DR</span> <span class="v-ac">1500</span> Kundefordringer &nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">kwota incl. VAT</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">3000</span> / <span class="v-ac">3100</span> Przychód &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">kwota excl. VAT</span><br>
+      <span class="v-cm">vatAmount = kwota VAT jako pole Postingu, nie osobny posting</span><br>
+      <span class="v-cm">vatCode: 3 (25%)</span>
+    </div>
+
+    <div class="voucher-block">
+      <div class="v-title">SupplierInvoice — koszt operacyjny (voucherType: INCOMING_INVOICE)</div>
+      <span class="v-dr">DR</span> <span class="v-ac">6xxx</span> / <span class="v-ac">7xxx</span> Koszt &nbsp;&nbsp;<span class="v-cm">kwota excl. VAT &nbsp;· vatCode: 1 (25%)</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2400</span> Leverandørgjeld &nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">kwota excl. VAT</span>
+    </div>
+
+    <div class="voucher-block">
+      <div class="v-title">SupplierInvoice L05 ≥ 30 000 NOK — kapitalizacja (voucherType: INCOMING_INVOICE)</div>
+      <span class="v-dr">DR</span> <span class="v-ac">1200</span> Maskiner og anlegg &nbsp;&nbsp;<span class="v-cm">kwota excl. VAT &nbsp;· vatCode: 1 (25%)</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2400</span> Leverandørgjeld &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">kwota excl. VAT</span>
+    </div>
+
+    <div class="voucher-block">
+      <div class="v-title">SalaryTransaction — lista płac (voucherType: SALARY)</div>
+      <span class="v-dr">DR</span> <span class="v-ac">5000</span> Lønn, fast &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne brutto 16 pracowników</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2710</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne netto</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2740</span> Skyldig skattetrekk &nbsp;&nbsp;<span class="v-cm">łączne potrącenie</span>
+    </div>
+
+    <div class="voucher-block">
+      <div class="v-title">SalaryTransaction — AGA (voucherType: SALARY)</div>
+      <span class="v-dr">DR</span> <span class="v-ac">5400</span> Arbeidsgiveravgift &nbsp;&nbsp;<span class="v-cm">łączne AGA (14,1% brutto)</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2700</span> Skyldig AGA &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne AGA</span>
+    </div>
+
+    <div class="voucher-block">
+      <div class="v-title">Czerwiec — Feriepenger (voucherType: SALARY)</div>
+      <span class="v-dr">DR</span> <span class="v-ac">5000</span> Feriepenger &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">brutto_rok_poprz. × 12%</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2710</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">= feriepenger (brak skattetrekk)</span><br>
+      <br>
+      <span class="v-dr">DR</span> <span class="v-ac">5400</span> AGA feriepenger &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">feriepenger × 14,1%</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2700</span> Skyldig AGA &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">AGA od feriepenger</span>
+    </div>
+
+    <div class="voucher-block">
+      <div class="v-title">Płatność bankowa — do dostawcy (voucherType: BANK) [opcjonalne W4]</div>
+      <span class="v-dr">DR</span> <span class="v-ac">2400</span> Leverandørgjeld &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">kwota faktury</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">1910</span> Bankinnskudd &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">kwota faktury</span>
+    </div>
+
+    <div class="voucher-block">
+      <div class="v-title">Wypłata netto + przelew skattetrekk (voucherType: BANK) [opcjonalne W4]</div>
+      <span class="v-dr">DR</span> <span class="v-ac">2710</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne netto</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">1910</span> Bankinnskudd, driftskonto<br>
+      <br>
+      <span class="v-dr">DR</span> <span class="v-ac">2740</span> Skyldig skattetrekk &nbsp;&nbsp;<span class="v-cm">łączny skattetrekk</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">1940</span> Bankinnskudd, skattetrekkskonto
+    </div>
+
+    <div class="callout">
+      <strong>Priorytet implementacji:</strong> Vouchery sprzedaży (auto), SupplierInvoice, SalaryTransaction + AGA + Feriepenger — obowiązkowe dla kompletnego P&amp;L. Vouchery bankowe (płatności) — opcjonalne, zamykają zobowiązania ale nie wpływają na wynik.
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ═══════════ P&L -->
+  <div class="entity-section type-pl" id="pl">
+    <div class="entity-header">
+      <h2>Obraz finansowy — stan po W1 + W2</h2>
+    </div>
+    <p class="entity-desc">Wstępna struktura P&amp;L po zamknięciu wszystkich encji Warstwy 2. Liczby orientacyjne — kalibracja w Etapie 3.</p>
+
+    <div class="pl-block">
+      <span class="pl-income">Przychody (Order — IT Services 3000) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~17 150 000 NOK / rok</span><br>
+      <span class="pl-income">Przychody (Order — Licencje 3100) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~7 350 000 NOK / rok</span><br>
+      <span class="pl-divider">────────────────────────────────────────────────────────────</span><br>
+      <span class="pl-income">Łączne przychody &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~24 500 000 NOK / rok</span><br>
+      <br>
+      <span class="pl-cost">Koszty operacyjne (SupplierInvoice) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~2 664 000 NOK / rok</span><br>
+      <span class="pl-cost">Wynagrodzenia brutto (11 mies.) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~10 505 000 NOK / rok</span><br>
+      <span class="pl-cost">Feriepenger (czerwiec) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~1 375 200 NOK / rok</span><br>
+      <span class="pl-cost">AGA od wynagrodzeń (11 mies.) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~1 481 205 NOK / rok</span><br>
+      <span class="pl-cost">AGA od feriepenger &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~193 903 NOK / rok</span><br>
+      <span class="pl-divider">────────────────────────────────────────────────────────────</span><br>
+      <span class="pl-cost">Łączne koszty &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~16 219 308 NOK / rok</span><br>
+      <span class="pl-divider">────────────────────────────────────────────────────────────</span><br>
+      <span class="pl-result">Wynik operacyjny (EBIT est.) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~8 280 692 NOK / rok</span><br>
+      <span class="pl-margin">Marża operacyjna &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;~33,8%</span><br>
+      <br>
+      <span class="pl-note">Norma branżowa managed services NO: 15–25% &nbsp;·&nbsp; Do kalibracji w Etapie 3 &nbsp;·&nbsp; Przychody docelowe: 35M NOK</span>
+    </div>
+
+    <div class="subsection-label">Status encji Warstwy 2</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Encja</th><th>Status</th><th>Wyzwala Voucher</th><th>Konta GL</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Product</td>
+            <td><span style="color:var(--green);font-family:var(--font-mono);font-size:11px">✓ gotowe</span></td>
+            <td style="color:var(--text-muted)">nie</td>
+            <td class="mono-val">3000, 3100</td>
+          </tr>
+          <tr>
+            <td>Order + OrderLine</td>
+            <td><span style="color:var(--green);font-family:var(--font-mono);font-size:11px">✓ gotowe</span></td>
+            <td>automatycznie przez <span class="mono-val">invoiceDate</span></td>
+            <td class="mono-val">1500, 3000, 3100</td>
+          </tr>
+          <tr>
+            <td>SupplierInvoice</td>
+            <td><span style="color:var(--green);font-family:var(--font-mono);font-size:11px">✓ gotowe</span></td>
+            <td>jawnie — POST Voucher</td>
+            <td class="mono-val">6xxx, 7xxx, 1200, 2400</td>
+          </tr>
+          <tr>
+            <td>SalaryTransaction + Payslip</td>
+            <td><span style="color:var(--green);font-family:var(--font-mono);font-size:11px">✓ gotowe</span></td>
+            <td>jawnie — dwa Vouchery (lista + AGA)</td>
+            <td class="mono-val">5000, 5400, 2710, 2740, 2700</td>
+          </tr>
+          <tr>
+            <td>Feriepenger</td>
+            <td><span style="color:var(--green);font-family:var(--font-mono);font-size:11px">✓ gotowe</span></td>
+            <td>jawnie — czerwiec, osobny Voucher</td>
+            <td class="mono-val">5000, 5400, 2710, 2700, 2930</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout callout-green">
+      <strong>Następny krok — Warstwa 3:</strong> Voucher + Posting jako kręgosłup ledgera. Schema pól, typy Voucherów, struktura Postingów z vatAmount. Wszystkie patterns z tej sekcji będą tam zaimplementowane na poziomie field-level.
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  NorFinGen · Warstwa 2 — Dokumenty źródłowe · Tripletex API v2 · 5 encji · stan: stabilny
+</footer>
+
+</body>
+</html>
