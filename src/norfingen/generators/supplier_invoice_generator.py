@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import calendar
 import random
-from datetime import date
+from datetime import date, timedelta
 
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid, expected_vat_amount
 from norfingen.models.base import TripletexRef
@@ -22,6 +22,22 @@ from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import SUPPLIERS, SupplierSeed, numeric_id
 
 GROSS_UP_FACTOR = 1.25  # amountCurrency (incl. VAT) = netto * 1.25, VAT 25%
+PAID_AFTER_DAYS = 45  # faktury z payment_due_date starszym niż 45 dni → PAID
+
+
+def with_noise(amount: float, pct: float = 0.03, rng: random.Random | None = None) -> float:
+    """Dodaje losowy szum ±pct do kwoty. Wynik zaokrąglony do 2 miejsc."""
+    generator = rng if rng is not None else random
+    factor = 1 + generator.uniform(-pct, pct)
+    return round(amount * factor, 2)
+
+
+def avis_amount(month: int, rng: random.Random) -> float:
+    """L07 Avis — wyższe koszty podróży w Q1 (sty-mar) i Q3 (lip-wrz) niż w Q2/Q4."""
+    if month in (1, 2, 3, 7, 8, 9):
+        return round(rng.uniform(22_000, 28_000), -2)
+    return round(rng.uniform(12_000, 18_000), -2)
+
 
 QUARTERLY_MONTHS_MAR_JUN_SEP_DEC = {3, 6, 9, 12}
 QUARTERLY_MONTHS_JAN_APR_JUL_OCT = {1, 4, 7, 10}
@@ -57,10 +73,10 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
             netto = supplier.amount_min  # stałe 85 000
             invoice_date = _month_day(year, month, 1)
         elif supplier.number == "L02":
-            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            netto = with_noise(18_000, 0.05, rng)
             invoice_date = _month_day(year, month, 5)
         elif supplier.number == "L03":
-            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            netto = with_noise(rng.uniform(supplier.amount_min, supplier.amount_max), rng=rng)
             invoice_date = _month_day(year, month, 15)
         elif supplier.number == "L04":
             netto = supplier.amount_min  # stałe 45 000
@@ -68,15 +84,15 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
         elif supplier.number == "L05":
             if month not in sandvik_months:
                 continue
-            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            netto = with_noise(rng.uniform(supplier.amount_min, supplier.amount_max), rng=rng)
             invoice_date = _month_day(year, month, rng.randint(1, 28))
         elif supplier.number == "L06":
             if month not in QUARTERLY_MONTHS_MAR_JUN_SEP_DEC:
                 continue
-            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            netto = with_noise(rng.uniform(supplier.amount_min, supplier.amount_max), rng=rng)
             invoice_date = _month_day(year, month, 10)
         elif supplier.number == "L07":
-            netto = rng.uniform(supplier.amount_min, supplier.amount_max)
+            netto = avis_amount(month, rng)
             invoice_date = _month_day(year, month, 20)
         elif supplier.number == "L08":
             if month not in QUARTERLY_MONTHS_JAN_APR_JUL_OCT:
@@ -88,6 +104,8 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
 
         netto = round(netto, 2)
         account_number = _account_for_invoice(supplier, netto)
+        payment_due = invoice_date + timedelta(days=30)
+        paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
 
         invoice = SupplierInvoice(
             invoiceNumber=_next_invoice_number(supplier, year, seq),
@@ -96,6 +114,7 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
             amountCurrency=round(netto * GROSS_UP_FACTOR, 2),
             account=TripletexRef(id=account_number),
             comment=supplier.cost_category,
+            status="PAID" if paid else "UNPAID",
         )
         invoices.append(invoice)
 

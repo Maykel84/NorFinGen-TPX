@@ -133,6 +133,16 @@ def test_save_founding_capital_voucher(fake_repository):
     assert sum("INSERT INTO postings" in s for s in sql_texts) == 2
 
 
+def test_month_already_generated(fake_repository):
+    repository, fake_conn = fake_repository
+
+    fake_conn.cursor_obj.fetchone = lambda: (0,)
+    assert repository.month_already_generated(2024, 1) is False
+
+    fake_conn.cursor_obj.fetchone = lambda: (5,)
+    assert repository.month_already_generated(2024, 1) is True
+
+
 def test_save_all_accepts_dict():
     from norfingen.db import repository
 

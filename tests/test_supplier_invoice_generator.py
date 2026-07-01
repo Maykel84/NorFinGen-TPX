@@ -51,6 +51,23 @@ def test_l05_capitalization_split():
     assert found_capitalized or found_expensed  # przynajmniej jedna faktura w roku
 
 
+def test_l07_avis_higher_in_q1_q3_than_q2_q4():
+    q1_q3_amounts = []
+    q2_q4_amounts = []
+    for year in range(2019, 2027):
+        for month in range(1, 13):
+            invoices = generate_monthly_supplier_invoices(year, month)
+            l07 = next(i for i in invoices if i.invoiceNumber.startswith("L07"))
+            netto = l07.amountExcludingVatCurrency
+            if month in (1, 2, 3, 7, 8, 9):
+                assert 22_000 <= netto <= 28_000
+                q1_q3_amounts.append(netto)
+            else:
+                assert 12_000 <= netto <= 18_000
+                q2_q4_amounts.append(netto)
+    assert min(q1_q3_amounts) > max(q2_q4_amounts)
+
+
 def test_payment_due_date_is_invoice_date_plus_30_days():
     invoices = generate_monthly_supplier_invoices(2024, 1)
     for invoice in invoices:

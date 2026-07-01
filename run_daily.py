@@ -25,8 +25,13 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from norfingen.db.repository import ensure_schema, save_all, seed_reference_data  # noqa: E402
-from norfingen.generators.backfill import generate_and_persist_month  # noqa: E402
+from norfingen.db.repository import (  # noqa: E402
+    ensure_schema,
+    month_already_generated,
+    save_all,
+    seed_reference_data,
+)
+from norfingen.generators.backfill import EMPTY_MONTH_STATS, generate_and_persist_month  # noqa: E402
 
 logger = logging.getLogger("run_daily")
 
@@ -34,11 +39,19 @@ logger = logging.getLogger("run_daily")
 def run_daily(today: Optional[date] = None) -> dict:
     """Generuje i zapisuje Order/SupplierInvoice/SalaryTransaction + Vouchery
     dla miesiąca zawierającego `today` (domyślnie data bieżąca). Wołana
-    bezpośrednio jako funkcja z APScheduler — nie wymaga subprocessu CLI."""
+    bezpośrednio jako funkcja z APScheduler — nie wymaga subprocessu CLI.
+
+    Pomija generację (zamiast polegać wyłącznie na ON CONFLICT DO NOTHING),
+    jeśli orders dla tego miesiąca już istnieją w bazie — oszczędza generowanie
+    i odrzucanie całego miesiąca przy każdym uruchomieniu w danym miesiącu."""
     today = today or date.today()
 
     ensure_schema()
     seed_reference_data()
+
+    if month_already_generated(today.year, today.month):
+        logger.info("run_daily: dane za %04d-%02d już istnieją — pomijam", today.year, today.month)
+        return dict(EMPTY_MONTH_STATS)
 
     logger.info("run_daily: generowanie danych za %04d-%02d", today.year, today.month)
     stats = generate_and_persist_month(today.year, today.month, persist_fn=save_all)

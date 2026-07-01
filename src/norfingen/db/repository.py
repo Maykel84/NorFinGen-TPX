@@ -172,6 +172,21 @@ def seed_reference_data() -> None:
     conn.commit()
 
 
+def month_already_generated(year: int, month: int) -> bool:
+    """Sprawdza czy orders dla danego miesiąca już istnieją w bazie — pozwala
+    run_daily() pominąć generację, zamiast polegać wyłącznie na ON CONFLICT
+    DO NOTHING (poprawne, ale generuje i odrzuca cały miesiąc na próżno)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM orders WHERE EXTRACT(year FROM order_date) = %s "
+            "AND EXTRACT(month FROM order_date) = %s",
+            (year, month),
+        )
+        count = cur.fetchone()[0]
+    return count > 0
+
+
 def _upsert_get_id(cur, insert_sql: str, insert_params: tuple, select_sql: str, select_params: tuple) -> int:
     """INSERT ... ON CONFLICT DO NOTHING RETURNING id; jeśli konflikt (brak
     wiersza), pobiera istniejące id przez select_sql. Wzorzec wymagany, bo

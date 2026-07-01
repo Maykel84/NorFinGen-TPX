@@ -10,10 +10,14 @@ poprzednim (nie roku bieżącym), bez potrącenia podatkowego:
   Voucher 3 — feriepenger: DR 5000 / CR 2710 (brak 2740 — feriepenger nie jest opodatkowane)
   Voucher 4 — AGA feriepenger: DR 5400 / CR 2700
 
-Podstawa feriepenger per pracownik = calc_brutto(e) × liczba miesięcy, w których
-pracownik był aktywny w roku poprzednim (zob. _brutto_earned_in_year) — kluczowe
-dla pracowników z fazy merger (E11-E16, aktywni od 2022-09): ich podstawa za 2022
-to 4 miesiące, nie 12.
+Podstawa feriepenger per pracownik = suma calc_brutto_with_raises(e, rok, miesiąc)
+za miesiące, w których pracownik był aktywny w roku poprzednim (zob.
+brutto_earned_in_year) — kluczowe dla pracowników z fazy merger (E11-E16,
+aktywni od 2022-09): ich podstawa za 2022 to 4 miesiące, nie 12.
+
+Podwyżki: +3% rocznie w lipcu, pierwsza w roku po zatrudnieniu (zob.
+norfingen.seed.payroll.calc_brutto_with_raises) — stosowane zarówno do brutto
+bieżącego miesiąca, jak i do podstawy feriepenger za rok poprzedni.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from norfingen.models.salary import (
 from norfingen.seed.payroll import (
     active_employees,
     calc_aga,
-    calc_brutto,
+    calc_brutto_with_raises,
     calc_feriepenger,
     calc_netto,
     calc_skattetrekk,
@@ -52,8 +56,11 @@ def brutto_earned_in_year(employee: EmployeeSeed, year: int) -> float:
     """Suma brutto zarobionego przez pracownika w danym roku kalendarzowym —
     respektuje startDate (pracownik nieaktywny przed startem ma podstawę 0
     za te miesiące)."""
-    months_active = sum(1 for month in range(1, 13) if employee.start_date <= date(year, month, 1))
-    return calc_brutto(employee) * months_active
+    return sum(
+        calc_brutto_with_raises(employee, year, month)
+        for month in range(1, 13)
+        if employee.start_date <= date(year, month, 1)
+    )
 
 
 def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, list[Voucher]]:
@@ -69,7 +76,7 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
 
     for employee in active:
         emp_ref = TripletexRef(id=numeric_id(employee.number))
-        brutto = calc_brutto(employee)
+        brutto = calc_brutto_with_raises(employee, year, month)
         specifications = [
             SalarySpecification(wageType=WAGE_TYPE_FAST_LONN, description="Fast lønn", amount=brutto)
         ]

@@ -29,6 +29,21 @@ def calc_brutto(employee: EmployeeSeed) -> float:
     return employee.annual_salary / 12
 
 
+def calc_brutto_with_raises(employee: EmployeeSeed, year: int, month: int,
+                             raise_rate: float = 0.03, raise_month: int = 7) -> float:
+    """Oblicza brutto z uwzględnieniem corocznych podwyżek.
+
+    Podwyżka +raise_rate co roku w raise_month (domyślnie lipiec), pierwsza w
+    roku następującym po zatrudnieniu."""
+    base = employee.annual_salary / 12
+    start_year = employee.start_date.year
+    raises = 0
+    for y in range(start_year + 1, year + 1):
+        if y < year or (y == year and month >= raise_month):
+            raises += 1
+    return round(base * ((1 + raise_rate) ** raises), 2)
+
+
 def calc_skattetrekk(brutto: float) -> float:
     return round(brutto * SKATTETREKK_RATE)
 

@@ -4,13 +4,14 @@ from norfingen.seed.payroll import (
     active_employees,
     calc_aga,
     calc_brutto,
+    calc_brutto_with_raises,
     calc_feriepenger,
     calc_netto,
     calc_skattetrekk,
     is_june,
     last_working_day,
 )
-from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, SUPPLIERS
+from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, SUPPLIERS, employee_by_number
 
 
 def test_roster_counts_match_docs():
@@ -49,6 +50,25 @@ def test_payroll_calculations():
 
 def test_calc_feriepenger():
     assert calc_feriepenger(955_000) == round(955_000 * 0.12)
+
+
+def test_calc_brutto_with_raises_no_raise_in_founding_year():
+    e01 = employee_by_number("E01")  # start 2019-01-02
+    assert calc_brutto_with_raises(e01, 2019, 1) == round(calc_brutto(e01), 2)
+    assert calc_brutto_with_raises(e01, 2019, 12) == round(calc_brutto(e01), 2)
+
+
+def test_calc_brutto_with_raises_first_raise_next_july():
+    e01 = employee_by_number("E01")  # start 2019-01-02 -> pierwsza podwyżka lipiec 2020
+    assert calc_brutto_with_raises(e01, 2020, 6) == round(calc_brutto(e01), 2)
+    assert calc_brutto_with_raises(e01, 2020, 7) == round(calc_brutto(e01) * 1.03, 2)
+
+
+def test_calc_brutto_with_raises_compounds_annually():
+    e01 = employee_by_number("E01")
+    # 880 000 NOK/rok w 2019 -> ~1 081 000 NOK/rok (brutto x12) w 2026 po H2 (7 podwyżek).
+    monthly_2026_h2 = calc_brutto_with_raises(e01, 2026, 7)
+    assert abs(monthly_2026_h2 * 12 - 1_081_000) < 5_000
 
 
 def test_last_working_day_rolls_back_from_weekend():

@@ -135,11 +135,15 @@ SUPPLIERS: list[SupplierSeed] = [
 
 
 PRODUCTS: list[ProductSeed] = [
-    ProductSeed("P01", "IT Support — Enterprise", "Subskrypcja mies.", 3000, 220_000),
-    ProductSeed("P02", "IT Support — Mid-market", "Subskrypcja mies.", 3000, 160_000),
-    ProductSeed("P03", "IT Support — SMB", "Subskrypcja mies.", 3000, 75_000),
-    ProductSeed("P04", "Software License — Enterprise", "Licencja mies.", 3100, 95_000),
-    ProductSeed("P05", "Software License — Mid-market", "Licencja mies.", 3100, 70_000),
+    # Ceny obniżone ~17% (2026-07) w celu domknięcia marży operacyjnej do
+    # docelowego przedziału 15-25% (wcześniej ~33% — koszty operacyjne za niskie
+    # względem przychodów przy niezmienionych stawkach; koszty pracownicze
+    # dominują strukturę kosztów i nie były tu ruszane, patrz notatka w docs/).
+    ProductSeed("P01", "IT Support — Enterprise", "Subskrypcja mies.", 3000, 183_000),
+    ProductSeed("P02", "IT Support — Mid-market", "Subskrypcja mies.", 3000, 133_000),
+    ProductSeed("P03", "IT Support — SMB", "Subskrypcja mies.", 3000, 62_000),
+    ProductSeed("P04", "Software License — Enterprise", "Licencja mies.", 3100, 79_000),
+    ProductSeed("P05", "Software License — Mid-market", "Licencja mies.", 3100, 58_000),
     ProductSeed("P06", "IT Consulting", "Projekt / zlecenie", 3000, None),
 ]
 

@@ -1,7 +1,7 @@
 from datetime import date
 
 from norfingen.generators.salary_generator import brutto_earned_in_year, generate_monthly_salary
-from norfingen.seed.payroll import active_employees, calc_aga, calc_brutto, calc_feriepenger
+from norfingen.seed.payroll import active_employees, calc_aga, calc_brutto_with_raises, calc_feriepenger
 from norfingen.seed.roster import employee_by_number
 
 
@@ -42,12 +42,18 @@ def test_june_2022():
     assert _posting(aga_feriepenger_voucher, 2700).amount == -round(expected_aga_feriepenger_total, 2)
 
     # E09/E10 startowali 2021-06-01 -> aktywni 7 miesięcy w 2021 (cze-gru), nie 12.
+    # Bez podwyżki (pierwsza dopiero w lipcu 2022 — rok po zatrudnieniu).
     e09 = employee_by_number("E09")
-    assert brutto_earned_in_year(e09, 2021) == calc_brutto(e09) * 7
+    expected_e09_2021 = sum(calc_brutto_with_raises(e09, 2021, m) for m in range(6, 13))
+    assert brutto_earned_in_year(e09, 2021) == expected_e09_2021
 
-    # E01-E06 (założenie 2019) aktywni cały 2021 -> 12 miesięcy.
+    # E01-E06 (założenie 2019) aktywni cały 2021 -> 12 miesięcy, z jedną podwyżką
+    # w lipcu 2020 (już aktywna cały 2021) i drugą w lipcu 2021 (od H2).
     e01 = employee_by_number("E01")
-    assert brutto_earned_in_year(e01, 2021) == calc_brutto(e01) * 12
+    expected_e01_2021 = sum(calc_brutto_with_raises(e01, 2021, m) for m in range(1, 13))
+    assert brutto_earned_in_year(e01, 2021) == expected_e01_2021
+    # H2 2021 wyższe brutto niż H1 -> podwyżka lipcowa faktycznie zadziałała.
+    assert calc_brutto_with_raises(e01, 2021, 7) > calc_brutto_with_raises(e01, 2021, 6)
 
 
 def test_june_2023():
@@ -64,12 +70,15 @@ def test_june_2023():
         assert v.validate_balance(), f"Voucher niezbalansowany: {v.description}"
 
     # E11-E16 (merger 2022-09-01) aktywni tylko 4 miesiące w 2022 (wrz-gru), nie 12.
+    # Bez podwyżki (pierwsza dopiero w lipcu 2023).
     e11 = employee_by_number("E11")
-    assert brutto_earned_in_year(e11, 2022) == calc_brutto(e11) * 4
+    expected_e11_2022 = sum(calc_brutto_with_raises(e11, 2022, m) for m in range(9, 13))
+    assert brutto_earned_in_year(e11, 2022) == expected_e11_2022
 
-    # E01-E06 aktywni cały 2022 -> 12 miesięcy.
+    # E01-E06 aktywni cały 2022 -> 12 miesięcy, z podwyżkami skumulowanymi od 2020/2021.
     e01 = employee_by_number("E01")
-    assert brutto_earned_in_year(e01, 2022) == calc_brutto(e01) * 12
+    expected_e01_2022 = sum(calc_brutto_with_raises(e01, 2022, m) for m in range(1, 13))
+    assert brutto_earned_in_year(e01, 2022) == expected_e01_2022
 
     feriepenger_voucher, aga_feriepenger_voucher = vouchers[2], vouchers[3]
     expected_feriepenger_total = sum(
