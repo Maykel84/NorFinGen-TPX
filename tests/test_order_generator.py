@@ -1,6 +1,7 @@
 from datetime import date
 
-from norfingen.generators.order_generator import generate_monthly_orders
+from norfingen.generators.order_generator import generate_daily_orders, generate_monthly_orders
+from norfingen.seed.roster import customer_by_number
 
 
 def test_pattern_a_b_c_generated_every_month():
@@ -12,9 +13,41 @@ def test_pattern_a_b_c_generated_every_month():
 
     for order in orders:
         assert order.invoiceDate == order.orderDate
-        assert order.orderDate.day == 1
+        # orderDate.day = customer.invoice_day (per klient, nie sztywno 1. dzień).
         assert order.department.id == 1
         assert len(order.orderLines) >= 1
+
+
+def test_monthly_orders_use_customer_invoice_day():
+    orders = generate_monthly_orders(2024, 1)
+    k02 = next(o for o in orders if o.customer.id == 2)  # invoice_day=7
+    k07 = next(o for o in orders if o.customer.id == 7)  # invoice_day=15
+    assert k02.orderDate.day == 7
+    assert k07.orderDate.day == 15
+
+
+def test_monthly_orders_use_customer_payment_terms():
+    orders = generate_monthly_orders(2024, 1)
+    k02 = next(o for o in orders if o.customer.id == 2)  # payment_terms=14
+    k03 = next(o for o in orders if o.customer.id == 3)  # payment_terms=45
+    assert k02.invoicesDueIn == 14
+    assert k03.invoicesDueIn == 45
+
+
+def test_generate_daily_orders_only_on_invoice_day():
+    k02 = customer_by_number("K02")  # invoice_day=7
+    orders_on_day = generate_daily_orders(2024, 1, k02.invoice_day)
+    assert any(o.customer.id == 2 for o in orders_on_day)
+
+    orders_other_day = generate_daily_orders(2024, 1, k02.invoice_day + 1)
+    assert not any(o.customer.id == 2 for o in orders_other_day)
+
+
+def test_generate_daily_orders_skips_consulting_customer():
+    # K06 (consulting, invoice_day=None) nigdy nie pojawia się w generate_daily_orders.
+    for day in range(1, 29):
+        orders = generate_daily_orders(2024, 1, day)
+        assert not any(o.customer.id == 6 for o in orders)
 
 
 def test_pattern_b_has_two_lines():

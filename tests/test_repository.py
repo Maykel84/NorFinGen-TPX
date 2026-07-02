@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from norfingen.generators.backfill import founding_capital_voucher
+from norfingen.generators.bank_transaction_generator import build_incoming_payment, build_outgoing_payment
+from norfingen.generators.hours_generator import generate_daily_hours
 from norfingen.generators.order_generator import generate_monthly_orders
 from norfingen.generators.salary_generator import generate_monthly_salary
 from norfingen.generators.supplier_invoice_generator import build_voucher_for_invoice, generate_monthly_supplier_invoices
@@ -19,6 +21,7 @@ class FakeCursor:
     def __init__(self, fetch_id: int = 1):
         self.executed: list[tuple[str, tuple]] = []
         self._fetch_id = fetch_id
+        self.fetchall_queue: list[list[tuple]] = []  # kolejka wyników kolejnych fetchall()
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params))
@@ -30,6 +33,11 @@ class FakeCursor:
         if "RETURNING id" in self.executed[-1][0] or self.executed[-1][0].strip().upper().startswith("SELECT"):
             return (self._fetch_id,)
         return None
+
+    def fetchall(self):
+        if self.fetchall_queue:
+            return self.fetchall_queue.pop(0)
+        return []
 
     def __enter__(self):
         return self
@@ -141,6 +149,75 @@ def test_month_already_generated(fake_repository):
 
     fake_conn.cursor_obj.fetchone = lambda: (5,)
     assert repository.month_already_generated(2024, 1) is True
+
+
+def test_save_bank_transactions_incoming(fake_repository):
+    repository, fake_conn = fake_repository
+    orders = generate_monthly_orders(2024, 1)
+    order = next(o for o in orders if o.customer.id == 1)
+    transaction, voucher = build_incoming_payment(order, payment_terms=30)
+
+    repository.save_bank_transactions([(transaction, voucher)])
+
+    sql_texts = [sql for sql, _ in fake_conn.cursor_obj.executed]
+    assert any("INSERT INTO vouchers" in s for s in sql_texts)
+    assert any("INSERT INTO bank_transactions" in s for s in sql_texts)
+    assert not any("UPDATE supplier_invoices" in s for s in sql_texts)
+    assert fake_conn.committed
+
+
+def test_save_bank_transactions_outgoing_marks_invoice_paid(fake_repository):
+    repository, fake_conn = fake_repository
+    invoices = generate_monthly_supplier_invoices(2024, 1)
+    invoice = invoices[0].model_copy(update={"id": 42})
+    transaction, voucher = build_outgoing_payment(invoice)
+
+    repository.save_bank_transactions([(transaction, voucher)])
+
+    update_calls = [(sql, params) for sql, params in fake_conn.cursor_obj.executed if "UPDATE supplier_invoices" in sql]
+    assert len(update_calls) == 1
+    assert update_calls[0][1] == (42,)
+
+
+def test_save_hour_entries(fake_repository):
+    repository, fake_conn = fake_repository
+    entries = generate_daily_hours(2024, 1, 8, list(range(1, 17)))
+    assert entries  # poniedziałek -> powinny być wpisy
+
+    repository.save_hour_entries(entries)
+
+    sql_texts = [sql for sql, _ in fake_conn.cursor_obj.executed]
+    assert sum("INSERT INTO hour_entries" in s for s in sql_texts) == len(entries)
+    assert fake_conn.committed
+
+
+def test_get_orders_for_payment_window_reconstructs_order_with_lines(fake_repository):
+    repository, fake_conn = fake_repository
+    order_row = (10, 1, date(2024, 1, 3), date(2024, 1, 31), date(2024, 1, 3), 30, 1, "Test")
+    line_row = (10, 1, 1.0, 183_000.0, 3, 0.0)
+    fake_conn.cursor_obj.fetchall_queue = [[order_row], [line_row]]
+
+    orders = repository.get_orders_for_payment_window(date(2024, 1, 3))
+
+    assert len(orders) == 1
+    assert orders[0].id == 10
+    assert orders[0].customer.id == 1
+    assert len(orders[0].orderLines) == 1
+    assert orders[0].orderLines[0].unitPriceExcludingVatCurrency == 183_000.0
+
+
+def test_get_unpaid_supplier_invoices_reconstructs_invoice(fake_repository):
+    repository, fake_conn = fake_repository
+    invoice_row = (5, "L01-2024-001", 1, date(2024, 1, 1), date(2024, 1, 1), date(2024, 1, 31), 106_250.0, 6410, "Licencje")
+    fake_conn.cursor_obj.fetchall_queue = [[invoice_row]]
+
+    invoices = repository.get_unpaid_supplier_invoices(date(2024, 1, 31))
+
+    assert len(invoices) == 1
+    assert invoices[0].id == 5
+    assert invoices[0].invoiceNumber == "L01-2024-001"
+    assert invoices[0].supplier.id == 1
+    assert invoices[0].amountCurrency == 106_250.0
 
 
 def test_save_all_accepts_dict():

@@ -1,4 +1,4 @@
-"""Generator miesięcznych Order + OrderLine (Warstwa 2).
+"""Generator Order + OrderLine (Warstwa 2) — miesięczny (backfill) i dzienny.
 
 Order.invoiceDate = orderDate wyzwala automatyczne utworzenie Vouchera (INVOICE)
 przez Tripletex — ten moduł NIE tworzy Voucherów ręcznie (w przeciwieństwie do
@@ -10,6 +10,16 @@ Wzorce z roster.CUSTOMERS.order_pattern:
   C — 1 OrderLine, tylko licencja (P05)
   D — Consulting (K06), sezonowo skupiony w Q2 (kwiecień-czerwiec) i Q4
       (październik-grudzień), rzadziej w styczniu/lipcu, P06
+
+Data faktury (orderDate/invoiceDate) i termin płatności (invoicesDueIn) per
+klient subskrypcyjny (A/B/C) pochodzą z roster.CustomerSeed.invoice_day /
+.payment_terms, nie są już sztywne (1. dzień miesiąca / net 30).
+
+generate_monthly_orders(year, month) — jeden Order per klient A/B/C w miesiącu
+(+ ewentualny D), używana przez backfill.py (pętla historyczna).
+generate_daily_orders(year, month, day) — Order tylko dla klientów, których
+invoice_day wypada danego dnia; K06 (consulting, invoice_day=None) pomijany —
+osobna logika wyzwalania (should_generate_consulting), niezwiązana z dniem.
 """
 
 from __future__ import annotations
@@ -76,8 +86,13 @@ def _order_line_for_product(product_number: str, year: int, count: float = 1.0, 
     )
 
 
-def _build_order(customer: CustomerSeed, year: int, month: int, order_lines: list[OrderLine]) -> Order:
-    order_date = date(year, month, 1)
+def _clamp_day(year: int, month: int, day: int) -> int:
+    last_day = calendar.monthrange(year, month)[1]
+    return min(day, last_day)
+
+
+def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_lines: list[OrderLine]) -> Order:
+    order_date = date(year, month, _clamp_day(year, month, day))
     last_day = calendar.monthrange(year, month)[1]
     delivery_date = date(year, month, last_day)
     month_label = f"{MONTH_NAMES_NO[month - 1]} {year}"
@@ -86,6 +101,7 @@ def _build_order(customer: CustomerSeed, year: int, month: int, order_lines: lis
         orderDate=order_date,
         deliveryDate=delivery_date,
         invoiceDate=order_date,
+        invoicesDueIn=customer.payment_terms,
         orderLines=order_lines,
         department=SALG_DEPARTMENT_REF,
         comment=f"Månedlig faktura — {month_label}",
@@ -93,33 +109,66 @@ def _build_order(customer: CustomerSeed, year: int, month: int, order_lines: lis
     )
 
 
+def _order_lines_for_pattern(customer: CustomerSeed, year: int) -> list[OrderLine]:
+    """Buduje OrderLines dla wzorców A/B/C (subskrypcyjnych, cykl miesięczny).
+    Wzorzec D (K06 consulting) ma osobną logikę — nie jest tu obsługiwany."""
+    pattern = customer.order_pattern
+
+    if pattern == "A":
+        return [_order_line_for_product(customer.support_product, year)]
+
+    if pattern == "B":
+        return [
+            _order_line_for_product(customer.support_product, year),
+            _order_line_for_product(customer.license_product, year),
+        ]
+
+    if pattern == "C":
+        return [_order_line_for_product(customer.license_product, year)]
+
+    raise ValueError(f"Nieznany order_pattern dla wzorca subskrypcyjnego: {pattern!r} dla klienta {customer.number}")
+
+
 def generate_monthly_orders(year: int, month: int) -> list[Order]:
+    """Generuje po jednym Order per klient subskrypcyjny (A/B/C) w danym
+    miesiącu — używana przez backfill (pętla historyczna). Data faktury =
+    customer.invoice_day (nie sztywno 1. dzień miesiąca)."""
     orders: list[Order] = []
 
     for customer in CUSTOMERS:
         pattern = customer.order_pattern
 
-        if pattern == "A":
-            line = _order_line_for_product(customer.support_product, year)
-            orders.append(_build_order(customer, year, month, [line]))
-
-        elif pattern == "B":
-            support_line = _order_line_for_product(customer.support_product, year)
-            license_line = _order_line_for_product(customer.license_product, year)
-            orders.append(_build_order(customer, year, month, [support_line, license_line]))
-
-        elif pattern == "C":
-            line = _order_line_for_product(customer.license_product, year)
-            orders.append(_build_order(customer, year, month, [line]))
+        if pattern in ("A", "B", "C"):
+            lines = _order_lines_for_pattern(customer, year)
+            orders.append(_build_order(customer, year, month, customer.invoice_day, lines))
 
         elif pattern == "D":
             if should_generate_consulting(month, year):
                 rng = random.Random(f"{customer.number}-{year}-{month}")
                 price = rng.uniform(CONSULTING_PRICE_MIN, CONSULTING_PRICE_MAX)
                 line = _order_line_for_product("P06", year, count=1.0, unit_price=round(price, 2))
-                orders.append(_build_order(customer, year, month, [line]))
+                orders.append(_build_order(customer, year, month, 1, [line]))
 
         else:
             raise ValueError(f"Nieznany order_pattern: {pattern!r} dla klienta {customer.number}")
+
+    return orders
+
+
+def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
+    """Generuje zamówienia dla konkretnego dnia — wystawia fakturę tylko tym
+    klientom, dla których dzisiaj wypada ich invoice_day. K06 (consulting,
+    invoice_day=None) jest tu pomijany — ma osobną logikę wyzwalania
+    (should_generate_consulting), nierozłożoną na konkretny dzień miesiąca."""
+    orders: list[Order] = []
+
+    for customer in CUSTOMERS:
+        if customer.invoice_day is None:
+            continue  # K06 consulting — osobna logika
+        if customer.invoice_day != day:
+            continue
+
+        lines = _order_lines_for_pattern(customer, year)
+        orders.append(_build_order(customer, year, month, day, lines))
 
     return orders

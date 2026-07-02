@@ -19,6 +19,7 @@ wywołują ją zawsze, idempotentnie, na wszelki wypadek pustej bazy).
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional, Union
 
@@ -26,10 +27,15 @@ import psycopg2
 
 from norfingen.config import settings
 from norfingen.generators.voucher import Voucher
-from norfingen.models.order import Order
+from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
+from norfingen.models.base import TripletexRef
+from norfingen.models.hours import HourEntry
+from norfingen.models.order import Order, OrderLine
 from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
-from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, SUPPLIERS, numeric_id
+from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, PROJECTS, SUPPLIERS, numeric_id
+
+MAX_PAYMENT_TERMS_DAYS = 45  # najdłuższy payment_terms w roster.CUSTOMERS (K03/K08)
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -170,6 +176,23 @@ def seed_reference_data() -> None:
             )
 
     conn.commit()
+    seed_projects()
+
+
+def seed_projects() -> None:
+    """Zasila tabelę projects z norfingen.seed.roster.PROJECTS. Idempotentne
+    (ON CONFLICT DO NOTHING). Wydzielona jako osobna, publiczna funkcja (nie
+    tylko wewnętrzna pętla w seed_reference_data()) na wypadek potrzeby
+    ponownego zasilenia samych projektów bez przechodzenia całego seeda."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        for project in PROJECTS:
+            cur.execute(
+                "INSERT INTO projects (id, number, name, customer_id, start_date) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (number) DO NOTHING",
+                (numeric_id(project.number), project.number, project.name, project.customer_id, project.start_date),
+            )
+    conn.commit()
 
 
 def month_already_generated(year: int, month: int) -> bool:
@@ -309,7 +332,7 @@ def _save_salary_transaction(cur, transaction: SalaryTransaction) -> None:
             )
 
 
-def _save_voucher(cur, voucher: Voucher) -> None:
+def _save_voucher(cur, voucher: Voucher) -> int:
     voucher_id = _upsert_get_id(
         cur,
         """INSERT INTO vouchers (date, description, voucher_type)
@@ -343,6 +366,8 @@ def _save_voucher(cur, voucher: Voucher) -> None:
                 _ref_id(posting.department),
             ),
         )
+
+    return voucher_id
 
 
 def _model_from_dict(data: dict):
@@ -381,3 +406,168 @@ def save_all(data: Union[Order, SupplierInvoice, SalaryTransaction, Voucher, dic
         else:
             raise TypeError(f"save_all: nieobsługiwany typ {type(data)!r}")
     conn.commit()
+
+
+def save_orders(orders: list[Order]) -> None:
+    """Zapisuje listę Order (np. z generate_daily_orders) — cienki wrapper
+    nad save_all() na wielu obiektach naraz, jak w run_daily.py."""
+    for order in orders:
+        save_all(order)
+
+
+def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Optional[int]) -> None:
+    cur.execute(
+        """INSERT INTO bank_transactions
+               (date, amount, transaction_type, description, customer_id, supplier_id,
+                order_id, supplier_invoice_id, account_from, account_to, voucher_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT DO NOTHING""",
+        (
+            transaction.date,
+            transaction.amount,
+            transaction.transaction_type.value,
+            transaction.description,
+            transaction.customer_id,
+            transaction.supplier_id,
+            transaction.order_id,
+            transaction.supplier_invoice_id,
+            transaction.account_from,
+            transaction.account_to,
+            voucher_id,
+        ),
+    )
+
+
+def save_bank_transactions(transactions: list[tuple[BankTransaction, Voucher]]) -> None:
+    """Zapisuje pary (BankTransaction, Voucher) z generate_daily_bank_transactions.
+    Dla płatności OUTGOING oznacza powiązaną supplier_invoice jako PAID —
+    dzięki temu get_unpaid_supplier_invoices() nie zwróci jej ponownie następnego
+    dnia (bez tego status pozostałby na sztywno UNPAID/heurystyce z generatora)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        for transaction, voucher in transactions:
+            voucher_id = _save_voucher(cur, voucher)
+            _save_bank_transaction(cur, transaction, voucher_id)
+            if transaction.transaction_type == BankTransactionType.OUTGOING and transaction.supplier_invoice_id is not None:
+                cur.execute(
+                    "UPDATE supplier_invoices SET status = 'PAID' WHERE id = %s",
+                    (transaction.supplier_invoice_id,),
+                )
+    conn.commit()
+
+
+def _save_hour_entry(cur, entry: HourEntry) -> None:
+    cur.execute(
+        """INSERT INTO hour_entries (date, employee_id, project_id, activity_type, hours, description)
+           VALUES (%s, %s, %s, %s, %s, %s)
+           ON CONFLICT (date, employee_id, project_id, activity_type) DO NOTHING""",
+        (entry.date, entry.employee_id, entry.project_id, entry.activity_type.value, entry.hours, entry.description),
+    )
+
+
+def save_hour_entries(entries: list[HourEntry]) -> None:
+    conn = get_connection()
+    with conn.cursor() as cur:
+        for entry in entries:
+            _save_hour_entry(cur, entry)
+    conn.commit()
+
+
+def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> None:
+    """Zapisuje SalaryTransaction (+payslips+specifications) i odpowiadające
+    Vouchery (lista płac, AGA, ew. feriepenger) — para zwracana przez
+    generate_monthly_salary()."""
+    save_all(transaction)
+    for voucher in vouchers:
+        save_all(voucher)
+
+
+def get_orders_for_payment_window(as_of: date, lookback_days: int = MAX_PAYMENT_TERMS_DAYS) -> list[Order]:
+    """Rekonstruuje Order (+orderLines) z bazy, wystawione w oknie
+    [as_of-lookback_days, as_of]. orders nie mają kolumny status (w
+    przeciwieństwie do supplier_invoices) — okno dat pokrywające najdłuższy
+    payment_terms w roster.CUSTOMERS (45 dni) jest jedynym filtrem.
+    generate_daily_bank_transactions() i tak dopasowuje tylko zamówienia,
+    których invoiceDate+payment_terms == as_of, więc powtórne przetworzenie
+    tego samego okna kolejnego dnia jest nieszkodliwe (ON CONFLICT DO NOTHING
+    w save_bank_transactions)."""
+    conn = get_connection()
+    start = as_of - timedelta(days=lookback_days)
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id, customer_id, order_date, delivery_date, invoice_date,
+                      invoices_due_in, department_id, comment
+               FROM orders WHERE invoice_date BETWEEN %s AND %s""",
+            (start, as_of),
+        )
+        order_rows = cur.fetchall()
+
+        order_ids = [row[0] for row in order_rows]
+        lines_by_order: dict[int, list] = {}
+        if order_ids:
+            cur.execute(
+                """SELECT order_id, product_id, count, unit_price_excluding_vat_currency,
+                          vat_type_id, discount
+                   FROM order_lines WHERE order_id = ANY(%s)""",
+                (order_ids,),
+            )
+            for row in cur.fetchall():
+                lines_by_order.setdefault(row[0], []).append(row)
+
+    orders: list[Order] = []
+    for oid, customer_id, order_date, delivery_date, invoice_date, invoices_due_in, department_id, comment in order_rows:
+        order_lines = [
+            OrderLine(
+                product=TripletexRef(id=l_product_id) if l_product_id is not None else None,
+                count=float(l_count) if l_count is not None else 1.0,
+                unitPriceExcludingVatCurrency=float(l_price) if l_price is not None else 0.0,
+                vatType=TripletexRef(id=l_vat_type_id) if l_vat_type_id is not None else None,
+                discount=float(l_discount) if l_discount is not None else 0.0,
+            )
+            for (_, l_product_id, l_count, l_price, l_vat_type_id, l_discount) in lines_by_order.get(oid, [])
+        ]
+        orders.append(Order(
+            id=oid,
+            customer=TripletexRef(id=customer_id),
+            orderDate=order_date,
+            deliveryDate=delivery_date,
+            invoiceDate=invoice_date,
+            invoicesDueIn=invoices_due_in or 30,
+            department=TripletexRef(id=department_id) if department_id is not None else None,
+            comment=comment,
+            orderLines=order_lines,
+        ))
+    return orders
+
+
+def get_unpaid_supplier_invoices(as_of: date, lookback_days: int = MAX_PAYMENT_TERMS_DAYS) -> list[SupplierInvoice]:
+    """Rekonstruuje SupplierInvoice ze statusem UNPAID, których payment_due_date
+    wypada w oknie [as_of-lookback_days, as_of]. Status przełącza się na PAID w
+    save_bank_transactions() po zaksięgowaniu płatności — raz przetworzona
+    faktura nie pojawi się tu ponownie."""
+    conn = get_connection()
+    start = as_of - timedelta(days=lookback_days)
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id, invoice_number, supplier_id, invoice_date, received_date,
+                      payment_due_date, amount_currency, account_number, comment
+               FROM supplier_invoices
+               WHERE status = 'UNPAID' AND payment_due_date BETWEEN %s AND %s""",
+            (start, as_of),
+        )
+        rows = cur.fetchall()
+
+    invoices: list[SupplierInvoice] = []
+    for iid, invoice_number, supplier_id, invoice_date, received_date, payment_due_date, amount_currency, account_number, comment in rows:
+        invoices.append(SupplierInvoice(
+            id=iid,
+            invoiceNumber=invoice_number,
+            supplier=TripletexRef(id=supplier_id),
+            invoiceDate=invoice_date,
+            receivedDate=received_date,
+            paymentDueDate=payment_due_date,
+            amountCurrency=float(amount_currency),
+            account=TripletexRef(id=account_number) if account_number is not None else None,
+            comment=comment,
+        ))
+    return invoices

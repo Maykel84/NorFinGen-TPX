@@ -1,6 +1,10 @@
 from datetime import date
 
 from norfingen.models import (
+    ActivityType,
+    BankTransaction,
+    BankTransactionType,
+    HourEntry,
     Order,
     OrderLine,
     Product,
@@ -11,6 +15,57 @@ from norfingen.models import (
 )
 from norfingen.models.base import TripletexRef
 from norfingen.models.salary import WAGE_TYPE_FAST_LONN, WAGE_TYPE_SKATTETREKK
+
+
+def test_bank_transaction_incoming_from_customer():
+    tx = BankTransaction(
+        date=date(2024, 1, 15),
+        amount=250_000.0,
+        transaction_type=BankTransactionType.INCOMING,
+        description="Betaling K01-2024-001",
+        customer_id=1,
+        order_id=1,
+        account_from=1500,
+        account_to=1910,
+    )
+    assert tx.amount == 250_000.0
+    assert tx.supplier_id is None
+    assert tx.transaction_type == BankTransactionType.INCOMING
+
+
+def test_hour_entry_billable_requires_project():
+    entry = HourEntry(
+        date=date(2024, 1, 15),
+        employee_id=2,
+        project_id=1,
+        activity_type=ActivityType.BILLABLE,
+        hours=7.5,
+        description="IT Support — Bergström",
+    )
+    assert entry.project_id == 1
+    assert entry.activity_type == ActivityType.BILLABLE
+
+
+def test_hour_entry_internal_and_sick_without_project():
+    internal = HourEntry(date=date(2024, 1, 16), employee_id=2, activity_type=ActivityType.INTERNAL, hours=1.0)
+    sick = HourEntry(date=date(2024, 1, 17), employee_id=2, activity_type=ActivityType.SICK, hours=7.5)
+    assert internal.project_id is None
+    assert sick.project_id is None
+
+
+def test_bank_transaction_outgoing_to_supplier():
+    tx = BankTransaction(
+        date=date(2024, 1, 20),
+        amount=85_000.0,
+        transaction_type=BankTransactionType.OUTGOING,
+        description="Betaling L01-2024-001",
+        supplier_id=1,
+        supplier_invoice_id=1,
+        account_from=1910,
+        account_to=2400,
+    )
+    assert tx.customer_id is None
+    assert tx.transaction_type == BankTransactionType.OUTGOING
 
 
 def test_product():

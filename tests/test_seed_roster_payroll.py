@@ -11,7 +11,17 @@ from norfingen.seed.payroll import (
     is_june,
     last_working_day,
 )
-from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, SUPPLIERS, employee_by_number
+from norfingen.seed.roster import (
+    CUSTOMERS,
+    DEPARTMENTS,
+    EMPLOYEES,
+    PRODUCTS,
+    PROJECTS,
+    SUPPLIERS,
+    employee_by_number,
+    numeric_id,
+    project_by_number,
+)
 
 
 def test_roster_counts_match_docs():
@@ -69,6 +79,23 @@ def test_calc_brutto_with_raises_compounds_annually():
     # 880 000 NOK/rok w 2019 -> ~1 081 000 NOK/rok (brutto x12) w 2026 po H2 (7 podwyżek).
     monthly_2026_h2 = calc_brutto_with_raises(e01, 2026, 7)
     assert abs(monthly_2026_h2 * 12 - 1_081_000) < 5_000
+
+
+def test_projects_seed_data():
+    assert len(PROJECTS) == 8
+    prj005 = project_by_number("PRJ005")
+    assert prj005.customer_id == 6
+    assert prj005.name == "Digitalisering — Telemark"
+    assert prj005.start_date == date(2026, 3, 1)
+
+
+def test_numeric_id_handles_single_and_multi_letter_prefixes():
+    assert numeric_id("E07") == 7
+    assert numeric_id("K03") == 3
+    assert numeric_id("L05") == 5
+    assert numeric_id("P02") == 2
+    assert numeric_id("PRJ001") == 1
+    assert numeric_id("PRJ008") == 8
 
 
 def test_last_working_day_rolls_back_from_weekend():

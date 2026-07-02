@@ -8,6 +8,7 @@ funkcje payroll) czytają stąd — żadne dane firmowe nie są duplikowane gdzi
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
@@ -40,6 +41,8 @@ class CustomerSeed:
     order_pattern: str  # A (IT Support) / B (IT Support + Licencja) / C (Licencja only) / D (Consulting)
     support_product: Optional[str] = None  # numer Product dla linii IT Support
     license_product: Optional[str] = None  # numer Product dla linii Licencja
+    invoice_day: Optional[int] = None  # dzień miesiąca wystawienia faktury; None = nieregularny (K06 consulting)
+    payment_terms: int = 30  # dni do terminu płatności (net 14/30/45)
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,14 @@ class SupplierSeed:
     amount_max: float
     capitalization_threshold: Optional[float] = None  # L05: >= 30 000 -> kapitalizacja
     capitalization_account: Optional[int] = None  # L05: 1200 Maskiner og anlegg
+
+
+@dataclass(frozen=True)
+class ProjectSeed:
+    number: str  # "PRJ001" – "PRJ008"
+    name: str
+    customer_id: int  # numeryczne id klienta (FK -> CustomerSeed, zob. numeric_id)
+    start_date: date
 
 
 @dataclass(frozen=True)
@@ -97,18 +108,30 @@ EMPLOYEES: list[EmployeeSeed] = [
 
 
 CUSTOMERS: list[CustomerSeed] = [
-    CustomerSeed("K01", "Bergström Industri AS", "Enterprise", "Bergen", "B", "P01", "P04"),
-    CustomerSeed("K02", "Halvorsen & Partnere AS", "Mid-market", "Oslo", "A", "P02", None),
-    CustomerSeed("K03", "Nordkraft Energi AS", "Enterprise", "Tromsø", "B", "P01", "P04"),
-    CustomerSeed("K04", "Solberg Bygg AS", "SMB", "Stavanger", "A", "P03", None),
-    CustomerSeed("K05", "Fjord Logistikk AS", "Mid-market", "Bergen", "A", "P02", None),
-    CustomerSeed("K06", "Telemark Konsult AS", "SMB", "Skien", "D", None, None),
-    CustomerSeed("K07", "Østfold Finans AS", "Mid-market", "Fredrikstad", "B", "P02", "P05"),
-    CustomerSeed("K08", "Innlandet Helse AS", "Enterprise", "Hamar", "A", "P01", None),
-    CustomerSeed("K09", "Vestfold Handel AS", "SMB", "Tønsberg", "A", "P03", None),
-    CustomerSeed("K10", "Kristiansen Gruppen AS", "Mid-market", "Oslo", "C", None, "P05"),
-    CustomerSeed("K11", "Rogaland Teknikk AS", "Enterprise", "Stavanger", "B", "P01", "P04"),
-    CustomerSeed("K12", "Agder Maritime AS", "SMB", "Kristiansand", "A", "P03", None),
+    CustomerSeed("K01", "Bergström Industri AS", "Enterprise", "Bergen", "B", "P01", "P04",
+                 invoice_day=3, payment_terms=30),
+    CustomerSeed("K02", "Halvorsen & Partnere AS", "Mid-market", "Oslo", "A", "P02", None,
+                 invoice_day=7, payment_terms=14),  # szybki płatnik
+    CustomerSeed("K03", "Nordkraft Energi AS", "Enterprise", "Tromsø", "B", "P01", "P04",
+                 invoice_day=1, payment_terms=45),  # duży klient, dłuższy termin
+    CustomerSeed("K04", "Solberg Bygg AS", "SMB", "Stavanger", "A", "P03", None,
+                 invoice_day=10, payment_terms=30),
+    CustomerSeed("K05", "Fjord Logistikk AS", "Mid-market", "Bergen", "A", "P02", None,
+                 invoice_day=5, payment_terms=30),
+    CustomerSeed("K06", "Telemark Konsult AS", "SMB", "Skien", "D", None, None,
+                 invoice_day=None, payment_terms=14),  # consulting — nieregularny
+    CustomerSeed("K07", "Østfold Finans AS", "Mid-market", "Fredrikstad", "B", "P02", "P05",
+                 invoice_day=15, payment_terms=30),
+    CustomerSeed("K08", "Innlandet Helse AS", "Enterprise", "Hamar", "A", "P01", None,
+                 invoice_day=1, payment_terms=45),
+    CustomerSeed("K09", "Vestfold Handel AS", "SMB", "Tønsberg", "A", "P03", None,
+                 invoice_day=20, payment_terms=30),
+    CustomerSeed("K10", "Kristiansen Gruppen AS", "Mid-market", "Oslo", "C", None, "P05",
+                 invoice_day=8, payment_terms=30),
+    CustomerSeed("K11", "Rogaland Teknikk AS", "Enterprise", "Stavanger", "B", "P01", "P04",
+                 invoice_day=2, payment_terms=30),
+    CustomerSeed("K12", "Agder Maritime AS", "SMB", "Kristiansand", "A", "P03", None,
+                 invoice_day=12, payment_terms=30),
 ]
 
 
@@ -131,6 +154,18 @@ SUPPLIERS: list[SupplierSeed] = [
     SupplierSeed("L06", "Advokatfirma Thommessen", "Usługi prawne", 6700, "quarterly_mar_jun_sep_dec", 25_000, 60_000),
     SupplierSeed("L07", "Avis Norge AS", "Wynajem samochodów", 7000, "monthly_day_20", 12_000, 28_000),
     SupplierSeed("L08", "Nordic Insurance Partners AS", "Ubezpieczenia", 7500, "quarterly_jan_apr_jul_oct", 38_000, 38_000),
+]
+
+
+PROJECTS: list[ProjectSeed] = [
+    ProjectSeed("PRJ001", "IT Support 2026 — Bergström", 1, date(2026, 1, 1)),
+    ProjectSeed("PRJ002", "IT Support 2026 — Nordkraft", 3, date(2026, 1, 1)),
+    ProjectSeed("PRJ003", "IT Support 2026 — Innlandet", 8, date(2026, 1, 1)),
+    ProjectSeed("PRJ004", "IT Support 2026 — Rogaland", 11, date(2026, 1, 1)),
+    ProjectSeed("PRJ005", "Digitalisering — Telemark", 6, date(2026, 3, 1)),
+    ProjectSeed("PRJ006", "IT Support 2026 — Halvorsen", 2, date(2026, 1, 1)),
+    ProjectSeed("PRJ007", "IT Support 2026 — Fjord", 5, date(2026, 1, 1)),
+    ProjectSeed("PRJ008", "IT Support 2026 — Østfold", 7, date(2026, 1, 1)),
 ]
 
 
@@ -162,11 +197,24 @@ def customer_by_number(number: str) -> CustomerSeed:
     raise KeyError(f"Nieznany numer klienta: {number}")
 
 
+def customer_by_id(customer_id: int) -> CustomerSeed:
+    """Odwrotność numeric_id() dla klientów — customer_id z TripletexRef/bazy
+    (1-12) -> CustomerSeed. Potrzebne tam, gdzie mamy tylko numeryczne id
+    (np. Order.customer.id), nie kod seed ("K01")."""
+    return customer_by_number(f"K{customer_id:02d}")
+
+
 def supplier_by_number(number: str) -> SupplierSeed:
     for s in SUPPLIERS:
         if s.number == number:
             return s
     raise KeyError(f"Nieznany numer dostawcy: {number}")
+
+
+def supplier_by_id(supplier_id: int) -> SupplierSeed:
+    """Odwrotność numeric_id() dla dostawców — supplier_id z TripletexRef/bazy
+    (1-8) -> SupplierSeed."""
+    return supplier_by_number(f"L{supplier_id:02d}")
 
 
 def product_by_number(number: str) -> ProductSeed:
@@ -176,8 +224,17 @@ def product_by_number(number: str) -> ProductSeed:
     raise KeyError(f"Nieznany numer produktu: {number}")
 
 
+def project_by_number(number: str) -> ProjectSeed:
+    for p in PROJECTS:
+        if p.number == number:
+            return p
+    raise KeyError(f"Nieznany numer projektu: {number}")
+
+
 def numeric_id(code: str) -> int:
-    """Konwertuje kod seed (E07, K03, L05, P02) na numeryczne id Warstwy 1
-    (Employee 1-16, Customer 1-12, Supplier 1-8, Product 1-6 — przypisywane
-    sekwencyjnie wg kolejności w dokumentacji)."""
-    return int(code[1:])
+    """Konwertuje kod seed (E07, K03, L05, P02, PRJ001) na numeryczne id
+    Warstwy 1/2 (Employee 1-16, Customer 1-12, Supplier 1-8, Product 1-6,
+    Project 1-8 — przypisywane sekwencyjnie wg kolejności w dokumentacji).
+    Obsługuje zarówno jednoliterowe (E/K/L/P), jak i wieloliterowe (PRJ)
+    prefiksy."""
+    return int(re.sub(r"^[A-Za-z]+", "", code))

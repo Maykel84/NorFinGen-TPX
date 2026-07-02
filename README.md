@@ -12,7 +12,7 @@ src/norfingen/
   config.py                 Ustawienia z .env (DATABASE_URL, tokeny Tripletex)
   db/
     connection.py            Połączenie SQLAlchemy (nieużywane przez repository.py — zob. niżej)
-    schema.sql                16x CREATE TABLE IF NOT EXISTS — pełny schemat Supabase
+    schema.sql                19x CREATE TABLE IF NOT EXISTS — pełny schemat Supabase
     repository.py             save_all() / ensure_schema() / seed_reference_data() — psycopg2
   models/                   Modele Pydantic encji Tripletex API v2
     base.py                 TripletexRef, Address, CompanyBase (wspólne dla Customer/Supplier)
@@ -56,7 +56,7 @@ python run_backfill.py --start 2024-01-01 --end 2024-06-30   # zakres
 python run_daily.py                            # bieżący miesiąc, idempotentny
 ```
 
-Oba skrypty same wywołują `ensure_schema()` (tworzy 16 tabel, IF NOT EXISTS) i
+Oba skrypty same wywołują `ensure_schema()` (tworzy 19 tabel, IF NOT EXISTS) i
 `seed_reference_data()` (departments/employees/employments/customers/suppliers/
 accounts/vat_types/products z `roster.py`) przed generacją — bezpieczne na
 pustej bazie i przy każdym kolejnym uruchomieniu.

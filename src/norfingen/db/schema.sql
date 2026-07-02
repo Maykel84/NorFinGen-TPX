@@ -220,6 +220,49 @@ CREATE TABLE IF NOT EXISTS postings (
     UNIQUE (voucher_id, account_number, amount)
 );
 
+-- ─────────────────────────────────────────────────── Etap 4 — bank / projekty / timesheet
+
+CREATE TABLE IF NOT EXISTS projects (
+    id          SERIAL PRIMARY KEY,
+    number      VARCHAR(20) UNIQUE NOT NULL,
+    name        VARCHAR(200) NOT NULL,
+    customer_id INTEGER REFERENCES customers(id),
+    start_date  DATE NOT NULL,
+    end_date    DATE,
+    status      VARCHAR(20) DEFAULT 'ACTIVE',
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+    id                  SERIAL PRIMARY KEY,
+    date                DATE NOT NULL,
+    amount              NUMERIC(12,2) NOT NULL,
+    transaction_type    VARCHAR(20) NOT NULL,
+    description         TEXT,
+    customer_id         INTEGER REFERENCES customers(id),
+    supplier_id         INTEGER REFERENCES suppliers(id),
+    order_id            INTEGER REFERENCES orders(id),
+    supplier_invoice_id INTEGER REFERENCES supplier_invoices(id),
+    account_from        INTEGER NOT NULL,
+    account_to          INTEGER NOT NULL,
+    voucher_id          INTEGER REFERENCES vouchers(id),
+    created_at          TIMESTAMP DEFAULT NOW(),
+    UNIQUE(date, order_id, transaction_type),
+    UNIQUE(date, supplier_invoice_id, transaction_type)
+);
+
+CREATE TABLE IF NOT EXISTS hour_entries (
+    id            SERIAL PRIMARY KEY,
+    date          DATE NOT NULL,
+    employee_id   INTEGER REFERENCES employees(id),
+    project_id    INTEGER REFERENCES projects(id),
+    activity_type VARCHAR(20) NOT NULL,
+    hours         NUMERIC(4,1) NOT NULL,
+    description   TEXT,
+    created_at    TIMESTAMP DEFAULT NOW(),
+    UNIQUE(date, employee_id, project_id, activity_type)
+);
+
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_lines_order ON order_lines(order_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier ON supplier_invoices(supplier_id);
@@ -228,3 +271,9 @@ CREATE INDEX IF NOT EXISTS idx_salary_specifications_payslip ON salary_specifica
 CREATE INDEX IF NOT EXISTS idx_postings_voucher ON postings(voucher_id);
 CREATE INDEX IF NOT EXISTS idx_postings_account ON postings(account_number);
 CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(date);
+CREATE INDEX IF NOT EXISTS idx_projects_customer ON projects(customer_id);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_customer ON bank_transactions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_supplier ON bank_transactions(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_date ON bank_transactions(date);
+CREATE INDEX IF NOT EXISTS idx_hour_entries_employee ON hour_entries(employee_id);
+CREATE INDEX IF NOT EXISTS idx_hour_entries_project ON hour_entries(project_id);
