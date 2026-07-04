@@ -151,6 +151,28 @@ def test_month_already_generated(fake_repository):
     assert repository.month_already_generated(2024, 1) is True
 
 
+def test_terminate_stale_sessions_kills_found_pids(fake_repository):
+    repository, fake_conn = fake_repository
+
+    fake_conn.cursor_obj.fetchall_queue = [[(12345,), (67890,)]]
+    killed = repository.terminate_stale_sessions()
+
+    assert killed == 2
+    sql_texts = [sql for sql, _ in fake_conn.cursor_obj.executed]
+    assert any("pg_stat_activity" in s for s in sql_texts)
+    assert sum("pg_terminate_backend" in s for s in sql_texts) == 2
+    assert fake_conn.committed
+
+
+def test_terminate_stale_sessions_no_stale_sessions(fake_repository):
+    repository, fake_conn = fake_repository
+
+    fake_conn.cursor_obj.fetchall_queue = [[]]
+    killed = repository.terminate_stale_sessions()
+
+    assert killed == 0
+
+
 def test_save_bank_transactions_incoming(fake_repository):
     repository, fake_conn = fake_repository
     orders = generate_monthly_orders(2024, 1)

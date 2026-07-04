@@ -15,6 +15,10 @@ Data faktury (orderDate/invoiceDate) i termin płatności (invoicesDueIn) per
 klient subskrypcyjny (A/B/C) pochodzą z roster.CustomerSeed.invoice_day /
 .payment_terms, nie są już sztywne (1. dzień miesiąca / net 30).
 
+Klienci nie generują zamówień przed swoją roster.CustomerSeed.onboarding_date —
+stopniowy onboarding portfela (pierwszy klient marzec 2019, komplet 12 dopiero
+w 2022), nie wszyscy istniejący od 2019-01-01.
+
 generate_monthly_orders(year, month) — jeden Order per klient A/B/C w miesiącu
 (+ ewentualny D), używana przez backfill.py (pętla historyczna).
 generate_daily_orders(year, month, day) — Order tylko dla klientów, których
@@ -91,6 +95,12 @@ def _clamp_day(year: int, month: int, day: int) -> int:
     return min(day, last_day)
 
 
+def _is_onboarded(customer: CustomerSeed, on_date: date) -> bool:
+    """Klient nie generuje zamówień przed swoją onboarding_date — stopniowy
+    onboarding portfela klientów zamiast wszystkich istniejących od 2019-01-01."""
+    return on_date >= customer.onboarding_date
+
+
 def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_lines: list[OrderLine]) -> Order:
     order_date = date(year, month, _clamp_day(year, month, day))
     last_day = calendar.monthrange(year, month)[1]
@@ -139,11 +149,14 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
         pattern = customer.order_pattern
 
         if pattern in ("A", "B", "C"):
+            order_date = date(year, month, _clamp_day(year, month, customer.invoice_day))
+            if not _is_onboarded(customer, order_date):
+                continue
             lines = _order_lines_for_pattern(customer, year)
             orders.append(_build_order(customer, year, month, customer.invoice_day, lines))
 
         elif pattern == "D":
-            if should_generate_consulting(month, year):
+            if _is_onboarded(customer, date(year, month, 1)) and should_generate_consulting(month, year):
                 rng = random.Random(f"{customer.number}-{year}-{month}")
                 price = rng.uniform(CONSULTING_PRICE_MIN, CONSULTING_PRICE_MAX)
                 line = _order_line_for_product("P06", year, count=1.0, unit_price=round(price, 2))
@@ -157,7 +170,8 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
 
 def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
     """Generuje zamówienia dla konkretnego dnia — wystawia fakturę tylko tym
-    klientom, dla których dzisiaj wypada ich invoice_day. K06 (consulting,
+    klientom, dla których dzisiaj wypada ich invoice_day i którzy są już
+    onboardowani (order_date >= onboarding_date). K06 (consulting,
     invoice_day=None) jest tu pomijany — ma osobną logikę wyzwalania
     (should_generate_consulting), nierozłożoną na konkretny dzień miesiąca."""
     orders: list[Order] = []
@@ -166,6 +180,10 @@ def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
         if customer.invoice_day is None:
             continue  # K06 consulting — osobna logika
         if customer.invoice_day != day:
+            continue
+
+        order_date = date(year, month, day)
+        if not _is_onboarded(customer, order_date):
             continue
 
         lines = _order_lines_for_pattern(customer, year)

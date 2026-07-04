@@ -3,8 +3,11 @@
 Loguje godziny tylko dla pracowników działów Leveranse/Teknologi (per
 EMPLOYEE_PROJECT_MAP) — Salg i Økonomi nie raportują czasu projektowego.
 Każdy aktywny dzień roboczy: ~5% szans na SICK (0h), inaczej billable (6-7.5h,
-przypisane do jednego z dwóch projektów pracownika) + reszta do 7.5h jako
-INTERNAL.
+przypisane do jednego z dwóch projektów pracownika, ale TYLKO jeśli klient
+danego projektu ma już onboarding_date <= dzisiaj — konsultant nie loguje
+godzin do klienta, który jeszcze nie istnieje) + reszta do 7.5h jako INTERNAL.
+Jeśli żaden z przypisanych projektów pracownika nie ma jeszcze aktywnego
+klienta, cały dzień loguje się jako INTERNAL (brak zlecenia do fakturowania).
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import random
 from datetime import date
 
 from norfingen.models.hours import ActivityType, HourEntry
+from norfingen.seed.roster import customer_by_id, project_by_id
 
 # Pracownicy którzy logują godziny (Leveranse + Teknologi, E02-E15 z wyjątkiem E05).
 BILLABLE_EMPLOYEES = [2, 3, 4, 7, 8, 9, 10, 12, 13, 14, 15]
@@ -42,6 +46,20 @@ def is_working_day(d: date) -> bool:
     return d.weekday() < 5
 
 
+def _active_projects_for_employee(emp_id: int, on_date: date) -> list[int]:
+    """Projekty przypisane pracownikowi, których klient ma już
+    onboarding_date <= on_date — reszta jest niewidoczna, bo klient jeszcze
+    nie istnieje w tym momencie historii firmy."""
+    projects = EMPLOYEE_PROJECT_MAP.get(emp_id, [1])
+    active = []
+    for project_id in projects:
+        project = project_by_id(project_id)
+        customer = customer_by_id(project.customer_id)
+        if customer.onboarding_date <= on_date:
+            active.append(project_id)
+    return active
+
+
 def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: list[int]) -> list[HourEntry]:
     """Generuje wpisy godzin dla konkretnego dnia roboczego.
 
@@ -69,8 +87,19 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
             ))
             continue
 
-        projects = EMPLOYEE_PROJECT_MAP.get(emp_id, [1])
-        project_id = rng.choice(projects)
+        active_projects = _active_projects_for_employee(emp_id, d)
+        if not active_projects:
+            # Żaden przypisany klient jeszcze nie istnieje (onboarding w przyszłości)
+            # -> brak zlecenia do fakturowania, cały dzień internal.
+            entries.append(HourEntry(
+                date=d, employee_id=emp_id,
+                activity_type=ActivityType.INTERNAL,
+                hours=FULL_WORKDAY_HOURS,
+                description="Interne møter / administrasjon (brak aktywnego klienta)",
+            ))
+            continue
+
+        project_id = rng.choice(active_projects)
         billable_hours = rng.choice(BILLABLE_HOURS_CHOICES)
 
         entries.append(HourEntry(

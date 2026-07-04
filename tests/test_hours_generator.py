@@ -59,6 +59,28 @@ def test_billable_and_internal_sum_to_full_workday():
             assert billable_entry.project_id in EMPLOYEE_PROJECT_MAP[emp_id]
 
 
+def test_no_billable_hours_before_any_assigned_customer_onboarding():
+    # E02 (Marte): projekty [1=K01 onboarding 2019-03-01, 6=K02 onboarding 2019-06-01].
+    # W lutym 2019 (dzień po jej starcie 2019-02-01) żaden klient jeszcze nie istnieje
+    # -> cały dzień musi być INTERNAL, zero BILLABLE.
+    entries = generate_daily_hours(2019, 2, 4, [2])  # poniedziałek
+    assert len(entries) == 1
+    assert entries[0].activity_type == ActivityType.INTERNAL
+    assert entries[0].hours == 7.5
+    assert entries[0].project_id is None
+
+
+def test_billable_hours_only_to_onboarded_customer_project():
+    # Od 2019-03-01 K01 (projekt 1) jest aktywny, ale K02 (projekt 6) nie
+    # (onboarding dopiero 2019-06-01) -> jeśli E02 loguje BILLABLE, musi to być
+    # zawsze projekt 1, nigdy 6.
+    for day in (4, 5, 6, 7, 8):  # kilka dni roboczych marca 2019
+        entries = generate_daily_hours(2019, 3, day, [2])
+        billable = [e for e in entries if e.activity_type == ActivityType.BILLABLE]
+        for entry in billable:
+            assert entry.project_id == 1
+
+
 def test_deterministic_across_calls():
     a = generate_daily_hours(2024, 3, 12, ALL_EMPLOYEE_IDS)
     b = generate_daily_hours(2024, 3, 12, ALL_EMPLOYEE_IDS)

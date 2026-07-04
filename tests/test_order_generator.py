@@ -86,6 +86,49 @@ def test_consulting_pattern_d_seasonal_bias_towards_q2_q4():
     assert q2_q4_hits > q1_q3_hits
 
 
+def test_no_orders_before_any_customer_onboarding():
+    # Pierwszy klient (K01) onboarduje się 2019-03-01 -> styczeń/luty 2019 bez zamówień.
+    assert generate_monthly_orders(2019, 1) == []
+    assert generate_monthly_orders(2019, 2) == []
+
+
+def test_customer_count_grows_with_onboarding_schedule():
+    # 2019-03: tylko K01. 2019-12: 6 klientów (K01,K02,K03,K05,K08,K11 wg harmonogramu).
+    # 2023+: pełny portfel 12 klientów (K06 doszedł 2022-03).
+    orders_march_2019 = generate_monthly_orders(2019, 3)
+    assert {o.customer.id for o in orders_march_2019} == {1}
+
+    # Sierpień: poza wszystkimi progami K06 (Q2/Q4/sty/lip) -> gwarantowane 0% szans,
+    # więc dokładnie 11 klientów A/B/C, bez zależności od losowego wyniku RNG.
+    orders_2023 = generate_monthly_orders(2023, 8)
+    assert len({o.customer.id for o in orders_2023}) == 11
+
+
+def test_customer_not_onboarded_yet_generates_no_order():
+    k04 = customer_by_number("K04")  # onboarding 2020-08-01
+    assert k04.onboarding_date == date(2020, 8, 1)
+    orders_before = generate_monthly_orders(2020, 7)
+    orders_after = generate_monthly_orders(2020, 8)
+    assert not any(o.customer.id == 4 for o in orders_before)
+    assert any(o.customer.id == 4 for o in orders_after)
+
+
+def test_generate_daily_orders_respects_onboarding_date():
+    k04 = customer_by_number("K04")  # invoice_day=10, onboarding 2020-08-01
+    orders_before = generate_daily_orders(2020, 7, k04.invoice_day)
+    orders_after = generate_daily_orders(2020, 8, k04.invoice_day)
+    assert not any(o.customer.id == 4 for o in orders_before)
+    assert any(o.customer.id == 4 for o in orders_after)
+
+
+def test_consulting_customer_no_orders_before_onboarding():
+    # K06 onboarduje się 2022-03-01 -> nigdy przed tą datą, nawet w sezonie Q2/Q4.
+    for year in range(2019, 2022):
+        for month in range(1, 13):
+            orders = generate_monthly_orders(year, month)
+            assert not any(o.customer.id == 6 for o in orders)
+
+
 def test_deterministic_across_calls():
     a = generate_monthly_orders(2024, 6)
     b = generate_monthly_orders(2024, 6)

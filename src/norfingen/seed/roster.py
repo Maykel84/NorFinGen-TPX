@@ -9,7 +9,7 @@ funkcje payroll) czytają stąd — żadne dane firmowe nie są duplikowane gdzi
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
@@ -43,6 +43,7 @@ class CustomerSeed:
     license_product: Optional[str] = None  # numer Product dla linii Licencja
     invoice_day: Optional[int] = None  # dzień miesiąca wystawienia faktury; None = nieregularny (K06 consulting)
     payment_terms: int = 30  # dni do terminu płatności (net 14/30/45)
+    onboarding_date: date = field(kw_only=True)  # data rozpoczęcia współpracy — brak zamówień przed tą datą
 
 
 @dataclass(frozen=True)
@@ -84,13 +85,15 @@ DEPARTMENTS: list[DepartmentSeed] = [
 
 
 EMPLOYEES: list[EmployeeSeed] = [
-    # --- Założenie firmy: 2019-01-02 (6 osób) ---
-    EmployeeSeed("E01", "Erik", "Strand", 1, date(2019, 1, 2), "founding", "Sales Manager", 880_000),
-    EmployeeSeed("E02", "Marte", "Haugen", 2, date(2019, 1, 2), "founding", "IT Consultant", 720_000),
-    EmployeeSeed("E03", "Bjørn", "Dahl", 2, date(2019, 1, 2), "founding", "Senior IT Specialist", 800_000),
-    EmployeeSeed("E04", "Kari", "Lund", 2, date(2019, 1, 2), "founding", "IT Support", 620_000),
-    EmployeeSeed("E05", "Thomas", "Berg", 3, date(2019, 1, 2), "founding", "System Architect", 860_000),
-    EmployeeSeed("E06", "Ingrid", "Moen", 4, date(2019, 1, 2), "founding", "Finance Manager", 820_000),
+    # --- Założenie firmy: kohorta założycielska rozłożona na 4 miesiące
+    # (2019-01 -> 2019-04), nie jednego dnia — realistyczne budowanie zespołu
+    # od zera, nie firma "narodzona w pełni ukształtowana".
+    EmployeeSeed("E01", "Erik", "Strand", 1, date(2019, 1, 1), "founding", "Sales Manager", 880_000),
+    EmployeeSeed("E02", "Marte", "Haugen", 2, date(2019, 2, 1), "founding", "IT Consultant", 720_000),
+    EmployeeSeed("E03", "Bjørn", "Dahl", 2, date(2019, 2, 15), "founding", "Senior IT Specialist", 800_000),
+    EmployeeSeed("E04", "Kari", "Lund", 2, date(2019, 3, 1), "founding", "IT Support", 620_000),
+    EmployeeSeed("E05", "Thomas", "Berg", 3, date(2019, 3, 15), "founding", "System Architect", 860_000),
+    EmployeeSeed("E06", "Ingrid", "Moen", 4, date(2019, 4, 1), "founding", "Finance Manager", 820_000),
     # --- Wzrost 1: 2020-03-01 (+2 osoby) ---
     EmployeeSeed("E07", "Lars", "Eriksen", 2, date(2020, 3, 1), "growth1", "IT Consultant", 700_000),
     EmployeeSeed("E08", "Silje", "Voss", 3, date(2020, 3, 1), "growth1", "Developer", 760_000),
@@ -107,31 +110,35 @@ EMPLOYEES: list[EmployeeSeed] = [
 ]
 
 
+# Stopniowy onboarding — 6 klientów do końca 2019 (rok 1, po zespole 5+ osób),
+# +2 w 2020 (rok stabilizacji przy 8 os.), +2 w 2021 (wzrost do 10 os.),
+# +2 w 2022 przed/po fuzji do 16 os. Enterprise/Mid-market najpierw, żeby
+# przychody rosły szybciej niż przy losowej kolejności.
 CUSTOMERS: list[CustomerSeed] = [
     CustomerSeed("K01", "Bergström Industri AS", "Enterprise", "Bergen", "B", "P01", "P04",
-                 invoice_day=3, payment_terms=30),
+                 invoice_day=3, payment_terms=30, onboarding_date=date(2019, 3, 1)),  # pierwszy klient
     CustomerSeed("K02", "Halvorsen & Partnere AS", "Mid-market", "Oslo", "A", "P02", None,
-                 invoice_day=7, payment_terms=14),  # szybki płatnik
+                 invoice_day=7, payment_terms=14, onboarding_date=date(2019, 6, 1)),  # szybki płatnik
     CustomerSeed("K03", "Nordkraft Energi AS", "Enterprise", "Tromsø", "B", "P01", "P04",
-                 invoice_day=1, payment_terms=45),  # duży klient, dłuższy termin
+                 invoice_day=1, payment_terms=45, onboarding_date=date(2019, 4, 15)),  # duży klient, dłuższy termin
     CustomerSeed("K04", "Solberg Bygg AS", "SMB", "Stavanger", "A", "P03", None,
-                 invoice_day=10, payment_terms=30),
+                 invoice_day=10, payment_terms=30, onboarding_date=date(2020, 8, 1)),  # po ustabilizowaniu zespołu
     CustomerSeed("K05", "Fjord Logistikk AS", "Mid-market", "Bergen", "A", "P02", None,
-                 invoice_day=5, payment_terms=30),
+                 invoice_day=5, payment_terms=30, onboarding_date=date(2019, 9, 1)),
     CustomerSeed("K06", "Telemark Konsult AS", "SMB", "Skien", "D", None, None,
-                 invoice_day=None, payment_terms=14),  # consulting — nieregularny
+                 invoice_day=None, payment_terms=14, onboarding_date=date(2022, 3, 1)),  # consulting — ostatni, nieregularny
     CustomerSeed("K07", "Østfold Finans AS", "Mid-market", "Fredrikstad", "B", "P02", "P05",
-                 invoice_day=15, payment_terms=30),
+                 invoice_day=15, payment_terms=30, onboarding_date=date(2020, 1, 1)),
     CustomerSeed("K08", "Innlandet Helse AS", "Enterprise", "Hamar", "A", "P01", None,
-                 invoice_day=1, payment_terms=45),
+                 invoice_day=1, payment_terms=45, onboarding_date=date(2019, 7, 15)),
     CustomerSeed("K09", "Vestfold Handel AS", "SMB", "Tønsberg", "A", "P03", None,
-                 invoice_day=20, payment_terms=30),
+                 invoice_day=20, payment_terms=30, onboarding_date=date(2021, 2, 1)),  # po wzroście do 10 os.
     CustomerSeed("K10", "Kristiansen Gruppen AS", "Mid-market", "Oslo", "C", None, "P05",
-                 invoice_day=8, payment_terms=30),
+                 invoice_day=8, payment_terms=30, onboarding_date=date(2020, 4, 1)),
     CustomerSeed("K11", "Rogaland Teknikk AS", "Enterprise", "Stavanger", "B", "P01", "P04",
-                 invoice_day=2, payment_terms=30),
+                 invoice_day=2, payment_terms=30, onboarding_date=date(2019, 10, 15)),  # komplet 4 Enterprise do końca 2019
     CustomerSeed("K12", "Agder Maritime AS", "SMB", "Kristiansand", "A", "P03", None,
-                 invoice_day=12, payment_terms=30),
+                 invoice_day=12, payment_terms=30, onboarding_date=date(2021, 9, 1)),
 ]
 
 
@@ -229,6 +236,11 @@ def project_by_number(number: str) -> ProjectSeed:
         if p.number == number:
             return p
     raise KeyError(f"Nieznany numer projektu: {number}")
+
+
+def project_by_id(project_id: int) -> ProjectSeed:
+    """Odwrotność numeric_id() dla projektów — project_id (1-8) -> ProjectSeed."""
+    return project_by_number(f"PRJ{project_id:03d}")
 
 
 def numeric_id(code: str) -> int:

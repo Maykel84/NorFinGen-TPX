@@ -103,6 +103,32 @@ def close_connection() -> None:
     _conn = None
 
 
+def terminate_stale_sessions(min_idle_seconds: int = 60) -> int:
+    """Zabija sesje 'idle in transaction' (poza bieżącą) — pozostałość po
+    zerwanych połączeniach (sieć/uśpienie maszyny w trakcie backfillu). Taka
+    sesja trzyma otwartą transakcję z niezacommitowanym INSERT-em i blokuje
+    kolejne insercje do tej samej tabeli/indeksu, dopóki serwer nie wykryje
+    martwego peera przez TCP keepalive — co może trwać bardzo długo i objawia
+    się jako "statement timeout" przy retry na zupełnie nowym połączeniu.
+    Wywoływana w pętli retry run_backfill_daily po napotkaniu błędu. Zwraca
+    liczbę zabitych sesji."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT pid FROM pg_stat_activity
+               WHERE datname = current_database()
+                 AND state = 'idle in transaction'
+                 AND pid <> pg_backend_pid()
+                 AND now() - state_change > (%s || ' seconds')::interval""",
+            (min_idle_seconds,),
+        )
+        pids = [row[0] for row in cur.fetchall()]
+        for pid in pids:
+            cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    conn.commit()
+    return len(pids)
+
+
 def ensure_schema() -> None:
     """Wykonuje db/schema.sql (16× CREATE TABLE IF NOT EXISTS) — bezpieczne do
     wielokrotnego wywołania, idempotentne."""

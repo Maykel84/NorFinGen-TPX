@@ -39,6 +39,38 @@ def test_active_employees_respects_historical_phases():
     assert len(active_employees(date(2023, 1, 1))) == 16
 
 
+def test_founding_cohort_staggered_over_four_months():
+    # Kohorta założycielska rozłożona 2019-01 -> 2019-04, nie jednego dnia.
+    assert len(active_employees(date(2019, 1, 1))) == 1  # tylko E01 (CEO)
+    assert len(active_employees(date(2019, 1, 31))) == 1
+    assert len(active_employees(date(2019, 2, 1))) == 2  # +E02
+    assert len(active_employees(date(2019, 2, 15))) == 3  # +E03
+    assert len(active_employees(date(2019, 3, 1))) == 4  # +E04
+    assert len(active_employees(date(2019, 3, 15))) == 5  # +E05
+    assert len(active_employees(date(2019, 4, 1))) == 6  # +E06 -> zespół kompletny
+
+
+def test_customer_count_grows_with_headcount():
+    """Liczba aktywnych klientów rośnie wraz z zatrudnieniem, nie wyprzedza go —
+    na koniec 2019 (6 pracowników) liczba onboardowanych klientów nie przekracza
+    liczby pracowników w tym momencie."""
+    headcount_end_2019 = len(active_employees(date(2019, 12, 31)))
+    active_customers_end_2019 = [c for c in CUSTOMERS if c.onboarding_date <= date(2019, 12, 31)]
+    assert headcount_end_2019 == 6
+    assert len(active_customers_end_2019) <= headcount_end_2019
+
+
+def test_founding_hires_not_paid_before_their_start_month():
+    # E03 startuje 2019-02-15 -> nieaktywny na 1. dzień lutego (brak wypłaty za luty),
+    # aktywny od marca (active_employees sprawdza start_date <= 1. dzień miesiąca).
+    e03 = employee_by_number("E03")
+    assert e03.start_date == date(2019, 2, 15)
+    active_february = active_employees(date(2019, 2, 1))
+    active_march = active_employees(date(2019, 3, 1))
+    assert e03 not in active_february
+    assert e03 in active_march
+
+
 def test_active_employees_brutto_aggregate_matches_docs():
     # Łączne brutto/mies. dla okresu 2022-09 - dziś: 16 os. ≈ 955 000 NOK (docs W2,
     # wartość zaokrąglona w dokumentacji — dopuszczamy tolerancję wynikającą z sumy
@@ -63,13 +95,13 @@ def test_calc_feriepenger():
 
 
 def test_calc_brutto_with_raises_no_raise_in_founding_year():
-    e01 = employee_by_number("E01")  # start 2019-01-02
+    e01 = employee_by_number("E01")  # start 2019-01-01
     assert calc_brutto_with_raises(e01, 2019, 1) == round(calc_brutto(e01), 2)
     assert calc_brutto_with_raises(e01, 2019, 12) == round(calc_brutto(e01), 2)
 
 
 def test_calc_brutto_with_raises_first_raise_next_july():
-    e01 = employee_by_number("E01")  # start 2019-01-02 -> pierwsza podwyżka lipiec 2020
+    e01 = employee_by_number("E01")  # start 2019-01-01 -> pierwsza podwyżka lipiec 2020
     assert calc_brutto_with_raises(e01, 2020, 6) == round(calc_brutto(e01), 2)
     assert calc_brutto_with_raises(e01, 2020, 7) == round(calc_brutto(e01) * 1.03, 2)
 

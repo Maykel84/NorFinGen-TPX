@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -51,14 +52,21 @@ def run_backfill_daily(start_date: date, end_date: date) -> None:
     `sys.path.insert(..., "src")` identycznie jak ten plik.
 
     Retry z reconnectem per dzień: pojedyncze długożyjące połączenie psycopg2
-    potrafi paść w trakcie wielogodzinnego backfillu (obserwowane 2x w tej
-    sesji — "Can't assign requested address" po uśpieniu/zmianie sieci).
-    Zamiast wywalać cały bieg, zamykamy połączenie i próbujemy ten sam dzień
+    potrafi paść w trakcie wielogodzinnego backfillu (obserwowane wielokrotnie
+    w tej sesji — zerwania sieci/DNS po uśpieniu maszyny). Zerwane połączenie
+    zostawia po sobie sesję "idle in transaction" po stronie serwera (martwy
+    peer nie jest wykrywany od razu przez TCP keepalive) — taka sesja blokuje
+    kolejne insercje do tej samej tabeli/indeksu, więc samo zamknięcie
+    lokalnego uchwytu połączenia nie wystarczy. Dlatego przy każdym błędzie:
+    zamykamy lokalne połączenie, aktywnie zabijamy zawieszone sesje przez
+    terminate_stale_sessions(), czekamy chwilę (rosnące opóźnienie — sieć/DNS
+    po uśpieniu potrzebuje kilku-kilkunastu sekund) i próbujemy ten sam dzień
     ponownie (max 3 próby), zanim odpuścimy."""
-    from norfingen.db.repository import close_connection
+    from norfingen.db.repository import close_connection, terminate_stale_sessions
     from run_daily import run_daily
 
     max_retries = 3
+    retry_delay_seconds = 10
     current = start_date
     processed = 0
     while current <= end_date:
@@ -73,9 +81,16 @@ def run_backfill_daily(start_date: date, end_date: date) -> None:
                         current, attempt, max_retries, exc,
                     )
                     close_connection()
+                    try:
+                        killed = terminate_stale_sessions()
+                        if killed:
+                            logger.warning("run_backfill_daily: zabito %d zawieszonych sesji 'idle in transaction'", killed)
+                    except Exception:
+                        pass  # brak połączenia/uprawnień do pg_stat_activity nie powinien zablokować retry
                     if attempt == max_retries:
                         logger.error("run_backfill_daily: %s nie powiodło się po %d próbach — przerywam", current, max_retries)
                         raise
+                    time.sleep(retry_delay_seconds * attempt)
             processed += 1
             if processed % 50 == 0:
                 logger.info("run_backfill_daily: przetworzono %d dni roboczych, ostatni %s", processed, current)
