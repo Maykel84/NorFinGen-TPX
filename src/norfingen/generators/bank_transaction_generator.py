@@ -9,7 +9,9 @@ Wzorce DR/CR:
   Płatność przychodząca (klient płaci Order):
     DR 1910 Bankinnskudd driftskonto  +kwota
     CR 1500 Kundefordringer          -kwota
-    date = invoice_date + payment_terms dni
+    date = invoice_date + payment_terms dni (+90 dni jeśli Order.status == OVERDUE;
+           brak płatności wcale jeśli Order.status == WRITTEN_OFF — bad debt, zob.
+           order_generator.determine_order_status)
 
   Płatność wychodząca (firma płaci SupplierInvoice):
     DR 2400 Leverandørgjeld           +kwota
@@ -20,10 +22,11 @@ Wzorce DR/CR:
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Optional
 
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
-from norfingen.models.order import Order
+from norfingen.models.order import Order, OrderStatus
 from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import customer_by_id
 
@@ -31,18 +34,34 @@ ACCOUNT_BANK = 1910  # Bankinnskudd, driftskonto
 ACCOUNT_KUNDEFORDRINGER = 1500
 ACCOUNT_LEVERANDORGJELD = 2400
 
+OVERDUE_PAYMENT_DELAY_DAYS = 90  # OVERDUE płaci payment_terms + 90 dni, nie na czas
+
 
 def _order_gross_amount(order: Order) -> float:
     return round(sum(line.amountCurrency for line in order.orderLines), 2)
 
 
-def build_incoming_payment(order: Order, payment_terms: int) -> tuple[BankTransaction, Voucher]:
+def _incoming_payment_date(order: Order, payment_terms: int) -> Optional[date]:
+    """None jeśli WRITTEN_OFF — bad debt, nigdy nie zapłacone. OVERDUE płaci
+    z opóźnieniem OVERDUE_PAYMENT_DELAY_DAYS względem normalnego terminu."""
+    if order.status == OrderStatus.WRITTEN_OFF:
+        return None
+    base = order.invoiceDate + timedelta(days=payment_terms)
+    if order.status == OrderStatus.OVERDUE:
+        return base + timedelta(days=OVERDUE_PAYMENT_DELAY_DAYS)
+    return base
+
+
+def build_incoming_payment(order: Order, payment_terms: int) -> Optional[tuple[BankTransaction, Voucher]]:
     """Klient płaci fakturę sprzedaży (Order) — wpływ na konto bankowe.
-    date = order.invoiceDate + payment_terms dni (net 14/30/45 per klient,
-    zob. roster.CustomerSeed.payment_terms)."""
+    date = order.invoiceDate + payment_terms dni (net 14/30/45 per klient, zob.
+    roster.CustomerSeed.payment_terms), skorygowane o Order.status (zob.
+    _incoming_payment_date). Zwraca None dla WRITTEN_OFF — brak płatności."""
     assert order.invoiceDate is not None, "Order bez invoiceDate nie generuje płatności"
+    payment_date = _incoming_payment_date(order, payment_terms)
+    if payment_date is None:
+        return None
     amount = _order_gross_amount(order)
-    payment_date = order.invoiceDate + timedelta(days=payment_terms)
 
     transaction = BankTransaction(
         date=payment_date,
@@ -94,9 +113,11 @@ def generate_daily_bank_transactions(
 
     for order in orders:
         customer = customer_by_id(order.customer.id)
-        payment_date = order.invoiceDate + timedelta(days=customer.payment_terms)
+        payment_date = _incoming_payment_date(order, customer.payment_terms)
         if payment_date == today:
-            results.append(build_incoming_payment(order, customer.payment_terms))
+            payment = build_incoming_payment(order, customer.payment_terms)
+            if payment is not None:
+                results.append(payment)
 
     for invoice in supplier_invoices:
         if invoice.paymentDueDate == today:

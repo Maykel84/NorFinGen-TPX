@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from norfingen.generators.bank_transaction_generator import (
+    OVERDUE_PAYMENT_DELAY_DAYS,
     build_incoming_payment,
     build_outgoing_payment,
     generate_daily_bank_transactions,
@@ -8,6 +9,7 @@ from norfingen.generators.bank_transaction_generator import (
 from norfingen.generators.order_generator import generate_monthly_orders
 from norfingen.generators.supplier_invoice_generator import generate_monthly_supplier_invoices
 from norfingen.models.bank_transaction import BankTransactionType
+from norfingen.models.order import OrderStatus
 from norfingen.seed.roster import customer_by_number
 
 
@@ -53,6 +55,38 @@ def test_outgoing_payment_matches_supplier_invoice_gross_amount():
     assert dr.amount == round(invoice.amountCurrency, 2)
     assert cr.amount == -round(invoice.amountCurrency, 2)
     assert dr.supplier.id == invoice.supplier.id
+
+
+def test_written_off_order_never_generates_incoming_payment():
+    orders = generate_monthly_orders(2024, 1)
+    order = next(o for o in orders if o.customer.id == 1)
+    written_off_order = order.model_copy(update={"status": OrderStatus.WRITTEN_OFF})
+
+    assert build_incoming_payment(written_off_order, payment_terms=30) is None
+
+
+def test_overdue_order_delays_payment_by_extra_days():
+    orders = generate_monthly_orders(2024, 1)
+    order = next(o for o in orders if o.customer.id == 1)
+    overdue_order = order.model_copy(update={"status": OrderStatus.OVERDUE})
+
+    normal_date = order.invoiceDate + timedelta(days=30)
+    transaction, voucher = build_incoming_payment(overdue_order, payment_terms=30)
+
+    assert transaction.date == normal_date + timedelta(days=OVERDUE_PAYMENT_DELAY_DAYS)
+    assert voucher.validate_balance()
+
+
+def test_generate_daily_bank_transactions_skips_written_off_order():
+    orders = generate_monthly_orders(2024, 1)
+    order = next(o for o in orders if o.customer.id == 1)
+    written_off_order = order.model_copy(update={"status": OrderStatus.WRITTEN_OFF})
+    payment_date = order.invoiceDate + timedelta(days=30)
+
+    results = generate_daily_bank_transactions(
+        payment_date.year, payment_date.month, payment_date.day, [written_off_order], []
+    )
+    assert results == []
 
 
 def test_all_incoming_payments_balance():

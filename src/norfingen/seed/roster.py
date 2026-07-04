@@ -8,6 +8,7 @@ funkcje payroll) czytają stąd — żadne dane firmowe nie są duplikowane gdzi
 
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -44,6 +45,7 @@ class CustomerSeed:
     invoice_day: Optional[int] = None  # dzień miesiąca wystawienia faktury; None = nieregularny (K06 consulting)
     payment_terms: int = 30  # dni do terminu płatności (net 14/30/45)
     onboarding_date: date = field(kw_only=True)  # data rozpoczęcia współpracy — brak zamówień przed tą datą
+    churn_date: Optional[date] = field(default=None, kw_only=True)  # data odejścia — brak zamówień po tej dacie (None = brak churn)
 
 
 @dataclass(frozen=True)
@@ -132,7 +134,8 @@ CUSTOMERS: list[CustomerSeed] = [
     CustomerSeed("K08", "Innlandet Helse AS", "Enterprise", "Hamar", "A", "P01", None,
                  invoice_day=1, payment_terms=45, onboarding_date=date(2019, 7, 15)),
     CustomerSeed("K09", "Vestfold Handel AS", "SMB", "Tønsberg", "A", "P03", None,
-                 invoice_day=20, payment_terms=30, onboarding_date=date(2021, 2, 1)),  # po wzroście do 10 os.
+                 invoice_day=20, payment_terms=30, onboarding_date=date(2021, 2, 1),  # po wzroście do 10 os.
+                 churn_date=date(2024, 11, 30)),  # odchodzi po 3,5 roku współpracy — realistyczny churn SMB
     CustomerSeed("K10", "Kristiansen Gruppen AS", "Mid-market", "Oslo", "C", None, "P05",
                  invoice_day=8, payment_terms=30, onboarding_date=date(2020, 4, 1)),
     CustomerSeed("K11", "Rogaland Teknikk AS", "Enterprise", "Stavanger", "B", "P01", "P04",
@@ -140,6 +143,23 @@ CUSTOMERS: list[CustomerSeed] = [
     CustomerSeed("K12", "Agder Maritime AS", "SMB", "Kristiansand", "A", "P03", None,
                  invoice_day=12, payment_terms=30, onboarding_date=date(2021, 9, 1)),
 ]
+
+
+def _customer_price_multiplier(customer_number: str) -> float:
+    """Indywidualny mnożnik ceny per klient — symuluje wynik negocjacji przy
+    podpisaniu kontraktu (±8%), ustalony raz i na stałe. Deterministyczny: lokalny
+    random.Random zasiany stringiem, NIE wbudowany hash() — hash() na str jest
+    solony losowo per proces w Pythonie 3 (bezpieczeństwo), co złamałoby
+    powtarzalność backfillu przy każdym kolejnym uruchomieniu."""
+    rng = random.Random(f"price-multiplier-{customer_number}")
+    return round(rng.uniform(0.92, 1.08), 4)
+
+
+# Mnożnik jest częścią wyniku negocjacji z klientem, nie osobnym polem
+# CustomerSeed — liczony raz przy imporcie modułu z numeru klienta.
+CUSTOMER_PRICE_MULTIPLIER: dict[str, float] = {
+    c.number: _customer_price_multiplier(c.number) for c in CUSTOMERS
+}
 
 
 SUPPLIERS: list[SupplierSeed] = [

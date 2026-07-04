@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS orders (
     is_prioritize_vat      BOOLEAN NOT NULL DEFAULT FALSE,
     comment                TEXT,
     our_contact_id         INTEGER,
+    status                 TEXT DEFAULT 'PAID',
     UNIQUE (customer_id, order_date)
 );
 
@@ -262,6 +263,10 @@ CREATE TABLE IF NOT EXISTS hour_entries (
     created_at    TIMESTAMP DEFAULT NOW(),
     UNIQUE(date, employee_id, project_id, activity_type)
 );
+
+-- Kolumna dodana po utworzeniu tabeli orders w produkcji — CREATE TABLE IF NOT
+-- EXISTS jej nie doda do już istniejącej tabeli, stąd osobny ALTER (idempotentny).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'PAID';
 
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_lines_order ON order_lines(order_id);

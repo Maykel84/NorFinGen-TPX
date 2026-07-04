@@ -48,14 +48,15 @@ def is_working_day(d: date) -> bool:
 
 def _active_projects_for_employee(emp_id: int, on_date: date) -> list[int]:
     """Projekty przypisane pracownikowi, których klient ma już
-    onboarding_date <= on_date — reszta jest niewidoczna, bo klient jeszcze
-    nie istnieje w tym momencie historii firmy."""
+    onboarding_date <= on_date i (jeśli ma churn_date) jeszcze nie odszedł —
+    konsultant nie loguje godzin do klienta, który jeszcze nie istnieje albo
+    już zrezygnował ze współpracy."""
     projects = EMPLOYEE_PROJECT_MAP.get(emp_id, [1])
     active = []
     for project_id in projects:
         project = project_by_id(project_id)
         customer = customer_by_id(project.customer_id)
-        if customer.onboarding_date <= on_date:
+        if customer.onboarding_date <= on_date and (customer.churn_date is None or on_date <= customer.churn_date):
             active.append(project_id)
     return active
 

@@ -26,11 +26,12 @@ from typing import Optional, Union
 import psycopg2
 
 from norfingen.config import settings
+from norfingen.generators.bank_transaction_generator import OVERDUE_PAYMENT_DELAY_DAYS
 from norfingen.generators.voucher import Voucher
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
 from norfingen.models.base import TripletexRef
 from norfingen.models.hours import HourEntry
-from norfingen.models.order import Order, OrderLine
+from norfingen.models.order import Order, OrderLine, OrderStatus
 from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, PROJECTS, SUPPLIERS, numeric_id
@@ -258,8 +259,9 @@ def _save_order(cur, order: Order) -> None:
         cur,
         """INSERT INTO orders
                (customer_id, order_date, delivery_date, invoice_date, invoices_due_in,
-                invoices_due_in_type, department_id, currency_id, is_prioritize_vat, comment, our_contact_id)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                invoices_due_in_type, department_id, currency_id, is_prioritize_vat, comment,
+                our_contact_id, status)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (customer_id, order_date) DO NOTHING
            RETURNING id""",
         (
@@ -274,6 +276,7 @@ def _save_order(cur, order: Order) -> None:
             order.isPrioritizeVat,
             order.comment,
             _ref_id(order.ourContact),
+            order.status.value,
         ),
         "SELECT id FROM orders WHERE customer_id = %s AND order_date = %s",
         (order.customer.id, order.orderDate),
@@ -508,21 +511,25 @@ def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> None
         save_all(voucher)
 
 
-def get_orders_for_payment_window(as_of: date, lookback_days: int = MAX_PAYMENT_TERMS_DAYS) -> list[Order]:
+ORDER_PAYMENT_LOOKBACK_DAYS = MAX_PAYMENT_TERMS_DAYS + OVERDUE_PAYMENT_DELAY_DAYS  # OVERDUE płaci +90 dni później
+
+
+def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMENT_LOOKBACK_DAYS) -> list[Order]:
     """Rekonstruuje Order (+orderLines) z bazy, wystawione w oknie
-    [as_of-lookback_days, as_of]. orders nie mają kolumny status (w
-    przeciwieństwie do supplier_invoices) — okno dat pokrywające najdłuższy
-    payment_terms w roster.CUSTOMERS (45 dni) jest jedynym filtrem.
-    generate_daily_bank_transactions() i tak dopasowuje tylko zamówienia,
-    których invoiceDate+payment_terms == as_of, więc powtórne przetworzenie
-    tego samego okna kolejnego dnia jest nieszkodliwe (ON CONFLICT DO NOTHING
-    w save_bank_transactions)."""
+    [as_of-lookback_days, as_of]. Okno pokrywa najdłuższy payment_terms w
+    roster.CUSTOMERS (45 dni) + opóźnienie płatności OVERDUE (90 dni) —
+    inaczej opóźnione faktury nigdy nie zostałyby dopasowane do swojej
+    (późniejszej) daty płatności. generate_daily_bank_transactions() i tak
+    dopasowuje tylko zamówienia, których obliczona data płatności == as_of
+    (i pomija WRITTEN_OFF), więc powtórne przetworzenie tego samego okna
+    kolejnego dnia jest nieszkodliwe (ON CONFLICT DO NOTHING w
+    save_bank_transactions)."""
     conn = get_connection()
     start = as_of - timedelta(days=lookback_days)
     with conn.cursor() as cur:
         cur.execute(
             """SELECT id, customer_id, order_date, delivery_date, invoice_date,
-                      invoices_due_in, department_id, comment
+                      invoices_due_in, department_id, comment, status
                FROM orders WHERE invoice_date BETWEEN %s AND %s""",
             (start, as_of),
         )
@@ -541,7 +548,7 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = MAX_PAYMENT_
                 lines_by_order.setdefault(row[0], []).append(row)
 
     orders: list[Order] = []
-    for oid, customer_id, order_date, delivery_date, invoice_date, invoices_due_in, department_id, comment in order_rows:
+    for oid, customer_id, order_date, delivery_date, invoice_date, invoices_due_in, department_id, comment, status in order_rows:
         order_lines = [
             OrderLine(
                 product=TripletexRef(id=l_product_id) if l_product_id is not None else None,
@@ -561,6 +568,7 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = MAX_PAYMENT_
             invoicesDueIn=invoices_due_in or 30,
             department=TripletexRef(id=department_id) if department_id is not None else None,
             comment=comment,
+            status=OrderStatus(status) if status else OrderStatus.PAID,
             orderLines=order_lines,
         ))
     return orders

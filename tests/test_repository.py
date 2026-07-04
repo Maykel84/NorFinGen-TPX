@@ -215,7 +215,7 @@ def test_save_hour_entries(fake_repository):
 
 def test_get_orders_for_payment_window_reconstructs_order_with_lines(fake_repository):
     repository, fake_conn = fake_repository
-    order_row = (10, 1, date(2024, 1, 3), date(2024, 1, 31), date(2024, 1, 3), 30, 1, "Test")
+    order_row = (10, 1, date(2024, 1, 3), date(2024, 1, 31), date(2024, 1, 3), 30, 1, "Test", "PAID")
     line_row = (10, 1, 1.0, 183_000.0, 3, 0.0)
     fake_conn.cursor_obj.fetchall_queue = [[order_row], [line_row]]
 
@@ -226,6 +226,7 @@ def test_get_orders_for_payment_window_reconstructs_order_with_lines(fake_reposi
     assert orders[0].customer.id == 1
     assert len(orders[0].orderLines) == 1
     assert orders[0].orderLines[0].unitPriceExcludingVatCurrency == 183_000.0
+    assert orders[0].status.value == "PAID"
 
 
 def test_get_unpaid_supplier_invoices_reconstructs_invoice(fake_repository):

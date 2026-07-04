@@ -33,8 +33,8 @@ import random
 from datetime import date
 
 from norfingen.models.base import TripletexRef
-from norfingen.models.order import Order, OrderLine
-from norfingen.seed.roster import CUSTOMERS, CustomerSeed, numeric_id, product_by_number
+from norfingen.models.order import Order, OrderLine, OrderStatus
+from norfingen.seed.roster import CUSTOMER_PRICE_MULTIPLIER, CUSTOMERS, CustomerSeed, numeric_id, product_by_number
 
 SALG_DEPARTMENT_REF = TripletexRef(id=1)
 ERIK_STRAND_CONTACT_REF = TripletexRef(id=numeric_id("E01"))
@@ -46,6 +46,9 @@ CONSULTING_MONTHS_Q2_Q4 = {4, 5, 6, 10, 11, 12}
 CONSULTING_MONTHS_Q1_Q3_RARE = {1, 7}
 CONSULTING_PROBABILITY_Q2_Q4 = 0.45
 CONSULTING_PROBABILITY_Q1_Q3_RARE = 0.10
+
+BAD_DEBT_PROBABILITY = 0.02  # ~2% faktur ma opóźnienie >90 dni
+WRITTEN_OFF_SHARE_OF_BAD_DEBT = 0.20  # z tego ~20% (0.4% wszystkich) staje się nieściągalne
 
 INFLATION_BASE_YEAR = 2019
 INFLATION_RATE = 0.03
@@ -77,12 +80,13 @@ def apply_annual_inflation(base_price: float, year: int, base_year: int = INFLAT
     return round(base_price * ((1 + rate) ** years_elapsed), 2)
 
 
-def _order_line_for_product(product_number: str, year: int, count: float = 1.0, unit_price: float | None = None) -> OrderLine:
+def _order_line_for_product(product_number: str, year: int, count: float = 1.0, unit_price: float | None = None,
+                             price_multiplier: float = 1.0) -> OrderLine:
     product = product_by_number(product_number)
     if unit_price is not None:
         price = unit_price
     else:
-        price = apply_annual_inflation(product.default_price or 0.0, year)
+        price = round(apply_annual_inflation(product.default_price or 0.0, year) * price_multiplier, 2)
     return OrderLine(
         product=TripletexRef(id=numeric_id(product.number)),
         count=count,
@@ -95,10 +99,34 @@ def _clamp_day(year: int, month: int, day: int) -> int:
     return min(day, last_day)
 
 
-def _is_onboarded(customer: CustomerSeed, on_date: date) -> bool:
-    """Klient nie generuje zamówień przed swoją onboarding_date — stopniowy
-    onboarding portfela klientów zamiast wszystkich istniejących od 2019-01-01."""
-    return on_date >= customer.onboarding_date
+def _is_active(customer: CustomerSeed, on_date: date) -> bool:
+    """Klient nie generuje zamówień przed swoją onboarding_date (stopniowy
+    onboarding portfela, nie wszyscy istniejący od 2019-01-01) ani po swojej
+    churn_date, jeśli ma (niski, realistyczny churn — głównie SMB, K09)."""
+    if on_date < customer.onboarding_date:
+        return False
+    if customer.churn_date is not None and on_date > customer.churn_date:
+        return False
+    return True
+
+
+def determine_order_status(customer_number: str, order_date: date) -> OrderStatus:
+    """Ustala los faktury sprzedaży (bad debt) — ~2% opóźnionych >90 dni, z czego
+    ~20% (0.4% wszystkich) nieściągalnych.
+
+    Deterministyczne per zamówienie (seed z tożsamości: klient + data), NIE
+    zależne od "dzisiaj"/wall-clock w momencie generowania płatności — inaczej
+    ten sam historyczny rekord zmieniałby wynik zależnie od tego, kiedy
+    uruchomiono backfill (dokładnie ten błąd naprawiliśmy już raz dla starej
+    heurystyki statusu supplier_invoices). Status jest więc stałą właściwością
+    zamówienia od chwili utworzenia, a nie czymś ocenianym później względem
+    bieżącej daty."""
+    rng = random.Random(f"bad-debt-{customer_number}-{order_date.isoformat()}")
+    if rng.random() < BAD_DEBT_PROBABILITY:
+        if rng.random() < WRITTEN_OFF_SHARE_OF_BAD_DEBT:
+            return OrderStatus.WRITTEN_OFF
+        return OrderStatus.OVERDUE
+    return OrderStatus.PAID
 
 
 def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_lines: list[OrderLine]) -> Order:
@@ -112,6 +140,7 @@ def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_
         deliveryDate=delivery_date,
         invoiceDate=order_date,
         invoicesDueIn=customer.payment_terms,
+        status=determine_order_status(customer.number, order_date),
         orderLines=order_lines,
         department=SALG_DEPARTMENT_REF,
         comment=f"Månedlig faktura — {month_label}",
@@ -120,21 +149,25 @@ def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_
 
 
 def _order_lines_for_pattern(customer: CustomerSeed, year: int) -> list[OrderLine]:
-    """Buduje OrderLines dla wzorców A/B/C (subskrypcyjnych, cykl miesięczny).
+    """Buduje OrderLines dla wzorców A/B/C (subskrypcyjnych, cykl miesięczny) —
+    cena skorygowana o indywidualny mnożnik negocjacyjny klienta (±8%, zob.
+    roster.CUSTOMER_PRICE_MULTIPLIER) — dwaj klienci tego samego segmentu i
+    produktu płacą różne kwoty, tak jak przy realnych negocjacjach B2B.
     Wzorzec D (K06 consulting) ma osobną logikę — nie jest tu obsługiwany."""
     pattern = customer.order_pattern
+    multiplier = CUSTOMER_PRICE_MULTIPLIER[customer.number]
 
     if pattern == "A":
-        return [_order_line_for_product(customer.support_product, year)]
+        return [_order_line_for_product(customer.support_product, year, price_multiplier=multiplier)]
 
     if pattern == "B":
         return [
-            _order_line_for_product(customer.support_product, year),
-            _order_line_for_product(customer.license_product, year),
+            _order_line_for_product(customer.support_product, year, price_multiplier=multiplier),
+            _order_line_for_product(customer.license_product, year, price_multiplier=multiplier),
         ]
 
     if pattern == "C":
-        return [_order_line_for_product(customer.license_product, year)]
+        return [_order_line_for_product(customer.license_product, year, price_multiplier=multiplier)]
 
     raise ValueError(f"Nieznany order_pattern dla wzorca subskrypcyjnego: {pattern!r} dla klienta {customer.number}")
 
@@ -150,13 +183,13 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
 
         if pattern in ("A", "B", "C"):
             order_date = date(year, month, _clamp_day(year, month, customer.invoice_day))
-            if not _is_onboarded(customer, order_date):
+            if not _is_active(customer, order_date):
                 continue
             lines = _order_lines_for_pattern(customer, year)
             orders.append(_build_order(customer, year, month, customer.invoice_day, lines))
 
         elif pattern == "D":
-            if _is_onboarded(customer, date(year, month, 1)) and should_generate_consulting(month, year):
+            if _is_active(customer, date(year, month, 1)) and should_generate_consulting(month, year):
                 rng = random.Random(f"{customer.number}-{year}-{month}")
                 price = rng.uniform(CONSULTING_PRICE_MIN, CONSULTING_PRICE_MAX)
                 line = _order_line_for_product("P06", year, count=1.0, unit_price=round(price, 2))
@@ -183,7 +216,7 @@ def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
             continue
 
         order_date = date(year, month, day)
-        if not _is_onboarded(customer, order_date):
+        if not _is_active(customer, order_date):
             continue
 
         lines = _order_lines_for_pattern(customer, year)

@@ -24,6 +24,12 @@ class InvoicesDueInType(str, Enum):
     DAYS = "DAYS"
 
 
+class OrderStatus(str, Enum):
+    PAID = "PAID"
+    OVERDUE = "OVERDUE"  # opóźniona (>90 dni), ale prawdopodobnie zostanie spłacona
+    WRITTEN_OFF = "WRITTEN_OFF"  # odpis — nieściągalna, bad debt
+
+
 class OrderLine(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -63,4 +69,5 @@ class Order(BaseModel):
     isPrioritizeVat: bool = False
     comment: Optional[str] = None
     ourContact: Optional[TripletexRef] = None
+    status: OrderStatus = OrderStatus.PAID
     url: Optional[str] = None

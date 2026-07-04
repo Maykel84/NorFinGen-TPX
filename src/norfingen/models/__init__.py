@@ -4,7 +4,7 @@ from norfingen.models.customer import Customer
 from norfingen.models.department import Department
 from norfingen.models.employee import Employee, Employment, EmploymentType, PayrollTaxZone, RemunerationType
 from norfingen.models.hours import ActivityType, HourEntry
-from norfingen.models.order import InvoicesDueInType, Order, OrderLine
+from norfingen.models.order import InvoicesDueInType, Order, OrderLine, OrderStatus
 from norfingen.models.product import Product
 from norfingen.models.salary import (
     Payslip,
@@ -31,6 +31,7 @@ __all__ = [
     "InvoicesDueInType",
     "Order",
     "OrderLine",
+    "OrderStatus",
     "PayrollTaxZone",
     "Payslip",
     "Product",

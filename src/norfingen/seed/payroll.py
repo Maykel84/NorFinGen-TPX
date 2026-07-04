@@ -7,6 +7,7 @@ feriepenger 12% (standard branżowy IT, min. ustawowe 10,2%).
 from __future__ import annotations
 
 import calendar
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from norfingen.seed.roster import EMPLOYEES, EmployeeSeed
@@ -58,6 +59,39 @@ def calc_aga(brutto: float) -> float:
 
 def calc_feriepenger(brutto_prev_year: float) -> float:
     return round(brutto_prev_year * FERIEPENGER_RATE)
+
+
+@dataclass(frozen=True)
+class JuneSalary:
+    gross_salary: float  # zwykła pensja czerwcowa — 0 w standardowym przypadku
+    feriepenger: float
+    total_brutto: float  # gross_salary + feriepenger — to trafia na konto 5000/AGA
+    tax_on_salary: float  # skattetrekk tylko od gross_salary; feriepenger zawsze nieopodatkowane
+
+
+def calc_june_salary(employee: EmployeeSeed, year: int, basis_prev_year: float) -> JuneSalary:
+    """Czerwiec: feriepenger ZASTĘPUJE normalną pensję, nie dodaje się do niej
+    (poprzedni błąd: firma płaciła i pełną pensję, i pełne feriepenger — podwójny
+    koszt narastający z roku na rok).
+
+    Standardowo (feriepenger >= normalna pensja bieżącego roku) normalna pensja
+    czerwcowa = 0, cały brutto to feriepenger (nieopodatkowane). Dla pracowników
+    z <1 rok stażu (feriepenger liczone z niepełnego roku poprzedniego może być
+    niższe niż bieżąca pensja) różnica dopłacana jest jako zwykła, opodatkowana
+    pensja."""
+    normal_gross = calc_brutto_with_raises(employee, year, 6)
+    feriepenger = calc_feriepenger(basis_prev_year)
+
+    if feriepenger >= normal_gross:
+        return JuneSalary(gross_salary=0.0, feriepenger=feriepenger, total_brutto=feriepenger, tax_on_salary=0.0)
+
+    gap = round(normal_gross - feriepenger, 2)
+    return JuneSalary(
+        gross_salary=gap,
+        feriepenger=feriepenger,
+        total_brutto=round(feriepenger + gap, 2),
+        tax_on_salary=calc_skattetrekk(gap),
+    )
 
 
 def last_working_day(year: int, month: int) -> date:

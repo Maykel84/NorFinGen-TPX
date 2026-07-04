@@ -1,14 +1,14 @@
 """Generator miesięcznej listy płac (Warstwa 2 + Warstwa 3).
 
-Każdy miesiąc: Voucher 1 (lista płac: DR 5000 / CR 2710 / CR 2740) + Voucher 2
-(AGA: DR 5400 / CR 2700) dla wszystkich aktywnych pracowników na bazie standardowej
-formuły (brutto = roczna_stawka/12, skattetrekk = round(brutto×0.33)).
+Każdy miesiąc (w tym czerwiec): Voucher 1 (lista płac: DR 5000 / CR 2710 /
+CR 2740) + Voucher 2 (AGA: DR 5400 / CR 2700).
 
-Czerwiec dostaje DWA DODATKOWE Vouchery — feriepenger jest wypłacane NIEZALEŻNIE
-od normalnej pensji tego miesiąca, licząc się od brutto zarobionego w roku
-poprzednim (nie roku bieżącym), bez potrącenia podatkowego:
-  Voucher 3 — feriepenger: DR 5000 / CR 2710 (brak 2740 — feriepenger nie jest opodatkowane)
-  Voucher 4 — AGA feriepenger: DR 5400 / CR 2700
+Czerwiec — feriepenger ZASTĘPUJE normalną pensję, nie dodaje się do niej (zob.
+norfingen.seed.payroll.calc_june_salary). Standardowo (feriepenger >= bieżąca
+pensja) normalna pensja czerwcowa = 0, cały brutto tego miesiąca to
+nieopodatkowane feriepenger. Dla pracowników z <1 rok stażu różnica dopłacana
+jest jako zwykła, opodatkowana pensja. AGA liczone jednolicie od total_brutto
+(pensja + feriepenger) — bez osobnego, podwajającego wolucheru.
 
 Podstawa feriepenger per pracownik = suma calc_brutto_with_raises(e, rok, miesiąc)
 za miesiące, w których pracownik był aktywny w roku poprzednim (zob.
@@ -38,7 +38,7 @@ from norfingen.seed.payroll import (
     active_employees,
     calc_aga,
     calc_brutto_with_raises,
-    calc_feriepenger,
+    calc_june_salary,
     calc_netto,
     calc_skattetrekk,
     is_june,
@@ -70,31 +70,38 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
 
     payslips: list[Payslip] = []
     brutto_total = netto_total = skattetrekk_total = aga_total = 0.0
-    feriepenger_total = aga_feriepenger_total = 0.0
 
     transaction = SalaryTransaction(date=pay_date, year=year, month=month)
 
     for employee in active:
         emp_ref = TripletexRef(id=numeric_id(employee.number))
-        brutto = calc_brutto_with_raises(employee, year, month)
-        specifications = [
-            SalarySpecification(wageType=WAGE_TYPE_FAST_LONN, description="Fast lønn", amount=brutto)
-        ]
+        specifications = []
 
         if june:
-            skattetrekk = 0.0
-            netto = brutto
             basis_prev_year = brutto_earned_in_year(employee, year - 1)
-            feriepenger = calc_feriepenger(basis_prev_year)
-            aga_feriepenger = calc_aga(feriepenger)
+            june_salary = calc_june_salary(employee, year, basis_prev_year)
+            brutto = june_salary.total_brutto
+            skattetrekk = june_salary.tax_on_salary
+            netto = brutto - skattetrekk
+
+            if june_salary.gross_salary > 0:
+                specifications.append(
+                    SalarySpecification(wageType=WAGE_TYPE_FAST_LONN, description="Fast lønn", amount=june_salary.gross_salary)
+                )
             specifications.append(
-                SalarySpecification(wageType=WAGE_TYPE_FERIEPENGER, description="Feriepenger", amount=feriepenger)
+                SalarySpecification(wageType=WAGE_TYPE_FERIEPENGER, description="Feriepenger", amount=june_salary.feriepenger)
             )
-            feriepenger_total += feriepenger
-            aga_feriepenger_total += aga_feriepenger
+            if skattetrekk:
+                specifications.append(
+                    SalarySpecification(wageType=WAGE_TYPE_SKATTETREKK, description="Skattetrekk", amount=-skattetrekk)
+                )
         else:
+            brutto = calc_brutto_with_raises(employee, year, month)
             skattetrekk = calc_skattetrekk(brutto)
             netto = calc_netto(brutto, skattetrekk)
+            specifications.append(
+                SalarySpecification(wageType=WAGE_TYPE_FAST_LONN, description="Fast lønn", amount=brutto)
+            )
             specifications.append(
                 SalarySpecification(wageType=WAGE_TYPE_SKATTETREKK, description="Skattetrekk", amount=-skattetrekk)
             )
@@ -147,30 +154,5 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
     )
     assert_voucher_valid(aga_voucher)
     vouchers.append(aga_voucher)
-
-    if june:
-        feriepenger_voucher = Voucher(
-            date=pay_date,
-            description=f"Feriepenger {year}",
-            voucherType=VoucherType.SALARY,
-            postings=[
-                Posting(date=pay_date, account=acct(5000), amount=round(feriepenger_total, 2)),
-                Posting(date=pay_date, account=acct(2710), amount=-round(feriepenger_total, 2)),
-            ],
-        )
-        assert_voucher_valid(feriepenger_voucher)
-        vouchers.append(feriepenger_voucher)
-
-        aga_feriepenger_voucher = Voucher(
-            date=pay_date,
-            description=f"Arbeidsgiveravgift av feriepenger {year}",
-            voucherType=VoucherType.SALARY,
-            postings=[
-                Posting(date=pay_date, account=acct(5400), amount=round(aga_feriepenger_total, 2)),
-                Posting(date=pay_date, account=acct(2700), amount=-round(aga_feriepenger_total, 2)),
-            ],
-        )
-        assert_voucher_valid(aga_feriepenger_voucher)
-        vouchers.append(aga_feriepenger_voucher)
 
     return transaction, vouchers
