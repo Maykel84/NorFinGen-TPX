@@ -34,7 +34,17 @@ from norfingen.models.hours import HourEntry
 from norfingen.models.order import Order, OrderLine, OrderStatus
 from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
-from norfingen.seed.roster import CUSTOMERS, DEPARTMENTS, EMPLOYEES, PRODUCTS, PROJECTS, SUPPLIERS, numeric_id
+from norfingen.seed.roster import (
+    CUSTOMER_PRICE_MULTIPLIER,
+    CUSTOMERS,
+    DEPARTMENTS,
+    EMPLOYEES,
+    PRODUCTS,
+    PROJECTS,
+    SERVICES,
+    SUPPLIERS,
+    numeric_id,
+)
 
 MAX_PAYMENT_TERMS_DAYS = 45  # najdłuższy payment_terms w roster.CUSTOMERS (K03/K08)
 
@@ -144,6 +154,8 @@ def seed_reference_data() -> None:
     """Zasila tabele referencyjne Warstwy 1 z norfingen.seed.roster + statyczny
     plan kont/kody MVA. Idempotentne (ON CONFLICT DO NOTHING) — bezpieczne do
     wywołania przy każdym starcie run_backfill.py / run_daily()."""
+    seed_services()  # PRZED products — products.service_code ma FK do services(code)
+
     conn = get_connection()
     with conn.cursor() as cur:
         for d in DEPARTMENTS:
@@ -169,9 +181,11 @@ def seed_reference_data() -> None:
 
         for product in PRODUCTS:
             cur.execute(
-                "INSERT INTO products (id, name, number, sales_price, vat_type_id, currency_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                (numeric_id(product.number), product.name, product.number, product.default_price, 3, NOK_CURRENCY_ID),
+                """INSERT INTO products (id, name, number, sales_price, vat_type_id, currency_id, service_code)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET service_code = EXCLUDED.service_code""",
+                (numeric_id(product.number), product.name, product.number, product.default_price, 3,
+                 NOK_CURRENCY_ID, product.service_code),
             )
 
         for employee in EMPLOYEES:
@@ -190,9 +204,21 @@ def seed_reference_data() -> None:
 
         for customer in CUSTOMERS:
             cur.execute(
-                "INSERT INTO customers (id, name, customer_number, city, country_id, currency_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                (numeric_id(customer.number), customer.name, customer.number, customer.city, NORWAY_COUNTRY_ID, NOK_CURRENCY_ID),
+                """INSERT INTO customers
+                       (id, name, customer_number, city, country_id, currency_id,
+                        onboarding_date, churn_date, segment, price_multiplier)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                       onboarding_date = EXCLUDED.onboarding_date,
+                       churn_date = EXCLUDED.churn_date,
+                       segment = EXCLUDED.segment,
+                       price_multiplier = EXCLUDED.price_multiplier""",
+                (
+                    numeric_id(customer.number), customer.name, customer.number, customer.city,
+                    NORWAY_COUNTRY_ID, NOK_CURRENCY_ID,
+                    customer.onboarding_date, customer.churn_date, customer.segment,
+                    CUSTOMER_PRICE_MULTIPLIER[customer.number],
+                ),
             )
 
         for supplier in SUPPLIERS:
@@ -218,6 +244,36 @@ def seed_projects() -> None:
                 "INSERT INTO projects (id, number, name, customer_id, start_date) "
                 "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (number) DO NOTHING",
                 (numeric_id(project.number), project.number, project.name, project.customer_id, project.start_date),
+            )
+    conn.commit()
+
+
+def seed_services() -> None:
+    """Zasila tabelę services z norfingen.seed.roster.SERVICES (Faza 1).
+    ON CONFLICT DO UPDATE (nie DO NOTHING) — katalog usług to metadane, które
+    powinny odzwierciedlać aktualny stan roster.py przy każdym seedzie, nie
+    tylko przy pierwszym."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        for service in SERVICES:
+            cur.execute(
+                """INSERT INTO services
+                       (code, name, description, billing_model, availability,
+                        base_price_enterprise, base_price_mid, base_price_smb)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (code) DO UPDATE SET
+                       name = EXCLUDED.name,
+                       description = EXCLUDED.description,
+                       billing_model = EXCLUDED.billing_model,
+                       availability = EXCLUDED.availability,
+                       base_price_enterprise = EXCLUDED.base_price_enterprise,
+                       base_price_mid = EXCLUDED.base_price_mid,
+                       base_price_smb = EXCLUDED.base_price_smb""",
+                (
+                    service.code, service.name, service.description,
+                    service.billing_model.value, service.availability.value,
+                    service.base_price_enterprise, service.base_price_mid, service.base_price_smb,
+                ),
             )
     conn.commit()
 

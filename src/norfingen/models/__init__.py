@@ -12,6 +12,7 @@ from norfingen.models.salary import (
     SalaryTransaction,
     SalaryTransactionStatus,
 )
+from norfingen.models.service import BillingModel, Service, ServiceSegmentAvailability
 from norfingen.models.supplier import Supplier
 from norfingen.models.supplier_invoice import SupplierInvoice, SupplierInvoiceStatus
 from norfingen.models.vat_type import VatType
@@ -22,6 +23,7 @@ __all__ = [
     "ActivityType",
     "BankTransaction",
     "BankTransactionType",
+    "BillingModel",
     "Customer",
     "Department",
     "Employee",
@@ -39,6 +41,8 @@ __all__ = [
     "SalarySpecification",
     "SalaryTransaction",
     "SalaryTransactionStatus",
+    "Service",
+    "ServiceSegmentAvailability",
     "Supplier",
     "SupplierInvoice",
     "SupplierInvoiceStatus",

@@ -11,16 +11,19 @@ from norfingen.seed.payroll import (
     is_june,
     last_working_day,
 )
+from norfingen.models.service import BillingModel, ServiceSegmentAvailability
 from norfingen.seed.roster import (
     CUSTOMERS,
     DEPARTMENTS,
     EMPLOYEES,
     PRODUCTS,
     PROJECTS,
+    SERVICES,
     SUPPLIERS,
     employee_by_number,
     numeric_id,
     project_by_number,
+    service_by_code,
 )
 
 
@@ -30,6 +33,41 @@ def test_roster_counts_match_docs():
     assert len(CUSTOMERS) == 12
     assert len(SUPPLIERS) == 8
     assert len(PRODUCTS) == 6
+    assert len(SERVICES) == 4
+
+
+def test_services_seed_data():
+    s01 = service_by_code("S01")
+    assert s01.name == "Managed IT Support"
+    assert s01.billing_model == BillingModel.SUBSCRIPTION
+    assert s01.availability == ServiceSegmentAvailability.ALL
+    assert s01.base_price_enterprise == 45_000
+    assert s01.base_price_smb == 4_500
+
+    s03 = service_by_code("S03")
+    assert s03.availability == ServiceSegmentAvailability.ENTERPRISE_ONLY
+    assert s03.base_price_mid is None
+    assert s03.base_price_smb is None
+
+    s04 = service_by_code("S04")
+    assert s04.billing_model == BillingModel.HOURLY
+    assert s04.base_price_enterprise == s04.base_price_mid == s04.base_price_smb == 1_450
+
+
+def test_every_product_maps_to_a_valid_service():
+    valid_codes = {s.code for s in SERVICES}
+    for product in PRODUCTS:
+        assert product.service_code in valid_codes, f"{product.number} ma nieprawidłowy service_code: {product.service_code!r}"
+
+
+def test_product_service_mapping_matches_category():
+    expected = {
+        "P01": "S01", "P02": "S01", "P03": "S01",  # IT Support -> Managed IT Support
+        "P04": "S02", "P05": "S02",  # Licencje/Microsoft -> Zarządzanie infrastrukturą Microsoft
+        "P06": "S04",  # Consulting -> Konsulting i digitalizacja
+    }
+    for product in PRODUCTS:
+        assert product.service_code == expected[product.number]
 
 
 def test_active_employees_respects_historical_phases():

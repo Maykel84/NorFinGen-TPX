@@ -23,3 +23,4 @@ class Product(BaseModel):
     currency: Optional[TripletexRef] = NOK_CURRENCY_REF
     isInactive: bool = False
     url: Optional[str] = None
+    service_code: Optional[str] = None  # FK -> Service.code (Faza 1) — nie pole Tripletex API

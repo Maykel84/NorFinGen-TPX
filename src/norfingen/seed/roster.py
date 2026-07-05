@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
+from norfingen.models.service import BillingModel, Service, ServiceSegmentAvailability
+
 
 @dataclass(frozen=True)
 class DepartmentSeed:
@@ -75,6 +77,7 @@ class ProductSeed:
     name: str
     category: str
     gl_account: int  # 3000 (usługi) / 3100 (licencje)
+    service_code: str  # FK -> Service.code (Faza 1) — S01-S04
     default_price: Optional[float] = None  # None = zmienne (P06 consulting)
 
 
@@ -201,12 +204,62 @@ PRODUCTS: list[ProductSeed] = [
     # docelowego przedziału 15-25% (wcześniej ~33% — koszty operacyjne za niskie
     # względem przychodów przy niezmienionych stawkach; koszty pracownicze
     # dominują strukturę kosztów i nie były tu ruszane, patrz notatka w docs/).
-    ProductSeed("P01", "IT Support — Enterprise", "Subskrypcja mies.", 3000, 183_000),
-    ProductSeed("P02", "IT Support — Mid-market", "Subskrypcja mies.", 3000, 133_000),
-    ProductSeed("P03", "IT Support — SMB", "Subskrypcja mies.", 3000, 62_000),
-    ProductSeed("P04", "Software License — Enterprise", "Licencja mies.", 3100, 79_000),
-    ProductSeed("P05", "Software License — Mid-market", "Licencja mies.", 3100, 58_000),
-    ProductSeed("P06", "IT Consulting", "Projekt / zlecenie", 3000, None),
+    # service_code (Faza 1): P01-P03 (support) -> S01, P04-P05 (licencje/Microsoft)
+    # -> S02, P06 (consulting) -> S04. Żaden istniejący produkt nie mapuje się na
+    # S03 (Cyberbezpieczeństwo) — to nowa usługa bez własnego produktu na razie.
+    ProductSeed("P01", "IT Support — Enterprise", "Subskrypcja mies.", 3000, "S01", 183_000),
+    ProductSeed("P02", "IT Support — Mid-market", "Subskrypcja mies.", 3000, "S01", 133_000),
+    ProductSeed("P03", "IT Support — SMB", "Subskrypcja mies.", 3000, "S01", 62_000),
+    ProductSeed("P04", "Software License — Enterprise", "Licencja mies.", 3100, "S02", 79_000),
+    ProductSeed("P05", "Software License — Mid-market", "Licencja mies.", 3100, "S02", 58_000),
+    ProductSeed("P06", "IT Consulting", "Projekt / zlecenie", 3000, "S04", None),
+]
+
+
+# Katalog usług (Faza 1) — niezależny od konkretnych cen per klient (te ustala
+# CustomerSeed/CUSTOMER_PRICE_MULTIPLIER). Ceny bazowe z 2019 (rok bazowy
+# apply_annual_inflation), per segment.
+SERVICES: list[Service] = [
+    Service(
+        code="S01",
+        name="Managed IT Support",
+        description="Helpdesk, incydenty, monitoring infrastruktury IT",
+        billing_model=BillingModel.SUBSCRIPTION,
+        availability=ServiceSegmentAvailability.ALL,
+        base_price_enterprise=45_000,
+        base_price_mid=18_000,
+        base_price_smb=4_500,
+    ),
+    Service(
+        code="S02",
+        name="Zarządzanie infrastrukturą Microsoft",
+        description="Administracja Azure/M365, zarządzana infrastruktura chmurowa",
+        billing_model=BillingModel.SUBSCRIPTION,
+        availability=ServiceSegmentAvailability.ENTERPRISE_MID,
+        base_price_enterprise=20_000,
+        base_price_mid=8_000,
+        base_price_smb=None,
+    ),
+    Service(
+        code="S03",
+        name="Cyberbezpieczeństwo",
+        description="Monitoring bezpieczeństwa, zgodność NIS2, reagowanie na incydenty",
+        billing_model=BillingModel.SUBSCRIPTION,
+        availability=ServiceSegmentAvailability.ENTERPRISE_ONLY,
+        base_price_enterprise=15_000,
+        base_price_mid=None,
+        base_price_smb=None,
+    ),
+    Service(
+        code="S04",
+        name="Konsulting i digitalizacja",
+        description="Projekty digitalizacyjne, doradztwo IT, wdrożenia",
+        billing_model=BillingModel.HOURLY,
+        availability=ServiceSegmentAvailability.ALL,
+        base_price_enterprise=1_450,
+        base_price_mid=1_450,
+        base_price_smb=1_450,
+    ),
 ]
 
 
@@ -249,6 +302,13 @@ def product_by_number(number: str) -> ProductSeed:
         if p.number == number:
             return p
     raise KeyError(f"Nieznany numer produktu: {number}")
+
+
+def service_by_code(code: str) -> Service:
+    for s in SERVICES:
+        if s.code == code:
+            return s
+    raise KeyError(f"Nieznany kod usługi: {code}")
 
 
 def project_by_number(number: str) -> ProjectSeed:

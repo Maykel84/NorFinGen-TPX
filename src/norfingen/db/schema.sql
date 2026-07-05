@@ -116,6 +116,9 @@ CREATE TABLE IF NOT EXISTS products (
     vat_type_id  INTEGER REFERENCES vat_types(id),
     currency_id  INTEGER,
     is_inactive  BOOLEAN NOT NULL DEFAULT FALSE
+    -- service_code: kolumna + FK do services(code) dodane niżej przez ALTER,
+    -- PO utworzeniu tabeli services (Faza 1) — nie tutaj inline, żeby ta sama
+    -- migracja działała identycznie na fresh DB i na już istniejącej produkcji.
 );
 
 -- ─────────────────────────────────────────────── Warstwa 2 — dokumenty źródłowe
@@ -264,9 +267,29 @@ CREATE TABLE IF NOT EXISTS hour_entries (
     UNIQUE(date, employee_id, project_id, activity_type)
 );
 
--- Kolumna dodana po utworzeniu tabeli orders w produkcji — CREATE TABLE IF NOT
--- EXISTS jej nie doda do już istniejącej tabeli, stąd osobny ALTER (idempotentny).
+-- ─────────────────────────────────────────────────── Faza 1 — katalog usług, metadane
+
+CREATE TABLE IF NOT EXISTS services (
+    code                    VARCHAR(10) PRIMARY KEY,
+    name                    VARCHAR(200) NOT NULL,
+    description             TEXT,
+    billing_model           VARCHAR(20) NOT NULL,
+    availability            VARCHAR(30) NOT NULL,
+    base_price_enterprise   NUMERIC(12,2),
+    base_price_mid          NUMERIC(12,2),
+    base_price_smb          NUMERIC(12,2)
+);
+
+-- Kolumny dodane po utworzeniu tabel w produkcji — CREATE TABLE IF NOT EXISTS
+-- ich nie doda do już istniejących tabel, stąd osobne ALTER (idempotentne).
+-- products.service_code MUSI iść po CREATE TABLE services (FK) — stąd cała
+-- ta sekcja umieszczona na końcu pliku, po wszystkich CREATE TABLE.
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'PAID';
+ALTER TABLE products ADD COLUMN IF NOT EXISTS service_code VARCHAR(10) REFERENCES services(code);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS onboarding_date DATE;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS churn_date DATE;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS segment VARCHAR(20);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS price_multiplier NUMERIC(5,4);
 
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_lines_order ON order_lines(order_id);
@@ -282,3 +305,68 @@ CREATE INDEX IF NOT EXISTS idx_bank_transactions_supplier ON bank_transactions(s
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_date ON bank_transactions(date);
 CREATE INDEX IF NOT EXISTS idx_hour_entries_employee ON hour_entries(employee_id);
 CREATE INDEX IF NOT EXISTS idx_hour_entries_project ON hour_entries(project_id);
+
+-- ─────────────────────────────────────────────────── Faza 1 — Row Level Security
+--
+-- Bez zdefiniowanych POLICY tabele stają się domyślnie zamknięte dla ról bez
+-- BYPASSRLS (np. anon/authenticated w Supabase) — świadome "default deny"
+-- przed dodaniem docelowych polityk w kolejnym kroku. NIE wpływa na
+-- run_backfill.py/run_daily.py/export_excel.py — łączą się jako "postgres"
+-- (właściciel tabel, rolbypassrls=true), więc RLS jest dla nich przezroczyste.
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_lines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE supplier_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE salary_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payslips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vouchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE postings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bank_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hour_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+
+-- Rola analyst (read-only) — CREATE ROLE nie jest natywnie idempotentne
+-- (błąd "role already exists" przy powtórnym wykonaniu), a ensure_schema()
+-- odpala ten plik przy każdym starcie run_backfill.py/run_daily() — stąd
+-- warunkowy blok zamiast gołego CREATE ROLE.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'analyst') THEN
+        CREATE ROLE analyst NOLOGIN;
+    END IF;
+END
+$$;
+
+-- CREATE POLICY też nie jest idempotentne (brak IF NOT EXISTS w Postgresie) —
+-- DROP POLICY IF EXISTS + CREATE POLICY zamiast tego, spójnie z resztą pliku.
+DROP POLICY IF EXISTS analyst_read_only ON orders;
+CREATE POLICY analyst_read_only ON orders FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON order_lines;
+CREATE POLICY analyst_read_only ON order_lines FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON supplier_invoices;
+CREATE POLICY analyst_read_only ON supplier_invoices FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON salary_transactions;
+CREATE POLICY analyst_read_only ON salary_transactions FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON payslips;
+CREATE POLICY analyst_read_only ON payslips FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON vouchers;
+CREATE POLICY analyst_read_only ON vouchers FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON postings;
+CREATE POLICY analyst_read_only ON postings FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON bank_transactions;
+CREATE POLICY analyst_read_only ON bank_transactions FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON hour_entries;
+CREATE POLICY analyst_read_only ON hour_entries FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON customers;
+CREATE POLICY analyst_read_only ON customers FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON suppliers;
+CREATE POLICY analyst_read_only ON suppliers FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON employees;
+CREATE POLICY analyst_read_only ON employees FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON services;
+CREATE POLICY analyst_read_only ON services FOR SELECT TO analyst USING (true);
+DROP POLICY IF EXISTS analyst_read_only ON projects;
+CREATE POLICY analyst_read_only ON projects FOR SELECT TO analyst USING (true);

@@ -4,6 +4,7 @@ from norfingen.models import (
     ActivityType,
     BankTransaction,
     BankTransactionType,
+    BillingModel,
     HourEntry,
     Order,
     OrderLine,
@@ -11,10 +12,40 @@ from norfingen.models import (
     SalarySpecification,
     SalaryTransaction,
     Payslip,
+    Service,
+    ServiceSegmentAvailability,
     SupplierInvoice,
 )
 from norfingen.models.base import TripletexRef
 from norfingen.models.salary import WAGE_TYPE_FAST_LONN, WAGE_TYPE_SKATTETREKK
+
+
+def test_service_subscription_with_segment_prices():
+    service = Service(
+        code="S01",
+        name="IT Support",
+        description="Miesięczny support IT",
+        billing_model=BillingModel.SUBSCRIPTION,
+        availability=ServiceSegmentAvailability.ALL,
+        base_price_enterprise=220_000,
+        base_price_mid=160_000,
+        base_price_smb=75_000,
+    )
+    assert service.billing_model == BillingModel.SUBSCRIPTION
+    assert service.base_price_enterprise == 220_000
+
+
+def test_service_hourly_enterprise_only_no_prices_required():
+    service = Service(
+        code="S04",
+        name="Consulting",
+        description="Projekty na godziny",
+        billing_model=BillingModel.HOURLY,
+        availability=ServiceSegmentAvailability.ENTERPRISE_ONLY,
+    )
+    assert service.base_price_enterprise is None
+    assert service.base_price_mid is None
+    assert service.base_price_smb is None
 
 
 def test_bank_transaction_incoming_from_customer():
