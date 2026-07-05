@@ -183,7 +183,11 @@ def seed_reference_data() -> None:
             cur.execute(
                 """INSERT INTO products (id, name, number, sales_price, vat_type_id, currency_id, service_code)
                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (id) DO UPDATE SET service_code = EXCLUDED.service_code""",
+                   ON CONFLICT (id) DO UPDATE SET
+                       name = EXCLUDED.name,
+                       number = EXCLUDED.number,
+                       sales_price = EXCLUDED.sales_price,
+                       service_code = EXCLUDED.service_code""",
                 (numeric_id(product.number), product.name, product.number, product.default_price, 3,
                  NOK_CURRENCY_ID, product.service_code),
             )

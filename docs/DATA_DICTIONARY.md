@@ -96,16 +96,18 @@ Znaczenie biznesowe: 24-pozycyjny plan kont używany przez wszystkie `postings.a
 ### products
 | Kolumna | Typ | Opis |
 |---|---|---|
-| id | INTEGER (PK) | 1-6, `numeric_id("P01")..("P06")` |
+| id | INTEGER (PK) | 1-7, `numeric_id("P01")..("P07")` (P07 dodany w Fazie 2) |
 | name | TEXT | Nazwa produktu |
-| number | TEXT | Kod "P01"-"P06" |
-| sales_price | NUMERIC(14,2) | Cena bazowa 2019 (NOK/mies.), przed inflacją +3%/rok. NULL dla P06 (consulting — cena losowa per zlecenie) |
+| number | TEXT | Kod "P01"-"P07" |
+| sales_price | NUMERIC(14,2) | Cena bazowa 2019 (NOK/mies.), historyczna/informacyjna. **Od Fazy 2 NIE jest już używana do liczenia ceny na fakturze** dla P01/P04/P06/P07 (zob. niżej) — NULL dla P06/P07 |
 | vat_type_id | INTEGER (FK) | Zawsze 3 (sprzedaż 25%) |
 | currency_id | INTEGER | Zawsze 1 (NOK) |
 | is_inactive | BOOLEAN | Zawsze `false` |
-| **service_code** | VARCHAR(10) (FK → services.code) | P01-P03→S01, P04-P05→S02, P06→S04 (Faza 1) |
+| **service_code** | VARCHAR(10) (FK → services.code) | P01-P03→S01, P04-P05→S02, P06→S04, **P07→S03 (Faza 2)** |
 
-Znaczenie biznesowe: 6 produktów sprzedażowych — P01-P03 IT Support (per segment), P04-P05 licencje (Enterprise/Mid-market), P06 consulting. Ceny obniżone ~17% względem oryginalnych założeń (2026-07) w celu domknięcia marży operacyjnej do 15-25%.
+Znaczenie biznesowe: 7 produktów sprzedażowych — P01-P03 IT Support (per segment), P04-P05 licencje (Enterprise/Mid-market), P06 consulting, **P07 (Faza 2) Cyberbezpieczeństwo**. Ceny obniżone ~17% względem oryginalnych założeń (2026-07) w celu domknięcia marży operacyjnej do 15-25%.
+
+**Faza 2 — zmiana źródła prawdy dla ceny**: `order_generator.build_order_lines()` liczy cenę linii bezpośrednio z `services.base_price_{segment}` (nie z `products.sales_price`) — jeden kanoniczny produkt per usługa (`roster.product_for_service()`: P01→S01, P04→S02, P07→S03, P06→S04) referencjonowany niezależnie od segmentu klienta, tylko dla celów FK/etykiety na fakturze Tripletex. P02/P03/P05 pozostają w katalogu (zgodność wsteczna/testy), ale **nie są już używane do generowania linii zamówień** — zastąpione bundlingiem segmentowym (zob. `services`, `order_lines`).
 
 ---
 
@@ -121,7 +123,7 @@ Znaczenie biznesowe: 6 produktów sprzedażowych — P01-P03 IT Support (per seg
 | availability | VARCHAR(30) | ALL / ENTERPRISE_MID / ENTERPRISE_ONLY — który segment może kupić |
 | base_price_enterprise / base_price_mid / base_price_smb | NUMERIC(12,2) | Cena bazowa 2019: NOK/mies. dla SUBSCRIPTION, NOK/h dla HOURLY. NULL = usługa niedostępna dla tego segmentu |
 
-Znaczenie biznesowe: katalog ofertowy niezależny od konkretnych cen per klient (te ustala `customers.price_multiplier`). Ograniczenie: S03 (Cyberbezpieczeństwo) nie ma jeszcze żadnego powiązanego produktu w `products` — usługa istnieje w katalogu, ale nie generuje jeszcze przychodu.
+Znaczenie biznesowe: katalog ofertowy niezależny od konkretnych cen per klient (te ustala `customers.price_multiplier`). **Faza 2**: każda usługa ma teraz produkt referencyjny (`products.service_code`) i realny bundling per segment (`roster.get_customer_services()` — Enterprise S01+S02+S03, Mid-market S01+S02, SMB S01) — S03 (Cyberbezpieczeństwo) generuje przychód dla wszystkich klientów Enterprise od momentu ich onboardingu (produkt P07).
 
 ---
 
@@ -156,7 +158,7 @@ Znaczenie biznesowe: **faktura sprzedaży (przychód)**. Kwota = suma `order_lin
 | amount_currency | NUMERIC(14,2) | Kwota brutto (+25% VAT) |
 | vat_type_id | INTEGER (FK) | Zawsze 3 (sprzedaż 25%) |
 
-Znaczenie biznesowe: pojedyncza pozycja faktury sprzedaży (1 dla wzorców A/C, 2 dla B — support+licencja).
+Znaczenie biznesowe: pojedyncza pozycja faktury sprzedaży. **Faza 2**: jedna linia per usługa, którą klient kupuje wg segmentu (Enterprise 3 linie S01+S02+S03, Mid-market 2 linie S01+S02, SMB 1 linia S01) — zastąpiło dawne liczenie wg litery `order_pattern` (A=1/B=2/C=1). `order_lines` nie ma własnej kolumny `product_service_code` — kod usługi danej linii wynika z joina `product_id → products.service_code` (zob. `products`, `services`).
 
 ### supplier_invoices
 | Kolumna | Typ | Opis |
@@ -172,6 +174,8 @@ Znaczenie biznesowe: pojedyncza pozycja faktury sprzedaży (1 dla wzorców A/C, 
 | **status** | TEXT | UNPAID / PAID — flaguje się na PAID automatycznie po zaksięgowaniu odpowiadającego `bank_transactions` (OUTGOING) |
 
 Znaczenie biznesowe: **faktura zakupu (koszt)**. Ograniczenie: 526 historycznych faktur miało status PAID nadany starą heurystyką czasową (sprzed wdrożenia `bank_transactions`) — naprawione jednorazowo przez `scripts/fix_outgoing_transactions.py`, ale **ten skrypt trzeba uruchamiać ponownie po każdym pełnym resecie tabel** (TRUNCATE zeruje `bank_transactions`).
+
+**Faza 2 — L01 (Microsoft Norge) rozbite na 4 faktury/miesiąc** (nie 1 płaska pozycja 85 000 NOK) — `supplier_invoice_generator.MICROSOFT_COST_LINES`: M365 E3 licencje, Azure hosting, Visual Studio/narzędzia deweloperskie, wsparcie CSP/Premier. Suma bazowa 2019 = 53 100 NOK/mies. (niżej niż poprzednie 85 000 — poprzednia kwota była ekonomicznie nieuzasadniona), z inflacją +3%/rok (`apply_annual_inflation`, w przeciwieństwie do L02-L08, które pozostają płaskie). `invoice_number` dla L01 ma dodatkowy sufiks `-{1..4}` (np. `L01-2024-01-1`). Azure hosting **nie jest** (jeszcze) dynamicznie powiązany z liczbą klientów S02 — uproszczenie świadome, odłożone do Fazy 4.
 
 ### salary_transactions
 | Kolumna | Typ | Opis |

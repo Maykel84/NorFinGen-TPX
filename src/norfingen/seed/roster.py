@@ -205,20 +205,39 @@ PRODUCTS: list[ProductSeed] = [
     # względem przychodów przy niezmienionych stawkach; koszty pracownicze
     # dominują strukturę kosztów i nie były tu ruszane, patrz notatka w docs/).
     # service_code (Faza 1): P01-P03 (support) -> S01, P04-P05 (licencje/Microsoft)
-    # -> S02, P06 (consulting) -> S04. Żaden istniejący produkt nie mapuje się na
-    # S03 (Cyberbezpieczeństwo) — to nowa usługa bez własnego produktu na razie.
-    ProductSeed("P01", "IT Support — Enterprise", "Subskrypcja mies.", 3000, "S01", 183_000),
+    # -> S02, P06 (consulting) -> S04, P07 (Faza 2) -> S03 (Cyberbezpieczeństwo).
+    #
+    # Faza 2: cena faktycznie użyta na fakturze liczy się teraz z
+    # Service.base_price_{segment} (build_order_lines/product_for_service w
+    # order_generator.py), nie z default_price poniżej — te produkty pozostają
+    # jako referencja Tripletex (product_id) i etykieta na fakturze, jeden
+    # kanoniczny produkt per usługa niezależnie od segmentu klienta. P02/P03/P05
+    # nie są już używane do generowania linii (zastąpione bundlingiem
+    # segmentowym), zostają w katalogu dla zgodności wstecznej/FK.
+    ProductSeed("P01", "Managed IT Support", "Subskrypcja mies.", 3000, "S01", 183_000),
     ProductSeed("P02", "IT Support — Mid-market", "Subskrypcja mies.", 3000, "S01", 133_000),
     ProductSeed("P03", "IT Support — SMB", "Subskrypcja mies.", 3000, "S01", 62_000),
-    ProductSeed("P04", "Software License — Enterprise", "Licencja mies.", 3100, "S02", 79_000),
+    ProductSeed("P04", "Zarządzanie infrastrukturą Microsoft", "Subskrypcja mies.", 3100, "S02", 79_000),
     ProductSeed("P05", "Software License — Mid-market", "Licencja mies.", 3100, "S02", 58_000),
-    ProductSeed("P06", "IT Consulting", "Projekt / zlecenie", 3000, "S04", None),
+    ProductSeed("P06", "Konsulting i digitalizacja", "Projekt / zlecenie", 3000, "S04", None),
+    ProductSeed("P07", "Cyberbezpieczeństwo", "Subskrypcja mies.", 3000, "S03", None),
 ]
 
 
 # Katalog usług (Faza 1) — niezależny od konkretnych cen per klient (te ustala
 # CustomerSeed/CUSTOMER_PRICE_MULTIPLIER). Ceny bazowe z 2019 (rok bazowy
 # apply_annual_inflation), per segment.
+#
+# Faza 2 (rekalibracja): pierwotne base_price_* (S01 Enterprise/Mid/SMB
+# 45000/18000/4500, S02 20000/8000, S03 15000) zawaliły marżę operacyjną do
+# -70%..-183%/rok (payroll 16-osobowego zespołu, skalibrowany w poprzednich
+# sesjach względem starych cen Product, przewyższał cały przychód nawet 2.4x) —
+# skorygowane w górę do wartości poniżej, dopasowanych pod OBECNĄ liczbę
+# klientów (12), nie docelowe 40-50 z Fazy 4. Świadomy kompromis: cena SMB
+# (49 000 NOK/mies. = 588 000 NOK/rok) jest wyższa niż realny rynek dla
+# pojedynczego małego klienta (20-40 tys. NOK/rok) — do skorygowania w dół
+# w Fazie 4, gdy wolumen klientów SMB pozwoli obniżyć cenę per klient bez
+# zawalenia przychodu firmy.
 SERVICES: list[Service] = [
     Service(
         code="S01",
@@ -226,9 +245,9 @@ SERVICES: list[Service] = [
         description="Helpdesk, incydenty, monitoring infrastruktury IT",
         billing_model=BillingModel.SUBSCRIPTION,
         availability=ServiceSegmentAvailability.ALL,
-        base_price_enterprise=45_000,
-        base_price_mid=18_000,
-        base_price_smb=4_500,
+        base_price_enterprise=133_000,
+        base_price_mid=84_500,
+        base_price_smb=49_000,
     ),
     Service(
         code="S02",
@@ -236,8 +255,8 @@ SERVICES: list[Service] = [
         description="Administracja Azure/M365, zarządzana infrastruktura chmurowa",
         billing_model=BillingModel.SUBSCRIPTION,
         availability=ServiceSegmentAvailability.ENTERPRISE_MID,
-        base_price_enterprise=20_000,
-        base_price_mid=8_000,
+        base_price_enterprise=59_000,
+        base_price_mid=37_500,
         base_price_smb=None,
     ),
     Service(
@@ -246,7 +265,7 @@ SERVICES: list[Service] = [
         description="Monitoring bezpieczeństwa, zgodność NIS2, reagowanie na incydenty",
         billing_model=BillingModel.SUBSCRIPTION,
         availability=ServiceSegmentAvailability.ENTERPRISE_ONLY,
-        base_price_enterprise=15_000,
+        base_price_enterprise=44_000,
         base_price_mid=None,
         base_price_smb=None,
     ),
@@ -261,6 +280,52 @@ SERVICES: list[Service] = [
         base_price_smb=1_450,
     ),
 ]
+
+
+# Faza 2 — który klient kupuje jakie usługi, wg segmentu. Niezależne od
+# order_pattern/support_product/license_product (Faza 1 i wcześniej) — te pola
+# CustomerSeed zostają (m.in. sterują dniem/rytmem fakturowania i wzorcem D
+# konsultingowym K06), ale liczba i dobór linii subskrypcyjnych A/B/C liczy się
+# teraz z bundlingu per segment, nie z przypisanych produktów.
+SEGMENT_SERVICE_BUNDLES: dict[str, tuple[str, ...]] = {
+    "Enterprise": ("S01", "S02", "S03"),
+    "Mid-market": ("S01", "S02"),
+    "SMB": ("S01",),
+}
+
+
+def get_customer_services(customer: CustomerSeed) -> list[str]:
+    """Zwraca kody usług, które klient kupuje w standardowej subskrypcji, wg
+    segmentu: Enterprise pełny pakiet S01+S02+S03, Mid-market S01+S02, SMB
+    tylko S01."""
+    return list(SEGMENT_SERVICE_BUNDLES[customer.segment])
+
+
+def service_base_price(service: Service, segment: str) -> Optional[float]:
+    """Cena bazowa usługi (rok 2019, przed inflacją) dla danego segmentu."""
+    if segment == "Enterprise":
+        return service.base_price_enterprise
+    if segment == "Mid-market":
+        return service.base_price_mid
+    return service.base_price_smb
+
+
+_PRODUCT_FOR_SERVICE: dict[str, ProductSeed] = {}
+for _product in PRODUCTS:
+    _PRODUCT_FOR_SERVICE.setdefault(_product.service_code, _product)
+del _product
+
+
+def product_for_service(service_code: str) -> ProductSeed:
+    """Produkt kanoniczny (referencja Tripletex/FK) dla danej usługi — jeden
+    per service_code niezależnie od segmentu klienta, bo Faza 2 liczy cenę
+    bezpośrednio z Service.base_price_* (zob. service_base_price), nie z
+    Product.default_price. Zwraca pierwszy produkt w PRODUCTS zmapowany do
+    tego kodu (P01 dla S01, P04 dla S02, P07 dla S03, P06 dla S04)."""
+    try:
+        return _PRODUCT_FOR_SERVICE[service_code]
+    except KeyError:
+        raise KeyError(f"Brak produktu zmapowanego do usługi: {service_code!r}")
 
 
 def employee_by_number(number: str) -> EmployeeSeed:

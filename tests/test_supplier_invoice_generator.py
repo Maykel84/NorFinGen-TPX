@@ -1,11 +1,39 @@
-from norfingen.generators.supplier_invoice_generator import build_voucher_for_invoice, generate_monthly_supplier_invoices
+from norfingen.generators.order_generator import apply_annual_inflation
+from norfingen.generators.supplier_invoice_generator import (
+    MICROSOFT_COST_LINES,
+    build_voucher_for_invoice,
+    generate_monthly_supplier_invoices,
+)
 from norfingen.seed.roster import supplier_by_number
 
 
-def test_l01_microsoft_fixed_amount_every_month():
+def test_microsoft_cost_split_into_four_invoices():
     invoices = generate_monthly_supplier_invoices(2024, 1)
-    l01 = next(i for i in invoices if i.invoiceNumber.startswith("L01"))
-    assert round(l01.amountExcludingVatCurrency) == 85_000
+    l01_invoices = [i for i in invoices if i.invoiceNumber.startswith("L01")]
+    assert len(l01_invoices) == 4
+    assert len({i.invoiceNumber for i in l01_invoices}) == 4  # numery unikalne
+
+
+def test_microsoft_total_cost_matches_base_year_2019():
+    # Suma bazowa (rok 2019, przed inflacją) = 53 100 NOK/mies. — niżej niż
+    # poprzednie płaskie 85 000, zamierzone (stara kwota była ekonomicznie
+    # nieuzasadniona, zob. docs/SESSION_HANDOFF.md).
+    invoices = generate_monthly_supplier_invoices(2019, 1)
+    l01_invoices = [i for i in invoices if i.invoiceNumber.startswith("L01")]
+    total_netto = sum(i.amountExcludingVatCurrency for i in l01_invoices)
+    expected = sum(line["base_monthly"] for line in MICROSOFT_COST_LINES)
+    assert expected == 53_100
+    assert round(total_netto) == expected
+
+
+def test_microsoft_cost_inflates_over_years():
+    invoices_2019 = generate_monthly_supplier_invoices(2019, 1)
+    invoices_2024 = generate_monthly_supplier_invoices(2024, 1)
+    total_2019 = sum(i.amountExcludingVatCurrency for i in invoices_2019 if i.invoiceNumber.startswith("L01"))
+    total_2024 = sum(i.amountExcludingVatCurrency for i in invoices_2024 if i.invoiceNumber.startswith("L01"))
+    expected_2024 = sum(round(apply_annual_inflation(line["base_monthly"], 2024), 2) for line in MICROSOFT_COST_LINES)
+    assert round(total_2024) == round(expected_2024)
+    assert total_2024 > total_2019
 
 
 def test_l04_statsbygg_fixed_rent():

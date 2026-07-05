@@ -1,8 +1,14 @@
 from datetime import date
 
-from norfingen.generators.order_generator import determine_order_status, generate_daily_orders, generate_monthly_orders
+from norfingen.generators.order_generator import (
+    build_order_lines,
+    determine_order_status,
+    generate_daily_orders,
+    generate_monthly_orders,
+    should_generate_extra_consulting,
+)
 from norfingen.models.order import OrderStatus
-from norfingen.seed.roster import CUSTOMER_PRICE_MULTIPLIER, customer_by_number
+from norfingen.seed.roster import CUSTOMER_PRICE_MULTIPLIER, customer_by_number, numeric_id, product_for_service
 
 
 def test_pattern_a_b_c_generated_every_month():
@@ -82,14 +88,14 @@ def test_same_segment_customers_pay_different_amounts():
 
 def test_price_reflects_customer_multiplier():
     from norfingen.generators.order_generator import apply_annual_inflation
-    from norfingen.seed.roster import product_by_number
+    from norfingen.seed.roster import service_by_code
 
     orders = generate_monthly_orders(2024, 1)
-    order_k01 = next(o for o in orders if o.customer.id == 1)
+    order_k01 = next(o for o in orders if o.customer.id == 1)  # Enterprise -> S01 = product P01 (id=1)
     line = next(l for l in order_k01.orderLines if l.product.id == 1)
 
-    p01 = product_by_number("P01")
-    expected_base_price = apply_annual_inflation(p01.default_price, 2024)
+    s01 = service_by_code("S01")
+    expected_base_price = apply_annual_inflation(s01.base_price_enterprise, 2024)
     expected_price = round(expected_base_price * CUSTOMER_PRICE_MULTIPLIER["K01"], 2)
     assert line.unitPriceExcludingVatCurrency == expected_price
 
@@ -149,16 +155,69 @@ def test_order_status_defaults_to_paid_for_generated_orders():
     assert paid_count >= len(orders) - 1
 
 
-def test_pattern_b_has_two_lines():
-    orders = generate_monthly_orders(2024, 1)
-    k01 = next(o for o in orders if o.customer.id == 1)
-    assert len(k01.orderLines) == 2
+def test_enterprise_customer_has_three_service_lines():
+    # K01 (Enterprise) -> pełny pakiet S01+S02+S03 (Faza 2 bundling per segment,
+    # zastępuje dawne liczenie linii wg litery order_pattern).
+    k01 = customer_by_number("K01")
+    order_date = date(2025, 1, k01.invoice_day)
+    lines = build_order_lines(k01, order_date)
+    assert len(lines) == 3
+    expected_product_ids = {numeric_id(product_for_service(code).number) for code in ("S01", "S02", "S03")}
+    assert {line.product.id for line in lines} == expected_product_ids
 
 
-def test_pattern_c_license_only():
-    orders = generate_monthly_orders(2024, 1)
-    k10 = next(o for o in orders if o.customer.id == 10)
-    assert len(k10.orderLines) == 1
+def test_mid_market_customer_has_two_service_lines():
+    # K10 (Mid-market) -> S01+S02.
+    k10 = customer_by_number("K10")
+    order_date = date(2025, 1, k10.invoice_day)
+    lines = build_order_lines(k10, order_date)
+    assert len(lines) == 2
+
+
+def test_smb_customer_has_one_service_line():
+    # K04 (SMB) -> tylko S01.
+    k04 = customer_by_number("K04")
+    order_date = date(2025, 1, k04.invoice_day)
+    lines = build_order_lines(k04, order_date)
+    assert len(lines) == 1
+    assert lines[0].product.id == numeric_id(product_for_service("S01").number)
+
+
+def test_s03_generates_revenue_for_enterprise_customer():
+    # Cyberbezpieczeństwo (S03) musi faktycznie generować przychód > 0 dla
+    # klientów Enterprise (Faza 1 ograniczenie: usługa istniała bez przychodu).
+    k01 = customer_by_number("K01")
+    order_date = date(2025, 1, k01.invoice_day)
+    lines = build_order_lines(k01, order_date)
+    s03_product_id = numeric_id(product_for_service("S03").number)
+    s03_lines = [l for l in lines if l.product.id == s03_product_id]
+    assert len(s03_lines) == 1
+    assert s03_lines[0].amountExcludingVatCurrency > 0
+
+
+def test_should_generate_extra_consulting_smb_never():
+    k04 = customer_by_number("K04")  # SMB
+    for year in range(2019, 2027):
+        for month in range(1, 13):
+            assert should_generate_extra_consulting(k04, month, year) is False
+
+
+def test_should_generate_extra_consulting_only_in_q2_q4():
+    k01 = customer_by_number("K01")  # Enterprise
+    for month in (1, 2, 3, 7, 8, 9):
+        for year in range(2019, 2027):
+            assert should_generate_extra_consulting(k01, month, year) is False
+
+
+def test_extra_consulting_orders_occasionally_appear_for_enterprise():
+    hits = 0
+    for year in range(2019, 2035):
+        for month in (4, 5, 6, 10, 11, 12):
+            orders = generate_monthly_orders(year, month)
+            k01_orders = [o for o in orders if o.customer.id == 1]
+            if len(k01_orders) > 1:
+                hits += 1
+    assert hits > 0
 
 
 def test_consulting_pattern_d_only_in_allowed_months():

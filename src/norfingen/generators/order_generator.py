@@ -5,11 +5,23 @@ przez Tripletex — ten moduł NIE tworzy Voucherów ręcznie (w przeciwieństwi
 supplier_invoice_generator i salary_generator).
 
 Wzorce z roster.CUSTOMERS.order_pattern:
-  A — 1 OrderLine, IT Support (P01/P02/P03 per segment)
-  B — 2 OrderLines, IT Support + Licencja (P0x + P04/P05)
-  C — 1 OrderLine, tylko licencja (P05)
+  A/B/C — klienci subskrypcyjni (rytm wg invoice_day/payment_terms). Liczba i
+      dobór linii NIE zależy już od litery wzorca (Faza 1/wcześniej: A=1 linia,
+      B=2, C=1) — Faza 2 buduje linie per usługa kupowaną wg segmentu klienta
+      (build_order_lines/roster.get_customer_services): Enterprise S01+S02+S03,
+      Mid-market S01+S02, SMB S01. support_product/license_product na
+      CustomerSeed zostają jako pola historyczne, nieużywane do budowy linii.
   D — Consulting (K06), sezonowo skupiony w Q2 (kwiecień-czerwiec) i Q4
-      (październik-grudzień), rzadziej w styczniu/lipcu, P06
+      (październik-grudzień), rzadziej w styczniu/lipcu, P06. Jedyny klient bez
+      stałej subskrypcji — nie wchodzi w bundling segmentowy.
+
+Faza 2 — should_generate_extra_consulting(): klienci Enterprise/Mid-market z
+subskrypcją A/B/C mogą DODATKOWO (poza swoim stałym Order) dostać osobne
+zamówienie S04 (projekt konsultingowy poza umową) w Q2/Q4, niska częstotliwość
+(~15%/~8% szans na miesiąc) — analogicznie do K06, ale jako Order dodatkowy do
+istniejącej subskrypcji, nie zamiast niej. Jak K06, ta logika działa tylko w
+generate_monthly_orders (backfill historyczny) — generate_daily_orders jej nie
+odtwarza, ten sam ograniczony zakres co już istniejący dla K06.
 
 Data faktury (orderDate/invoiceDate) i termin płatności (invoicesDueIn) per
 klient subskrypcyjny (A/B/C) pochodzą z roster.CustomerSeed.invoice_day /
@@ -20,7 +32,8 @@ stopniowy onboarding portfela (pierwszy klient marzec 2019, komplet 12 dopiero
 w 2022), nie wszyscy istniejący od 2019-01-01.
 
 generate_monthly_orders(year, month) — jeden Order per klient A/B/C w miesiącu
-(+ ewentualny D), używana przez backfill.py (pętla historyczna).
+(+ ewentualny D, + ewentualny extra consulting), używana przez backfill.py
+(pętla historyczna).
 generate_daily_orders(year, month, day) — Order tylko dla klientów, których
 invoice_day wypada danego dnia; K06 (consulting, invoice_day=None) pomijany —
 osobna logika wyzwalania (should_generate_consulting), niezwiązana z dniem.
@@ -34,7 +47,17 @@ from datetime import date
 
 from norfingen.models.base import TripletexRef
 from norfingen.models.order import Order, OrderLine, OrderStatus
-from norfingen.seed.roster import CUSTOMER_PRICE_MULTIPLIER, CUSTOMERS, CustomerSeed, numeric_id, product_by_number
+from norfingen.seed.roster import (
+    CUSTOMER_PRICE_MULTIPLIER,
+    CUSTOMERS,
+    CustomerSeed,
+    get_customer_services,
+    numeric_id,
+    product_by_number,
+    product_for_service,
+    service_base_price,
+    service_by_code,
+)
 
 SALG_DEPARTMENT_REF = TripletexRef(id=1)
 ERIK_STRAND_CONTACT_REF = TripletexRef(id=numeric_id("E01"))
@@ -49,6 +72,12 @@ CONSULTING_PROBABILITY_Q1_Q3_RARE = 0.10
 
 BAD_DEBT_PROBABILITY = 0.02  # ~2% faktur ma opóźnienie >90 dni
 WRITTEN_OFF_SHARE_OF_BAD_DEBT = 0.20  # z tego ~20% (0.4% wszystkich) staje się nieściągalne
+
+# Faza 2 — projekty S04 dodatkowe do subskrypcji (Enterprise/Mid-market).
+EXTRA_CONSULTING_MONTHS = {4, 5, 6, 10, 11, 12}  # Q2/Q4, jak K06 (bez rzadkiego sty/lip)
+EXTRA_CONSULTING_PROBABILITY = {"Enterprise": 0.15, "Mid-market": 0.08}
+EXTRA_CONSULTING_PRODUCT_NUMBER = "P06"  # product_for_service("S04").number
+EXTRA_CONSULTING_ORDER_DAY = 25  # dzień odrębny od invoice_day każdego klienta subskrypcyjnego
 
 INFLATION_BASE_YEAR = 2019
 INFLATION_RATE = 0.03
@@ -148,28 +177,46 @@ def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_
     )
 
 
-def _order_lines_for_pattern(customer: CustomerSeed, year: int) -> list[OrderLine]:
-    """Buduje OrderLines dla wzorców A/B/C (subskrypcyjnych, cykl miesięczny) —
-    cena skorygowana o indywidualny mnożnik negocjacyjny klienta (±8%, zob.
-    roster.CUSTOMER_PRICE_MULTIPLIER) — dwaj klienci tego samego segmentu i
-    produktu płacą różne kwoty, tak jak przy realnych negocjacjach B2B.
+def build_order_lines(customer: CustomerSeed, order_date: date) -> list[OrderLine]:
+    """Buduje OrderLines dla klientów subskrypcyjnych (A/B/C, cykl miesięczny) —
+    jedna linia per usługa którą klient kupuje wg segmentu (Faza 2:
+    roster.get_customer_services), cena z katalogu usług
+    (roster.service_base_price, NIE Product.default_price) po inflacji
+    (apply_annual_inflation) i indywidualnym mnożniku negocjacyjnym klienta
+    (±8%, roster.CUSTOMER_PRICE_MULTIPLIER) — dwaj klienci tego samego
+    segmentu płacą różne kwoty, tak jak przy realnych negocjacjach B2B.
+    Zastępuje dawny podział wg litery wzorca (A=1/B=2/C=1 linia) —
+    support_product/license_product nie sterują już liczbą/doborem linii.
     Wzorzec D (K06 consulting) ma osobną logikę — nie jest tu obsługiwany."""
-    pattern = customer.order_pattern
     multiplier = CUSTOMER_PRICE_MULTIPLIER[customer.number]
+    lines: list[OrderLine] = []
+    for code in get_customer_services(customer):
+        service = service_by_code(code)
+        base_price = service_base_price(service, customer.segment)
+        product = product_for_service(code)
+        price = round(apply_annual_inflation(base_price, order_date.year) * multiplier, 2)
+        lines.append(OrderLine(
+            product=TripletexRef(id=numeric_id(product.number)),
+            count=1.0,
+            unitPriceExcludingVatCurrency=price,
+        ))
+    return lines
 
-    if pattern == "A":
-        return [_order_line_for_product(customer.support_product, year, price_multiplier=multiplier)]
 
-    if pattern == "B":
-        return [
-            _order_line_for_product(customer.support_product, year, price_multiplier=multiplier),
-            _order_line_for_product(customer.license_product, year, price_multiplier=multiplier),
-        ]
-
-    if pattern == "C":
-        return [_order_line_for_product(customer.license_product, year, price_multiplier=multiplier)]
-
-    raise ValueError(f"Nieznany order_pattern dla wzorca subskrypcyjnego: {pattern!r} dla klienta {customer.number}")
+def should_generate_extra_consulting(customer: CustomerSeed, month: int, year: int) -> bool:
+    """Klienci Enterprise/Mid-market mogą occasionally (dodatkowo do
+    standardowej subskrypcji) zamówić projekt S04 — symuluje to dodatkowe
+    projekty digitalizacyjne poza umową abonamentową. SMB nie zamawia
+    dodatkowego consultingu (jedyny SMB z consultingiem to K06/wzorzec D,
+    osobna logika). ~15% szans w Q2/Q4 dla Enterprise, ~8% dla Mid-market.
+    Deterministyczne per klient+rok+miesiąc (random.Random(string), nie
+    wbudowany hash() — zob. SESSION_HANDOFF.md pkt 6)."""
+    if customer.segment not in EXTRA_CONSULTING_PROBABILITY:
+        return False
+    if month not in EXTRA_CONSULTING_MONTHS:
+        return False
+    rng = random.Random(f"extra-consulting-{customer.number}-{year}-{month}")
+    return rng.random() < EXTRA_CONSULTING_PROBABILITY[customer.segment]
 
 
 def generate_monthly_orders(year: int, month: int) -> list[Order]:
@@ -185,8 +232,16 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
             order_date = date(year, month, _clamp_day(year, month, customer.invoice_day))
             if not _is_active(customer, order_date):
                 continue
-            lines = _order_lines_for_pattern(customer, year)
+            lines = build_order_lines(customer, order_date)
             orders.append(_build_order(customer, year, month, customer.invoice_day, lines))
+
+            if should_generate_extra_consulting(customer, month, year):
+                rng = random.Random(f"extra-consulting-price-{customer.number}-{year}-{month}")
+                price = round(rng.uniform(CONSULTING_PRICE_MIN, CONSULTING_PRICE_MAX), 2)
+                extra_line = _order_line_for_product(
+                    EXTRA_CONSULTING_PRODUCT_NUMBER, year, count=1.0, unit_price=price,
+                )
+                orders.append(_build_order(customer, year, month, EXTRA_CONSULTING_ORDER_DAY, [extra_line]))
 
         elif pattern == "D":
             if _is_active(customer, date(year, month, 1)) and should_generate_consulting(month, year):
@@ -219,7 +274,7 @@ def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
         if not _is_active(customer, order_date):
             continue
 
-        lines = _order_lines_for_pattern(customer, year)
+        lines = build_order_lines(customer, order_date)
         orders.append(_build_order(customer, year, month, day, lines))
 
     return orders

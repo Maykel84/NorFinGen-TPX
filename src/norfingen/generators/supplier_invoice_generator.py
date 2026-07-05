@@ -16,6 +16,7 @@ import calendar
 import random
 from datetime import date, timedelta
 
+from norfingen.generators.order_generator import apply_annual_inflation
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid, expected_vat_amount
 from norfingen.models.base import TripletexRef
 from norfingen.models.supplier_invoice import SupplierInvoice
@@ -23,6 +24,23 @@ from norfingen.seed.roster import SUPPLIERS, SupplierSeed, numeric_id
 
 GROSS_UP_FACTOR = 1.25  # amountCurrency (incl. VAT) = netto * 1.25, VAT 25%
 PAID_AFTER_DAYS = 45  # faktury z payment_due_date starszym niż 45 dni → PAID
+
+# Faza 2 — L01 Microsoft Norge rozbite z jednej płaskiej pozycji (85 000 NOK/mies.,
+# ekonomicznie nieuzasadnionej) na 4 pozycje kosztowe realnie odpowiadające
+# strukturze wydatków firmy IT (licencje M365, Azure hosting, narzędzia
+# deweloperskie, wsparcie CSP/Premier). Suma bazowa (rok 2019, przed inflacją)
+# to 53 100 NOK/mies. — inflacja +3%/rok jak przy cenach sprzedaży
+# (apply_annual_inflation), w przeciwieństwie do pozostałych dostawców (L02-L08),
+# których kwoty pozostają płaskie/z szumem — poza zakresem tej fazy.
+# Uwaga: Azure hosting nie jest (jeszcze) powiązany dynamicznie z liczbą
+# klientów Enterprise/Mid kupujących S02 — uproszczenie świadome, odłożone do
+# Fazy 4 (zob. docs/SESSION_HANDOFF.md), gdy portfel klientów faktycznie rośnie.
+MICROSOFT_COST_LINES = [
+    {"name": "M365 E3 licencje (16 stanowisk)", "base_monthly": 6_100},
+    {"name": "Azure hosting — infrastruktura klientów", "base_monthly": 35_000},
+    {"name": "Visual Studio / narzędzia deweloperskie", "base_monthly": 4_000},
+    {"name": "Wsparcie CSP/Premier", "base_monthly": 8_000},
+]
 
 
 def with_noise(amount: float, pct: float = 0.03, rng: random.Random | None = None) -> float:
@@ -70,8 +88,22 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
         seq = month  # jedna faktura per miesiąc dla większości dostawców -> wystarczy numer miesiąca
 
         if supplier.number == "L01":
-            netto = supplier.amount_min  # stałe 85 000
             invoice_date = _month_day(year, month, 1)
+            payment_due = invoice_date + timedelta(days=30)
+            paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
+            for idx, cost_line in enumerate(MICROSOFT_COST_LINES, start=1):
+                netto = round(apply_annual_inflation(cost_line["base_monthly"], year), 2)
+                account_number = _account_for_invoice(supplier, netto)
+                invoices.append(SupplierInvoice(
+                    invoiceNumber=f"{supplier.number}-{year}-{month:02d}-{idx}",
+                    supplier=TripletexRef(id=numeric_id(supplier.number)),
+                    invoiceDate=invoice_date,
+                    amountCurrency=round(netto * GROSS_UP_FACTOR, 2),
+                    account=TripletexRef(id=account_number),
+                    comment=cost_line["name"],
+                    status="PAID" if paid else "UNPAID",
+                ))
+            continue
         elif supplier.number == "L02":
             netto = with_noise(18_000, 0.05, rng)
             invoice_date = _month_day(year, month, 5)

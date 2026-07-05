@@ -32,7 +32,7 @@ def test_roster_counts_match_docs():
     assert len(EMPLOYEES) == 16
     assert len(CUSTOMERS) == 12
     assert len(SUPPLIERS) == 8
-    assert len(PRODUCTS) == 6
+    assert len(PRODUCTS) == 7  # Faza 2: +P07 Cyberbezpieczeństwo (S03)
     assert len(SERVICES) == 4
 
 
@@ -41,8 +41,8 @@ def test_services_seed_data():
     assert s01.name == "Managed IT Support"
     assert s01.billing_model == BillingModel.SUBSCRIPTION
     assert s01.availability == ServiceSegmentAvailability.ALL
-    assert s01.base_price_enterprise == 45_000
-    assert s01.base_price_smb == 4_500
+    assert s01.base_price_enterprise == 133_000
+    assert s01.base_price_smb == 49_000
 
     s03 = service_by_code("S03")
     assert s03.availability == ServiceSegmentAvailability.ENTERPRISE_ONLY
@@ -65,6 +65,7 @@ def test_product_service_mapping_matches_category():
         "P01": "S01", "P02": "S01", "P03": "S01",  # IT Support -> Managed IT Support
         "P04": "S02", "P05": "S02",  # Licencje/Microsoft -> Zarządzanie infrastrukturą Microsoft
         "P06": "S04",  # Consulting -> Konsulting i digitalizacja
+        "P07": "S03",  # Faza 2 -> Cyberbezpieczeństwo
     }
     for product in PRODUCTS:
         assert product.service_code == expected[product.number]

@@ -72,17 +72,17 @@ def fake_repository(monkeypatch):
     return repository, fake_conn
 
 
-def test_save_order_with_two_lines(fake_repository):
+def test_save_order_with_three_lines(fake_repository):
     repository, fake_conn = fake_repository
     orders = generate_monthly_orders(2024, 1)
-    k01 = next(o for o in orders if o.customer.id == 1)  # pattern B -> 2 linie
-    assert len(k01.orderLines) == 2
+    k01 = next(o for o in orders if o.customer.id == 1)  # Enterprise -> S01+S02+S03 = 3 linie
+    assert len(k01.orderLines) == 3
 
     repository.save_all(k01)
 
     sql_texts = [sql for sql, _ in fake_conn.cursor_obj.executed]
     assert any("INSERT INTO orders" in s for s in sql_texts)
-    assert sum("INSERT INTO order_lines" in s for s in sql_texts) == 2
+    assert sum("INSERT INTO order_lines" in s for s in sql_texts) == 3
     assert fake_conn.committed
 
 
