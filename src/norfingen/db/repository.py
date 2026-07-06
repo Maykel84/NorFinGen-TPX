@@ -78,6 +78,10 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (6900, "Telefon og internett", "OPERATING_EXPENSE", 1),
     (7000, "Reisekostnader", "OPERATING_EXPENSE", 1),
     (7500, "Forsikringspremier", "OPERATING_EXPENSE", 1),
+    # Faza 3 — nowe kategorie kosztów (bez VAT, koszt gotówkowy bezpośredni).
+    (4290, "Driftsmateriell for kundeleveranse", "OPERATING_EXPENSE", None),
+    (7350, "Kantinetilskudd", "OPERATING_EXPENSE", None),
+    (7420, "Representasjon", "OPERATING_EXPENSE", None),
 ]
 
 # (id, name, number, percentage, vat_code) — id zgodny z TripletexRef(id=...)

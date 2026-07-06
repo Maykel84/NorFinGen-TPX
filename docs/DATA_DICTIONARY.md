@@ -91,7 +91,14 @@ Znaczenie biznesowe: stały słownik stawek VAT (jedyna realnie używana stawka 
 | type | TEXT | ASSETS / EQUITY_AND_LIABILITY / OPERATING_INCOME / OPERATING_EXPENSE |
 | vat_type_id | INTEGER (FK) | → vat_types.id, tylko dla kont przychodowych/kosztowych z VAT |
 
-Znaczenie biznesowe: 24-pozycyjny plan kont używany przez wszystkie `postings.account_number`. **Konta 3000/3100 (przychód) istnieją w tym słowniku, ale nigdy nie mają postingów** — zob. ograniczenie na górze dokumentu.
+Znaczenie biznesowe: 27-pozycyjny plan kont (24 + 3 z Fazy 3) używany przez wszystkie `postings.account_number`. **Konta 3000/3100 (przychód) istnieją w tym słowniku, ale nigdy nie mają postingów** — zob. ograniczenie na górze dokumentu.
+
+**Faza 3 — 3 nowe konta kosztowe** (`generators/opex_generator.py`), wszystkie bez VAT (`vat_type_id=NULL`) — koszty gotówkowe księgowane bezpośrednio (DR koszt / CR 1910), bez pośredniego `SupplierInvoice`:
+- **4290** "Driftsmateriell for kundeleveranse" — COGS (klasa 4 NS4102, nie 6xxx/7xxx jak reszta kosztów operacyjnych): jednorazowy sprzęt wdrożeniowy (routery/serwery) przy onboardingu klienta Enterprise/Mid-market, 45-90 tys. NOK (Enterprise) / 15-35 tys. NOK (Mid-market). Ponieważ obecni 12 klientów onboardowali się 2019-2022, ten koszt występuje niemal wyłącznie w latach historycznych.
+- **7350** "Kantinetilskudd" — dopłata do kantyny, 820 NOK/pracownika/miesiąc (stała, bez inflacji — polityka firmy).
+- **7420** "Representasjon" — koszty reprezentacyjne per aktywny klient: 1000 NOK/mies. (Enterprise) / 400 NOK/mies. (Mid-market), z inflacją +3%/rok. SMB nie generuje kosztu (relacja czysto transakcyjna). **Nie zaimplementowano** flagi `tax_deductible_pct` (ograniczona odliczalność podatkowa reprezentacji w Norwegii) — zadanie explicite dopuszczało pominięcie, zostawione jako komentarz w kodzie na przyszłość.
+
+Kilometrówka (kwartalne wizyty u klientów) i wyjazdy konferencyjne (2-3x/rok, losowe) księgowane na **istniejące konto 7000** "Reisekostnader" — to samo konto co L07 Avis (dostawca kosztowy z Fazy wcześniejszej), bo to logicznie ta sama kategoria NS4102 (koszty podróży), nie osobny nowy numer. L07 Avis pozostaje bez zmian (żadnego "miksu" service/transport nie było do rozdzielenia — L07 to czysto wynajem samochodów).
 
 ### products
 | Kolumna | Typ | Opis |
@@ -219,9 +226,9 @@ Znaczenie biznesowe: rozbicie wypłaty na składniki. W czerwcu: standardowo tyl
 | id | SERIAL (PK) | |
 | date | DATE | Data księgowania |
 | description | TEXT | Opis (klucz naturalny razem z `date`, UNIQUE) |
-| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL. **Nigdy INVOICE** (zob. ograniczenie na górze dokumentu) |
+| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL / **OPERATING_COST (Faza 3)**. **Nigdy INVOICE** (zob. ograniczenie na górze dokumentu) |
 
-Znaczenie biznesowe: nagłówek zapisu księgowego. **Nie zawiera przychodu ze sprzedaży** — tylko koszty (faktury zakupu, payroll, ruchy bankowe) i kapitał zakładowy.
+Znaczenie biznesowe: nagłówek zapisu księgowego. **Nie zawiera przychodu ze sprzedaży** — tylko koszty (faktury zakupu, payroll, ruchy bankowe, Faza 3: kantyna/reprezentacja/transport/sprzęt wdrożeniowy) i kapitał zakładowy. `OPERATING_COST` (Faza 3, `generators/opex_generator.py`) — koszty gotówkowe bez odpowiadającego dokumentu źródłowego (w przeciwieństwie do `INCOMING_INVOICE`, które zawsze mają `SupplierInvoice`).
 
 ### postings
 | Kolumna | Typ | Opis |

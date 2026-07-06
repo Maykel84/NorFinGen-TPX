@@ -26,6 +26,7 @@ class VoucherType(str, Enum):
     SALARY = "SALARY"  # SalaryTransaction + Feriepenger — generator jawnie
     BANK = "BANK"  # płatności bankowe — Etap 4
     MANUAL = "MANUAL"  # kapitał zakładowy, korekty — backfill
+    OPERATING_COST = "OPERATING_COST"  # Faza 3 — kantyna/reprezentacja/transport/sprzęt wdrożeniowy: koszt gotówkowy bez osobnego dokumentu źródłowego (nie SupplierInvoice)
 
 
 class AccountRef(BaseModel):

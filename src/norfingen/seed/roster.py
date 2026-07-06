@@ -328,6 +328,82 @@ def product_for_service(service_code: str) -> ProductSeed:
         raise KeyError(f"Brak produktu zmapowanego do usługi: {service_code!r}")
 
 
+def is_customer_active(customer: CustomerSeed, on_date: date) -> bool:
+    """Klient jest aktywny (onboarding_date <= on_date, i jeśli ma churn_date,
+    jeszcze nie odszedł). Wspólna implementacja używana przez
+    order_generator._is_active i generators.opex_generator (Faza 3) — wcześniej
+    zduplikowana logicznie (order_generator, hours_generator)."""
+    if on_date < customer.onboarding_date:
+        return False
+    if customer.churn_date is not None and on_date > customer.churn_date:
+        return False
+    return True
+
+
+def active_customers(on_date: date) -> list[CustomerSeed]:
+    """Klienci aktywni w danym dniu (zob. is_customer_active) — analogiczne do
+    seed.payroll.active_employees dla pracowników."""
+    return [c for c in CUSTOMERS if is_customer_active(c, on_date)]
+
+
+# Faza 3 — nowe kategorie kosztów (kantyna, reprezentacja, kilometrówka).
+# Kwoty celowo skromne (lekcja z Fazy 2: dosłowne przepisanie cen bez
+# weryfikacji marży zawaliło wynik do -183%) — te koszty dodają się do już
+# zweryfikowanej, zdrowej marży 20-23% i muszą pozostać niewielkie.
+CANTEEN_SUBSIDY_PER_EMPLOYEE_MONTHLY = 820  # NOK, ustalone, nie zmieniać (polityka firmy, nie cena rynkowa)
+
+REPRESENTATION_COST_PER_ENTERPRISE_CLIENT_MONTHLY = 1_000  # NOK, bazowe 2019
+REPRESENTATION_COST_PER_MID_CLIENT_MONTHLY = 400
+# SMB — brak kosztów reprezentacyjnych, relacja czysto transakcyjna.
+
+KM_RATE_2019 = 3.5  # NOK/km, stawka bazowa 2019 — płaska w tej fazie (kwota
+# na tyle mała, że inflacja nie ma praktycznego znaczenia; brak zastosowania
+# apply_annual_inflation tutaj jest świadome, nie przeoczenie).
+
+CONFERENCE_HOTEL_RATES: dict[str, float] = {
+    "Oslo": 2_200, "Bergen": 1_600, "Trondheim": 1_500, "Stavanger": 1_700,
+    "default": 1_200,  # mniejsze miasta
+}
+
+
+def calc_canteen_cost(active_employee_count: int) -> float:
+    """Dopłata do kantyny — 820 NOK/pracownika/miesiąc, bez inflacji (to jest
+    polityka firmy, nie cena rynkowa — zostaje stała)."""
+    return active_employee_count * CANTEEN_SUBSIDY_PER_EMPLOYEE_MONTHLY
+
+
+def calc_representation_cost(customers: list[CustomerSeed]) -> float:
+    """Koszty reprezentacyjne — relacje z klientami, zależne od segmentu.
+    SMB nie generuje kosztu (relacja czysto transakcyjna). Zwraca kwotę bazową
+    (rok 2019) — inflacja +3%/rok stosowana przez wywołującego
+    (generators.opex_generator.apply_annual_inflation z order_generator.py;
+    roster.py celowo nie zależy od modułów generators, żeby uniknąć cyklu
+    importu z order_generator, który już importuje z roster.py)."""
+    total = 0.0
+    for c in customers:
+        if c.segment == "Enterprise":
+            total += REPRESENTATION_COST_PER_ENTERPRISE_CLIENT_MONTHLY
+        elif c.segment == "Mid-market":
+            total += REPRESENTATION_COST_PER_MID_CLIENT_MONTHLY
+    return total
+
+
+def calc_client_visit_transport(customers: list[CustomerSeed], month: int) -> float:
+    """Kilometrówka za wizyty u klientów — Enterprise: spotkania kwartalne
+    (~150km/wizyta), Mid-market: 2x/rok, SMB: ~1x/rok. Stawka płaska (zob.
+    KM_RATE_2019) — kwota zbyt mała, żeby inflacja miała praktyczne znaczenie
+    w tej fazie."""
+    total_km = 0
+    for c in customers:
+        if c.segment == "Enterprise" and month in (2, 5, 8, 11):
+            total_km += 150
+        elif c.segment == "Mid-market" and month in (3, 9):
+            total_km += 120
+        elif c.segment == "SMB" and month == 6:
+            total_km += 80
+    return total_km * KM_RATE_2019
+
+
 def employee_by_number(number: str) -> EmployeeSeed:
     for e in EMPLOYEES:
         if e.number == number:

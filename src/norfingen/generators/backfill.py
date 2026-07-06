@@ -16,6 +16,7 @@ import logging
 from datetime import date
 from typing import Callable, Optional
 
+from norfingen.generators.opex_generator import generate_monthly_opex
 from norfingen.generators.order_generator import generate_monthly_orders
 from norfingen.generators.salary_generator import generate_monthly_salary
 from norfingen.generators.supplier_invoice_generator import build_voucher_for_invoice, generate_monthly_supplier_invoices
@@ -104,6 +105,12 @@ def generate_and_persist_month(year: int, month: int, persist_fn: Optional[Persi
     stats["payslips"] += len(transaction.payslips)
     stats["vouchers"] += len(vouchers)
     stats["postings"] += sum(len(v.postings) for v in vouchers)
+
+    opex_vouchers = generate_monthly_opex(year, month)
+    for voucher in opex_vouchers:
+        _emit(voucher)
+    stats["vouchers"] += len(opex_vouchers)
+    stats["postings"] += sum(len(v.postings) for v in opex_vouchers)
 
     return stats
 

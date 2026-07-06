@@ -52,6 +52,7 @@ from norfingen.seed.roster import (
     CUSTOMERS,
     CustomerSeed,
     get_customer_services,
+    is_customer_active,
     numeric_id,
     product_by_number,
     product_for_service,
@@ -126,17 +127,6 @@ def _order_line_for_product(product_number: str, year: int, count: float = 1.0, 
 def _clamp_day(year: int, month: int, day: int) -> int:
     last_day = calendar.monthrange(year, month)[1]
     return min(day, last_day)
-
-
-def _is_active(customer: CustomerSeed, on_date: date) -> bool:
-    """Klient nie generuje zamówień przed swoją onboarding_date (stopniowy
-    onboarding portfela, nie wszyscy istniejący od 2019-01-01) ani po swojej
-    churn_date, jeśli ma (niski, realistyczny churn — głównie SMB, K09)."""
-    if on_date < customer.onboarding_date:
-        return False
-    if customer.churn_date is not None and on_date > customer.churn_date:
-        return False
-    return True
 
 
 def determine_order_status(customer_number: str, order_date: date) -> OrderStatus:
@@ -230,7 +220,7 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
 
         if pattern in ("A", "B", "C"):
             order_date = date(year, month, _clamp_day(year, month, customer.invoice_day))
-            if not _is_active(customer, order_date):
+            if not is_customer_active(customer, order_date):
                 continue
             lines = build_order_lines(customer, order_date)
             orders.append(_build_order(customer, year, month, customer.invoice_day, lines))
@@ -244,7 +234,7 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
                 orders.append(_build_order(customer, year, month, EXTRA_CONSULTING_ORDER_DAY, [extra_line]))
 
         elif pattern == "D":
-            if _is_active(customer, date(year, month, 1)) and should_generate_consulting(month, year):
+            if is_customer_active(customer, date(year, month, 1)) and should_generate_consulting(month, year):
                 rng = random.Random(f"{customer.number}-{year}-{month}")
                 price = rng.uniform(CONSULTING_PRICE_MIN, CONSULTING_PRICE_MAX)
                 line = _order_line_for_product("P06", year, count=1.0, unit_price=round(price, 2))
@@ -271,7 +261,7 @@ def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
             continue
 
         order_date = date(year, month, day)
-        if not _is_active(customer, order_date):
+        if not is_customer_active(customer, order_date):
             continue
 
         lines = build_order_lines(customer, order_date)
