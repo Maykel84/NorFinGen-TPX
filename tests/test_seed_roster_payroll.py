@@ -16,27 +16,34 @@ from norfingen.seed.roster import (
     CUSTOMERS,
     DEPARTMENTS,
     EMPLOYEES,
+    LEGACY_SERVICES,
     PRODUCTS,
     PROJECTS,
+    SCALE_SERVICES,
     SERVICES,
     SUPPLIERS,
+    customer_by_number,
     employee_by_number,
+    get_service_price_table,
     numeric_id,
     project_by_number,
     service_by_code,
+    service_by_code_for_customer,
 )
 
 
 def test_roster_counts_match_docs():
     assert len(DEPARTMENTS) == 4
-    assert len(EMPLOYEES) == 16
-    assert len(CUSTOMERS) == 12
+    assert len(EMPLOYEES) == 38  # Faza 4: 16 + E17-E38
+    assert len(CUSTOMERS) == 50  # Faza 4: 12 + K13-K50
     assert len(SUPPLIERS) == 8
     assert len(PRODUCTS) == 7  # Faza 2: +P07 Cyberbezpieczeństwo (S03)
     assert len(SERVICES) == 4
 
 
 def test_services_seed_data():
+    # SERVICES == LEGACY_SERVICES (Faza 2 ceny) — katalog referencyjny /
+    # zasila tabelę `services` w Supabase (jedna cena/usługę, zob. roster.py).
     s01 = service_by_code("S01")
     assert s01.name == "Managed IT Support"
     assert s01.billing_model == BillingModel.SUBSCRIPTION
@@ -52,6 +59,29 @@ def test_services_seed_data():
     s04 = service_by_code("S04")
     assert s04.billing_model == BillingModel.HOURLY
     assert s04.base_price_enterprise == s04.base_price_mid == s04.base_price_smb == 1_450
+
+
+def test_faza4_dual_pricing_cohorts():
+    # K01 (onboarding 2019, legacy) vs K13 (onboarding 2023, scale) —
+    # rekalibracja #3: dwie kohorty cenowe zamiast jednego globalnego cennika.
+    k01 = customer_by_number("K01")
+    k13 = customer_by_number("K13")
+    assert get_service_price_table(k01) is LEGACY_SERVICES
+    assert get_service_price_table(k13) is SCALE_SERVICES
+
+    s01_legacy = service_by_code_for_customer(k01, "S01")
+    s01_scale = service_by_code_for_customer(k13, "S01")
+    assert s01_legacy.base_price_enterprise == 133_000
+    assert s01_scale.base_price_enterprise == 60_000
+
+
+def test_faza4_merger_cohort_uses_legacy_pricing():
+    # Kohorta fuzji (2022-09-01, K27/K32/K34/K46) onboarduje się PRZED
+    # cutoff (2023-01-01) -> LEGACY_SERVICES mimo że są w numeracji K13-K50.
+    for number in ("K27", "K32", "K34", "K46"):
+        customer = customer_by_number(number)
+        assert customer.onboarding_date == date(2022, 9, 1)
+        assert get_service_price_table(customer) is LEGACY_SERVICES
 
 
 def test_every_product_maps_to_a_valid_service():
@@ -75,7 +105,9 @@ def test_active_employees_respects_historical_phases():
     assert len(active_employees(date(2019, 6, 1))) == 6
     assert len(active_employees(date(2020, 6, 1))) == 8
     assert len(active_employees(date(2021, 12, 1))) == 10
-    assert len(active_employees(date(2023, 1, 1))) == 16
+    # 2022-10-01: po fuzji (2022-09-01, +6), przed pierwszą rekrutacją Faza 4
+    # (E17, 2022-10-15) -> dokładnie 16.
+    assert len(active_employees(date(2022, 10, 1))) == 16
 
 
 def test_founding_cohort_staggered_over_four_months():
@@ -111,10 +143,11 @@ def test_founding_hires_not_paid_before_their_start_month():
 
 
 def test_active_employees_brutto_aggregate_matches_docs():
-    # Łączne brutto/mies. dla okresu 2022-09 - dziś: 16 os. ≈ 955 000 NOK (docs W2,
-    # wartość zaokrąglona w dokumentacji — dopuszczamy tolerancję wynikającą z sumy
-    # rzeczywistych stawek rocznych w roster.py).
-    active = active_employees(date(2023, 1, 1))
+    # Łączne brutto/mies. tuż po fuzji (2022-09), przed pierwszą rekrutacją
+    # Faza 4: 16 os. ≈ 955 000 NOK (docs W2, wartość zaokrąglona w
+    # dokumentacji — dopuszczamy tolerancję wynikającą z sumy rzeczywistych
+    # stawek rocznych w roster.py).
+    active = active_employees(date(2022, 10, 1))
     total_brutto = sum(calc_brutto(e) for e in active)
     assert abs(total_brutto - 955_000) < 20_000
 
@@ -153,11 +186,12 @@ def test_calc_brutto_with_raises_compounds_annually():
 
 
 def test_projects_seed_data():
-    assert len(PROJECTS) == 8
+    # Faza 4: jeden projekt per klient (1:1, PRJnnn <-> Knnn), nie 8 ręcznie
+    # utrzymywanych wpisów jak przed Fazą 4.
+    assert len(PROJECTS) == 50
     prj005 = project_by_number("PRJ005")
-    assert prj005.customer_id == 6
-    assert prj005.name == "Digitalisering — Telemark"
-    assert prj005.start_date == date(2026, 3, 1)
+    assert prj005.customer_id == 5
+    assert prj005.start_date == date(2019, 9, 1)  # = K05 (Fjord Logistikk AS) onboarding_date
 
 
 def test_numeric_id_handles_single_and_multi_letter_prefixes():

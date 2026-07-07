@@ -57,7 +57,7 @@ from norfingen.seed.roster import (
     product_by_number,
     product_for_service,
     service_base_price,
-    service_by_code,
+    service_by_code_for_customer,
 )
 
 SALG_DEPARTMENT_REF = TripletexRef(id=1)
@@ -181,7 +181,11 @@ def build_order_lines(customer: CustomerSeed, order_date: date) -> list[OrderLin
     multiplier = CUSTOMER_PRICE_MULTIPLIER[customer.number]
     lines: list[OrderLine] = []
     for code in get_customer_services(customer):
-        service = service_by_code(code)
+        # service_by_code_for_customer (nie service_by_code) — Faza 4,
+        # rekalibracja #3: respektuje kohortę cenową klienta (LEGACY_SERVICES
+        # dla K01-K12 + fuzja 2022-09, SCALE_SERVICES dla klientów 2023+),
+        # zob. roster.get_service_price_table.
+        service = service_by_code_for_customer(customer, code)
         base_price = service_base_price(service, customer.segment)
         product = product_for_service(code)
         price = round(apply_annual_inflation(base_price, order_date.year) * multiplier, 2)

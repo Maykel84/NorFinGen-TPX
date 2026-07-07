@@ -112,6 +112,47 @@ EMPLOYEES: list[EmployeeSeed] = [
     EmployeeSeed("E14", "Camilla", "Bø", 2, date(2022, 9, 1), "merger", "IT Specialist", 680_000),
     EmployeeSeed("E15", "Anders", "Johansen", 3, date(2022, 9, 1), "merger", "Developer", 760_000),
     EmployeeSeed("E16", "Marit", "Sundby", 4, date(2022, 9, 1), "merger", "Admin Coordinator", 640_000),
+    # --- Faza 4: skalowanie 2022-10 (tuż po fuzji) do 2026-03 — rekrutacje
+    # POJEDYNCZE, odstępy dokładnie 60 dni, NIE wzorzec fuzji z 2022 (6 osób
+    # naraz — to zostaje wyjątkowym, jednorazowym zdarzeniem w historii, nie
+    # powtarzającym się szablonem). Liczba, tempo I PENSJE wyliczone
+    # empirycznie z roster.calc_target_headcount (korekta #4) — pierwsza
+    # próba (16 hires, pensje 640-760k jak reszta zespołu) dała docelowy
+    # zespół 32 osoby, ale to wciąż za mało: rzeczywisty koszt/pracownika w
+    # tym modelu (~890 tys. NOK w pełni obciążony, nie założone 1,15 mln) i
+    # rzeczywisty przychód 50 klientów wymagały ~44 etatów przy tamtych
+    # pensjach — fizycznie niewykonalne przy odstępach >=60 dni w oknie
+    # 2023-2026 (potrzeba by ~4,6 roku, jest ~3,5). Rozwiązanie: 22 rekrutacje
+    # (max mieszczące się przy odstępach 60 dni w oknie 2022-10 -> 2026-03)
+    # + WYŻSZA pensja (950 tys., senior/specjalista, adekwatna do roli
+    # "dociążania" zespołu przy szybkim skalowaniu) zamiast więcej osób.
+    # Rezultat zweryfikowany symulacją PRZED backfillem (nie szacunkiem):
+    # marża 40,8% (2022) -> 29,6% (2023) -> 22,6% (2024) -> 14,9% (2025) ->
+    # 15,0% (2026) — płynny spadek do celu 15-22%, nigdy poniżej progu
+    # bezpieczeństwa 10%. Mix ról: 20 billable (Leveranse/Teknologi) + 2
+    # wspierające (Salg/Økonomi).
+    EmployeeSeed("E17", "Vegard", "Lien", 2, date(2022, 10, 15), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E18", "Frida", "Solheim", 3, date(2022, 12, 14), "scaling", "Senior Developer", 950_000),
+    EmployeeSeed("E19", "Magnus", "Aas", 2, date(2023, 2, 12), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E20", "Emilie", "Skogen", 3, date(2023, 4, 13), "scaling", "Senior IT Specialist", 950_000),
+    EmployeeSeed("E21", "Jonas", "Reme", 2, date(2023, 6, 12), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E22", "Sunniva", "Vik", 3, date(2023, 8, 11), "scaling", "Senior Developer", 950_000),
+    EmployeeSeed("E23", "Kristoffer", "Bakke", 2, date(2023, 10, 10), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E24", "Tuva", "Nesheim", 3, date(2023, 12, 9), "scaling", "Senior IT Specialist", 950_000),
+    EmployeeSeed("E25", "Oskar", "Vold", 1, date(2024, 2, 7), "scaling", "Account Manager", 950_000),
+    EmployeeSeed("E26", "Ida", "Fjeld", 2, date(2024, 4, 7), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E27", "Håkon", "Strøm", 3, date(2024, 6, 6), "scaling", "Senior Developer", 950_000),
+    EmployeeSeed("E28", "Live", "Berge", 2, date(2024, 8, 5), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E29", "Aksel", "Haug", 3, date(2024, 10, 4), "scaling", "Senior IT Specialist", 950_000),
+    EmployeeSeed("E30", "Thea", "Rud", 4, date(2024, 12, 3), "scaling", "Finance Coordinator", 950_000),
+    EmployeeSeed("E31", "Mathias", "Grande", 2, date(2025, 2, 1), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E32", "Julie", "Wold", 3, date(2025, 4, 2), "scaling", "Senior Developer", 950_000),
+    EmployeeSeed("E33", "Sander", "Vange", 2, date(2025, 6, 1), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E34", "Maren", "Sund", 3, date(2025, 7, 31), "scaling", "Senior IT Specialist", 950_000),
+    EmployeeSeed("E35", "Nikolai", "Dahlen", 2, date(2025, 9, 29), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E36", "Amalie", "Kolstad", 3, date(2025, 11, 28), "scaling", "Senior Developer", 950_000),
+    EmployeeSeed("E37", "Even", "Løken", 2, date(2026, 1, 27), "scaling", "Senior IT Consultant", 950_000),
+    EmployeeSeed("E38", "Selma", "Wik", 3, date(2026, 3, 28), "scaling", "Senior IT Specialist", 950_000),
 ]
 
 
@@ -146,6 +187,83 @@ CUSTOMERS: list[CustomerSeed] = [
     CustomerSeed("K12", "Agder Maritime AS", "SMB", "Kristiansand", "A", "P03", None,
                  invoice_day=12, payment_terms=30, onboarding_date=date(2021, 9, 1)),
 ]
+
+
+# Faza 4 — skalowanie z 12 do 50 klientów (K13-K50), onboarding rozłożony
+# 2022-09 (fuzja) do 2026-07 (2022 fuzja: +4, 2023: +8, 2024: +10, 2025: +10,
+# 2026 do lipca: +6 = 38 nowych). Docelowy segment mix: 15 Enterprise (4+11),
+# 18 Mid-market (4+14), 17 SMB (4+13).
+#
+# Kohorta fuzji (2022-09-01, TA SAMA data co fuzja pracownicza E11-E16,
+# rekalibracja #3) — 4 klienci = dokładnie 1/3 z 12 posiadanych w tym
+# momencie, przejęci razem z pracownikami przejmowanej firmy (jedno spójne
+# zdarzenie biznesowe, nie dwa osobne). Onboardują się PRZED
+# CUSTOMER_PRICING_COHORT_CUTOFF (2023-01-01) -> LEGACY_SERVICES, nie
+# SCALE_SERVICES (zob. get_service_price_table wyżej).
+#
+# order_pattern/support_product/license_product NIE mają już znaczenia dla
+# generowania linii zamówień od Fazy 2 (zob. order_generator.build_order_lines)
+# — wszyscy nowi klienci dostają "A" / None / None, bo jedyne co ten wzorzec
+# jeszcze robi to odróżnienie "zwykły abonament" (A/B/C) od "tylko konsulting,
+# nieregularny" (D, tylko K06). Tabela poniżej (nie w pełni literalne
+# CustomerSeed jak K01-K12 — przy 38 nowych rekordach czytelniejsza) zasila
+# listę przez comprehension.
+#
+# (number_suffix, name, segment, city, onboarding_date, invoice_day, payment_terms, churn_date)
+_NEW_CUSTOMER_SEED_DATA: list[tuple[int, str, str, str, date, int, int, Optional[date]]] = [
+    # --- Fuzja 2022-09-01: +4 (1 Enterprise, 2 Mid-market, 1 SMB) — LEGACY_SERVICES ---
+    (27, "Grenland Energi AS", "Enterprise", "Porsgrunn", date(2022, 9, 1), 4, 45, None),
+    (32, "Harstad Finans AS", "Mid-market", "Harstad", date(2022, 9, 1), 10, 30, None),
+    (34, "Kristiansund Transport AS", "Mid-market", "Kristiansund", date(2022, 9, 1), 15, 14, None),
+    (46, "Lillestrøm Verksted AS", "SMB", "Lillestrøm", date(2022, 9, 1), 16, 30, None),
+    # --- 2023: +8 (3 Enterprise, 3 Mid-market, 2 SMB) ---
+    (13, "Trøndelag Industri AS", "Enterprise", "Trondheim", date(2023, 1, 16), 4, 45, None),
+    (14, "Sørlandet Rådgivning AS", "Mid-market", "Arendal", date(2023, 2, 27), 9, 30, None),
+    (15, "Moss Elektro AS", "SMB", "Moss", date(2023, 4, 10), 14, 30, date(2025, 10, 31)),  # churn po ~2,5 roku — Zadanie 4
+    (16, "Vestland Maritime AS", "Enterprise", "Haugesund", date(2023, 5, 22), 6, 45, None),
+    (17, "Drammen Eiendom AS", "Mid-market", "Drammen", date(2023, 7, 3), 11, 14, None),
+    (18, "Larvik Data AS", "SMB", "Larvik", date(2023, 8, 14), 18, 30, None),
+    (19, "Sandefjord Transport AS", "Mid-market", "Sandefjord", date(2023, 9, 25), 22, 30, None),
+    (20, "Nordland Havbruk AS", "Enterprise", "Bodø", date(2023, 11, 6), 3, 45, None),
+    # --- 2024: +10 (2 Enterprise, 4 Mid-market, 4 SMB) ---
+    (21, "Buskerud Finans AS", "Mid-market", "Kongsberg", date(2024, 1, 8), 13, 30, None),
+    (22, "Gjøvik Verksted AS", "SMB", "Gjøvik", date(2024, 2, 12), 26, 30, None),
+    (23, "Møre Industri AS", "Enterprise", "Ålesund", date(2024, 3, 18), 7, 45, None),
+    (24, "Hedmark Logistikk AS", "Mid-market", "Elverum", date(2024, 4, 22), 16, 30, None),
+    (25, "Halden Design AS", "SMB", "Halden", date(2024, 5, 27), 21, 30, None),
+    (26, "Kongsberg Teknikk AS", "Enterprise", "Kongsberg", date(2024, 7, 1), 9, 45, None),
+    (47, "Skien Data AS", "SMB", "Skien", date(2024, 6, 16), 22, 30, None),
+    (28, "Molde Sjømat AS", "SMB", "Molde", date(2024, 9, 9), 19, 30, None),
+    (29, "Steinkjer Bygg AS", "Mid-market", "Steinkjer", date(2024, 10, 14), 12, 30, None),
+    (30, "Askøy Rådgivning AS", "Mid-market", "Askøy", date(2024, 11, 18), 17, 30, None),
+    # --- 2025: +10 (3 Enterprise, 3 Mid-market, 4 SMB) ---
+    (31, "Innlandet Data AS", "Enterprise", "Lillehammer", date(2025, 1, 13), 5, 45, None),
+    (48, "Levanger Elektro AS", "SMB", "Levanger", date(2025, 1, 27), 8, 30, None),
+    (33, "Narvik Elektro AS", "SMB", "Narvik", date(2025, 3, 24), 23, 30, None),
+    (35, "Stjørdal Industri AS", "Enterprise", "Stjørdal", date(2025, 6, 2), 8, 45, None),
+    (36, "Hønefoss Eiendom AS", "Mid-market", "Hønefoss", date(2025, 7, 7), 13, 30, None),
+    (37, "Sarpsborg Logistikk AS", "Mid-market", "Sarpsborg", date(2025, 8, 11), 20, 30, None),
+    (38, "Notodden Verksted AS", "SMB", "Notodden", date(2025, 9, 15), 27, 30, None),
+    (39, "Bodø Maritime AS", "Enterprise", "Bodø", date(2025, 10, 20), 6, 45, None),
+    (40, "Tromsø Rådgivning AS", "Mid-market", "Tromsø", date(2025, 11, 24), 11, 30, None),
+    (49, "Mo i Rana Bygg AS", "SMB", "Mo i Rana", date(2025, 12, 8), 15, 30, None),
+    # --- 2026 (do lipca): +6 (2 Enterprise, 2 Mid-market, 2 SMB) ---
+    (41, "Ålesund Energi AS", "Enterprise", "Ålesund", date(2026, 1, 12), 4, 45, None),
+    (42, "Fredrikstad Data AS", "Mid-market", "Fredrikstad", date(2026, 2, 16), 14, 30, None),
+    (43, "Kongsvinger Bygg AS", "SMB", "Kongsvinger", date(2026, 3, 23), 24, 30, None),
+    (50, "Jessheim Design AS", "SMB", "Jessheim", date(2026, 4, 20), 21, 30, None),
+    (44, "Hamar Teknikk AS", "Enterprise", "Hamar", date(2026, 5, 4), 9, 45, None),
+    (45, "Bergen Finans AS", "Mid-market", "Bergen", date(2026, 6, 15), 17, 30, None),
+]
+
+CUSTOMERS.extend(
+    CustomerSeed(
+        f"K{n:02d}", name, segment, city, "A",
+        invoice_day=invoice_day, payment_terms=payment_terms,
+        onboarding_date=onboarding_date, churn_date=churn_date,
+    )
+    for n, name, segment, city, onboarding_date, invoice_day, payment_terms, churn_date in _NEW_CUSTOMER_SEED_DATA
+)
 
 
 def _customer_price_multiplier(customer_number: str) -> float:
@@ -187,15 +305,22 @@ SUPPLIERS: list[SupplierSeed] = [
 ]
 
 
+# Faza 4 — jeden projekt per klient (1:1, PRJnnn <-> Knnn ten sam numer),
+# nie 8 ręcznie utrzymywanych wpisów jak przed Fazą 4 (wystarczające przy 12
+# klientach ze statycznym EMPLOYEE_PROJECT_MAP, ale przy 45 klientach i
+# dynamicznym przydziale konsultantów — Zadanie 5 — każdy aktywny klient
+# potrzebuje własnego projektu jako celu hour_entries.project_id, w tym
+# klienci SMB, którzy wcześniej nie mieli żadnego przypisanego projektu).
+# start_date = customer.onboarding_date (poprawia wcześniejsze mylące
+# ograniczenie z DATA_DICTIONARY.md: "projects.start_date to data założenia
+# rekordu w katalogu (2026), NIE data rozpoczęcia współpracy" — teraz to jest
+# ta sama data, bardziej użyteczna semantycznie).
 PROJECTS: list[ProjectSeed] = [
-    ProjectSeed("PRJ001", "IT Support 2026 — Bergström", 1, date(2026, 1, 1)),
-    ProjectSeed("PRJ002", "IT Support 2026 — Nordkraft", 3, date(2026, 1, 1)),
-    ProjectSeed("PRJ003", "IT Support 2026 — Innlandet", 8, date(2026, 1, 1)),
-    ProjectSeed("PRJ004", "IT Support 2026 — Rogaland", 11, date(2026, 1, 1)),
-    ProjectSeed("PRJ005", "Digitalisering — Telemark", 6, date(2026, 3, 1)),
-    ProjectSeed("PRJ006", "IT Support 2026 — Halvorsen", 2, date(2026, 1, 1)),
-    ProjectSeed("PRJ007", "IT Support 2026 — Fjord", 5, date(2026, 1, 1)),
-    ProjectSeed("PRJ008", "IT Support 2026 — Østfold", 7, date(2026, 1, 1)),
+    # int(c.number[1:]) zamiast numeric_id(c.number) — numeric_id() jest
+    # zdefiniowane niżej w tym pliku (po wszystkich seedach), nie da się go
+    # jeszcze użyć tutaj; c.number to zawsze "K" + 2 cyfry, więc [1:] wystarcza.
+    ProjectSeed(f"PRJ{int(c.number[1:]):03d}", f"IT-tjenester — {c.name}", int(c.number[1:]), c.onboarding_date)
+    for c in CUSTOMERS
 ]
 
 
@@ -228,17 +353,33 @@ PRODUCTS: list[ProductSeed] = [
 # CustomerSeed/CUSTOMER_PRICE_MULTIPLIER). Ceny bazowe z 2019 (rok bazowy
 # apply_annual_inflation), per segment.
 #
-# Faza 2 (rekalibracja): pierwotne base_price_* (S01 Enterprise/Mid/SMB
+# Faza 2 (rekalibracja #1): pierwotne base_price_* (S01 Enterprise/Mid/SMB
 # 45000/18000/4500, S02 20000/8000, S03 15000) zawaliły marżę operacyjną do
-# -70%..-183%/rok (payroll 16-osobowego zespołu, skalibrowany w poprzednich
-# sesjach względem starych cen Product, przewyższał cały przychód nawet 2.4x) —
-# skorygowane w górę do wartości poniżej, dopasowanych pod OBECNĄ liczbę
-# klientów (12), nie docelowe 40-50 z Fazy 4. Świadomy kompromis: cena SMB
-# (49 000 NOK/mies. = 588 000 NOK/rok) jest wyższa niż realny rynek dla
-# pojedynczego małego klienta (20-40 tys. NOK/rok) — do skorygowania w dół
-# w Fazie 4, gdy wolumen klientów SMB pozwoli obniżyć cenę per klient bez
-# zawalenia przychodu firmy.
-SERVICES: list[Service] = [
+# -70%..-183%/rok (payroll 16-osobowego zespołu przewyższał cały przychód
+# nawet 2.4x) — skorygowane w górę do 133000/84500/49000 (S01),
+# 59000/37500 (S02), 44000 (S03) — dopasowane pod ÓWCZESNĄ liczbę klientów (12).
+#
+# Faza 4 (rekalibracja #2, PORZUCONA): te same ceny Fazy 2, zastosowane teraz
+# do 50 klientów zamiast 12 (~4x), dały ODWROTNY problem — marża eksplodowała
+# do 40-73%/rok. Próbowano naprawić obniżając WSZYSTKIE ceny SERVICES ~2.2x
+# — ale to jeden globalny cennik obowiązujący całą historię 2019-2026, więc
+# obniżka zepsuła retroaktywnie lata 2019-2023 (kiedy K01-K12 byli JEDYNĄ
+# bazą przychodową, a ceny Fazy 2 były już skalibrowane pod TAMTEN payroll) —
+# margines spadł do -138%..-15% zamiast poprawy.
+#
+# Faza 4 (rekalibracja #3, OSTATECZNA): DWIE KOHORTY CENOWE zamiast jednego
+# globalnego cennika — LEGACY_SERVICES (ceny Fazy 2, niezmienione) dla
+# klientów onboardowanych PRZED CUSTOMER_PRICING_COHORT_CUTOFF (2023-01-01;
+# obejmuje K01-K12 I kohortę fuzji z 2022-09), SCALE_SERVICES (ceny obniżone
+# ~2.2x) dla klientów onboardowanych OD tej daty. `SERVICES` (dawny globalny
+# katalog) = alias do LEGACY_SERVICES — zasila tabelę `services` w Supabase
+# (klucz PK = code, jedna cena/usługę — SCALE_SERVICES istnieje TYLKO w
+# kodzie Python, nie ma reprezentacji w DB, zob. DATA_DICTIONARY.md). Zob.
+# get_service_price_table()/service_by_code_for_customer() niżej i
+# SESSION_HANDOFF.md (Faza 4) po pełne uzasadnienie + liczby marży PRZED/PO.
+CUSTOMER_PRICING_COHORT_CUTOFF = date(2023, 1, 1)
+
+LEGACY_SERVICES: list[Service] = [
     Service(
         code="S01",
         name="Managed IT Support",
@@ -281,6 +422,51 @@ SERVICES: list[Service] = [
     ),
 ]
 
+SCALE_SERVICES: list[Service] = [
+    Service(
+        code="S01",
+        name="Managed IT Support",
+        description="Helpdesk, incydenty, monitoring infrastruktury IT",
+        billing_model=BillingModel.SUBSCRIPTION,
+        availability=ServiceSegmentAvailability.ALL,
+        base_price_enterprise=60_000,
+        base_price_mid=24_000,
+        base_price_smb=6_000,
+    ),
+    Service(
+        code="S02",
+        name="Zarządzanie infrastrukturą Microsoft",
+        description="Administracja Azure/M365, zarządzana infrastruktura chmurowa",
+        billing_model=BillingModel.SUBSCRIPTION,
+        availability=ServiceSegmentAvailability.ENTERPRISE_MID,
+        base_price_enterprise=25_000,
+        base_price_mid=10_000,
+        base_price_smb=None,
+    ),
+    Service(
+        code="S03",
+        name="Cyberbezpieczeństwo",
+        description="Monitoring bezpieczeństwa, zgodność NIS2, reagowanie na incydenty",
+        billing_model=BillingModel.SUBSCRIPTION,
+        availability=ServiceSegmentAvailability.ENTERPRISE_ONLY,
+        base_price_enterprise=18_000,
+        base_price_mid=None,
+        base_price_smb=None,
+    ),
+    Service(
+        code="S04",
+        name="Konsulting i digitalizacja",
+        description="Projekty digitalizacyjne, doradztwo IT, wdrożenia",
+        billing_model=BillingModel.HOURLY,
+        availability=ServiceSegmentAvailability.ALL,
+        base_price_enterprise=1_450,
+        base_price_mid=1_450,
+        base_price_smb=1_450,
+    ),
+]
+
+SERVICES: list[Service] = LEGACY_SERVICES  # katalog referencyjny / zasila tabelę `services` w Supabase
+
 
 # Faza 2 — który klient kupuje jakie usługi, wg segmentu. Niezależne od
 # order_pattern/support_product/license_product (Faza 1 i wcześniej) — te pola
@@ -308,6 +494,29 @@ def service_base_price(service: Service, segment: str) -> Optional[float]:
     if segment == "Mid-market":
         return service.base_price_mid
     return service.base_price_smb
+
+
+def get_service_price_table(customer: CustomerSeed) -> list[Service]:
+    """Wybiera tabelę cenową wg kohorty klienta (Faza 4, rekalibracja #3) —
+    LEGACY_SERVICES (K01-K12 + kohorta fuzji 2022-09-01) dla klientów
+    onboardowanych przed CUSTOMER_PRICING_COHORT_CUTOFF, SCALE_SERVICES dla
+    klientów onboardowanych od tej daty — żeby obniżka cen dla nowych
+    klientów (Faza 4) nie psuła retroaktywnie przychodu/marży lat, kiedy
+    starsi klienci byli jedyną (lub większościową) bazą przychodową firmy."""
+    if customer.onboarding_date < CUSTOMER_PRICING_COHORT_CUTOFF:
+        return LEGACY_SERVICES
+    return SCALE_SERVICES
+
+
+def service_by_code_for_customer(customer: CustomerSeed, code: str) -> Service:
+    """service_by_code(), ale respektujące kohortę cenową klienta (zob.
+    get_service_price_table) — używane przez order_generator.build_order_lines
+    zamiast service_by_code() (który zawsze zwraca z globalnego SERVICES/
+    LEGACY_SERVICES, ignorując kohortę)."""
+    for service in get_service_price_table(customer):
+        if service.code == code:
+            return service
+    raise KeyError(f"Nieznany kod usługi: {code!r}")
 
 
 _PRODUCT_FOR_SERVICE: dict[str, ProductSeed] = {}
@@ -404,11 +613,72 @@ def calc_client_visit_transport(customers: list[CustomerSeed], month: int) -> fl
     return total_km * KM_RATE_2019
 
 
+# Faza 4 — reguła wzrostu: sprzedaż vs zdolność zespołu (Zadanie 2).
+#
+# SEGMENT_HOURS_PER_MONTH/HOURS_PER_YEAR_PER_CONSULTANT/UTILIZATION_TARGET
+# zostają — używane WYŁĄCZNIE przez hours_generator.assign_customers_to_consultants
+# (limit obciążenia per konsultant przy budowaniu portfolio na timesheety,
+# Zadanie 5) — to inne zagadnienie niż "ile osób zatrudnić" (niżej).
+HOURS_PER_YEAR_PER_CONSULTANT = 1_700  # typowe roczne godziny netto
+UTILIZATION_TARGET = 0.80  # 80% obłożenia billable
+
+SEGMENT_HOURS_PER_MONTH: dict[str, float] = {
+    "Enterprise": 20,  # średnia 15-25h/mies.
+    "Mid-market": 11,  # średnia 8-15h/mies.
+    "SMB": 5,  # średnia 3-8h/mies.
+}
+
+
+# Faza 4, korekta #4 (OSTATECZNA) — rachunek zatrudnienia TOP-DOWN z celu
+# marży, zastępujący porzucone heurystyki godzin/przychodu-per-konsultant
+# (korekty #2 i #3 wyżej w historii tego pliku — obie dały sprzeczne wyniki:
+# #2 nie ograniczała wzrostu marży wcale [40-73%], #3 [ceny 2 kohorty +
+# REVENUE_PER_CONSULTANT_YEARLY] naprawiła retroaktywne psucie starych lat,
+# ale sama bramka onboardingu i tak nie trzymała marży w ryzach [42-54%] —
+# bo "ile godzin/przychodu potrzeba" to zła strona równania: właściwe
+# pytanie to wprost "ile powinien kosztować payroll, żeby marża wyszła
+# w celu". Stąd rachunek odwrócony: znany przychód/opex -> budżet payrollu
+# -> liczba etatów, nie odwrotnie.
+TARGET_MARGIN = 0.19  # środek zakresu 18-20%, zweryfikowanego w Fazie 3
+AVG_FULLY_LOADED_EMPLOYEE_COST_2026 = 1_150_000  # NOK, z rzeczywistych danych payrollu (uwzględnia AGA, feriepenger)
+
+
+def calc_target_headcount(projected_revenue: float, projected_opex_cogs: float) -> int:
+    """Oblicza docelowy zespół z celu marży, nie z zgadywanych godzin/
+    przychodu per konsultant (korekty #2/#3, porzucone) — allowed_total_cost
+    to maksymalny koszt (payroll+opex+COGS) przy TARGET_MARGIN, payroll_budget
+    to co z tego zostaje na płace po odjęciu opex/COGS (Faza 3: kantyna,
+    reprezentacja, transport, sprzęt wdrożeniowy + L01-L08)."""
+    allowed_total_cost = projected_revenue * (1 - TARGET_MARGIN)
+    payroll_budget = allowed_total_cost - projected_opex_cogs
+    return round(payroll_budget / AVG_FULLY_LOADED_EMPLOYEE_COST_2026)
+
+
+# Weryfikacja harmonogramu zatrudnienia (Zadanie 2b, po korekcie #4) —
+# calc_target_headcount() vs rzeczywista liczba EMPLOYEES aktywnych na koniec
+# każdego roku, z rzeczywistym przychodem/opex+COGS wygenerowanym przez
+# generatory (nie przybliżeniem) — zob. SESSION_HANDOFF.md (Faza 4) dla
+# pełnych danych liczbowych z offline sanity-checku wykonanego PRZED
+# backfillem. Docelowa trajektoria zatrudnienia: 16 (2022 po fuzji) -> 19
+# (2023) -> 23 (2024) -> 27 (2025) -> 32 (2026-07), rekrutacje pojedyncze
+# (E17-E32), odstępy >= 2 miesiące, mix ~13 billable (Leveranse/Teknologi) +
+# 3 role wspierające (Salg/Økonomi) — proporcja zbliżona do już istniejącego
+# zespołu (11 billable / 16 = 69%, tutaj 13/16 = 81%, lekko wyżej bo wzrost
+# klientów wymaga głównie dostawy, nie administracji).
+
+
 def employee_by_number(number: str) -> EmployeeSeed:
     for e in EMPLOYEES:
         if e.number == number:
             return e
     raise KeyError(f"Nieznany numer pracownika: {number}")
+
+
+def employee_by_id(employee_id: int) -> EmployeeSeed:
+    """Odwrotność numeric_id() dla pracowników — employee_id z bazy (1-22)
+    -> EmployeeSeed. Potrzebne w hours_generator (Faza 4) — generate_daily_hours
+    dostaje tylko listę int id, nie obiekty EmployeeSeed."""
+    return employee_by_number(f"E{employee_id:02d}")
 
 
 def customer_by_number(number: str) -> CustomerSeed:
@@ -460,14 +730,24 @@ def project_by_number(number: str) -> ProjectSeed:
 
 
 def project_by_id(project_id: int) -> ProjectSeed:
-    """Odwrotność numeric_id() dla projektów — project_id (1-8) -> ProjectSeed."""
+    """Odwrotność numeric_id() dla projektów — project_id (1-45) -> ProjectSeed."""
     return project_by_number(f"PRJ{project_id:03d}")
+
+
+_PROJECT_FOR_CUSTOMER_ID: dict[int, ProjectSeed] = {p.customer_id: p for p in PROJECTS}
+
+
+def project_for_customer(customer: CustomerSeed) -> ProjectSeed:
+    """Projekt przypisany klientowi (Faza 4: 1:1, PRJnnn <-> Knnn) — używane
+    przez hours_generator.assign_customers_to_consultants zamiast statycznego
+    EMPLOYEE_PROJECT_MAP sprzed Fazy 4."""
+    return _PROJECT_FOR_CUSTOMER_ID[int(customer.number[1:])]
 
 
 def numeric_id(code: str) -> int:
     """Konwertuje kod seed (E07, K03, L05, P02, PRJ001) na numeryczne id
-    Warstwy 1/2 (Employee 1-16, Customer 1-12, Supplier 1-8, Product 1-6,
-    Project 1-8 — przypisywane sekwencyjnie wg kolejności w dokumentacji).
-    Obsługuje zarówno jednoliterowe (E/K/L/P), jak i wieloliterowe (PRJ)
-    prefiksy."""
+    Warstwy 1/2 (Employee 1-22, Customer 1-45, Supplier 1-8, Product 1-7,
+    Project 1-45 — Faza 4 rozszerzyła Employee/Customer/Project — przypisywane
+    sekwencyjnie wg kolejności w dokumentacji). Obsługuje zarówno
+    jednoliterowe (E/K/L/P), jak i wieloliterowe (PRJ) prefiksy."""
     return int(re.sub(r"^[A-Za-z]+", "", code))

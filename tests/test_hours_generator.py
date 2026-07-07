@@ -1,14 +1,15 @@
 from datetime import date
 
 from norfingen.generators.hours_generator import (
-    BILLABLE_EMPLOYEES,
-    EMPLOYEE_PROJECT_MAP,
+    assign_customers_to_consultants,
     generate_daily_hours,
+    is_billable_employee,
     is_working_day,
 )
 from norfingen.models.hours import ActivityType
+from norfingen.seed.roster import active_customers, employee_by_id
 
-ALL_EMPLOYEE_IDS = list(range(1, 17))
+ALL_EMPLOYEE_IDS = list(range(1, 23))
 
 
 def test_is_working_day_excludes_weekends():
@@ -24,13 +25,32 @@ def test_generate_daily_hours_empty_on_weekend():
 def test_generate_daily_hours_only_billable_employees():
     entries = generate_daily_hours(2024, 1, 8, ALL_EMPLOYEE_IDS)
     entry_employee_ids = {e.employee_id for e in entries}
-    assert entry_employee_ids.issubset(set(BILLABLE_EMPLOYEES))
-    # E01 (Salg), E05 (Teknologi, wyłączony), E06/E16 (Økonomi), E11 (Salg) nigdy nie logują.
+    assert all(is_billable_employee(eid) for eid in entry_employee_ids)
+    # E01 (Salg), E05 (Teknologi, jawny wyjątek), E06/E16 (Økonomi), E11 (Salg) nigdy nie logują.
     assert 1 not in entry_employee_ids
     assert 5 not in entry_employee_ids
     assert 6 not in entry_employee_ids
     assert 11 not in entry_employee_ids
     assert 16 not in entry_employee_ids
+
+
+def test_is_billable_employee_department_rule():
+    assert is_billable_employee(2) is True  # Leveranse
+    assert is_billable_employee(8) is True  # Teknologi
+    assert is_billable_employee(1) is False  # Salg
+    assert is_billable_employee(6) is False  # Økonomi
+    assert is_billable_employee(5) is False  # jawny wyjątek mimo Teknologi
+
+
+def test_new_hires_are_billable_by_default():
+    # Faza 4 (korekta #4, finalna): 20 z 22 nowych pracowników (E17-E38) są w
+    # Leveranse/Teknologi -> billable automatycznie. E25 (Salg), E30 (Økonomi)
+    # to role wspierające -> nie billable.
+    assert is_billable_employee(17) is True  # Leveranse
+    assert is_billable_employee(18) is True  # Teknologi
+    assert is_billable_employee(37) is True  # Leveranse
+    assert is_billable_employee(25) is False  # Salg
+    assert is_billable_employee(30) is False  # Økonomi
 
 
 def test_generate_daily_hours_respects_active_employee_filter():
@@ -52,17 +72,14 @@ def test_billable_and_internal_sum_to_full_workday():
             assert emp_entries[0].hours == 0.0
             assert emp_entries[0].project_id is None
         else:
-            assert ActivityType.BILLABLE in types
             total = sum(e.hours for e in emp_entries)
             assert total == 7.5
-            billable_entry = next(e for e in emp_entries if e.activity_type == ActivityType.BILLABLE)
-            assert billable_entry.project_id in EMPLOYEE_PROJECT_MAP[emp_id]
 
 
-def test_no_billable_hours_before_any_assigned_customer_onboarding():
-    # E02 (Marte): projekty [1=K01 onboarding 2019-03-01, 6=K02 onboarding 2019-06-01].
-    # W lutym 2019 (dzień po jej starcie 2019-02-01) żaden klient jeszcze nie istnieje
-    # -> cały dzień musi być INTERNAL, zero BILLABLE.
+def test_no_billable_hours_before_any_customer_onboarding():
+    # Luty 2019: tylko E02 aktywny wśród billable, ale K01 (pierwszy klient)
+    # onboarduje się dopiero 2019-03-01 -> brak klientów do przydziału,
+    # cały dzień musi być INTERNAL, zero BILLABLE.
     entries = generate_daily_hours(2019, 2, 4, [2])  # poniedziałek
     assert len(entries) == 1
     assert entries[0].activity_type == ActivityType.INTERNAL
@@ -70,15 +87,40 @@ def test_no_billable_hours_before_any_assigned_customer_onboarding():
     assert entries[0].project_id is None
 
 
-def test_billable_hours_only_to_onboarded_customer_project():
-    # Od 2019-03-01 K01 (projekt 1) jest aktywny, ale K02 (projekt 6) nie
-    # (onboarding dopiero 2019-06-01) -> jeśli E02 loguje BILLABLE, musi to być
-    # zawsze projekt 1, nigdy 6.
+def test_billable_hours_only_to_active_customer_projects():
+    # Marzec 2019: tylko K01 aktywny (onboarding 2019-03-01) -> jeśli E02
+    # loguje BILLABLE, project_id musi odpowiadać K01 (project_id=1).
     for day in (4, 5, 6, 7, 8):  # kilka dni roboczych marca 2019
         entries = generate_daily_hours(2019, 3, day, [2])
         billable = [e for e in entries if e.activity_type == ActivityType.BILLABLE]
         for entry in billable:
             assert entry.project_id == 1
+
+
+def test_assign_customers_to_consultants_respects_capacity():
+    customers = active_customers(date(2026, 6, 30))
+    billable_employees = [employee_by_id(i) for i in ALL_EMPLOYEE_IDS if is_billable_employee(i)]
+    assignment = assign_customers_to_consultants(customers, billable_employees, 2026, 6)
+    # Każdy przydzielony klient musi być w liście wejściowej, żaden konsultant
+    # nie może mieć więcej klientów niż jest w customers.
+    all_assigned = [c for lst in assignment.values() for c in lst]
+    assert len(all_assigned) <= len(customers)
+    assert set(assignment.keys()).issubset({int(e.number[1:]) for e in billable_employees})
+
+
+def test_consultant_portfolio_rotates_over_time():
+    """Przypisanie klient-konsultant zmienia się w czasie (rotacja ~15 mies.,
+    Zadanie 5c) — 2023 i 2025 to różne okresy rotacji, muszą się różnić."""
+    customers_2023 = active_customers(date(2023, 6, 1))
+    customers_2025 = active_customers(date(2025, 6, 1))
+    billable_2023 = [employee_by_id(i) for i in ALL_EMPLOYEE_IDS if is_billable_employee(i)
+                     and employee_by_id(i).start_date <= date(2023, 6, 1)]
+    billable_2025 = [employee_by_id(i) for i in ALL_EMPLOYEE_IDS if is_billable_employee(i)
+                      and employee_by_id(i).start_date <= date(2025, 6, 1)]
+
+    assignment_2023 = assign_customers_to_consultants(customers_2023, billable_2023, 2023, 6)
+    assignment_2025 = assign_customers_to_consultants(customers_2025, billable_2025, 2025, 6)
+    assert assignment_2023 != assignment_2025
 
 
 def test_deterministic_across_calls():

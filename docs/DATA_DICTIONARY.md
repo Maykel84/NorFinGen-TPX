@@ -21,14 +21,14 @@ Znaczenie biznesowe: struktura organizacyjna firmy, używana do przypisania prac
 ### employees
 | Kolumna | Typ | Opis |
 |---|---|---|
-| id | INTEGER (PK) | 1-16, odpowiada `numeric_id("E01")..("E16")` |
+| id | INTEGER (PK) | 1-38, odpowiada `numeric_id("E01")..("E38")` (Faza 4: +22, E17-E38) |
 | first_name / last_name | TEXT | Imię / nazwisko |
-| employee_number | TEXT | Kod "E01"-"E16" |
+| employee_number | TEXT | Kod "E01"-"E38" |
 | department_id | INTEGER (FK) | → departments.id |
 | bank_account_number, national_identity_number, date_of_birth | TEXT/DATE | Nigdy nie wypełniane (NULL) — placeholder pod przyszłe rozszerzenia |
 | allow_information_registration | BOOLEAN | Zawsze `true`, bez znaczenia biznesowego w generatorze |
 
-Znaczenie biznesowe: kadra firmy. **Data zatrudnienia jest w `employments.start_date`, nie tutaj**. Kohorta założycielska (E01-E06) rozłożona na 4 miesiące 2019-01→2019-04 (nie jeden dzień) — zob. `employments`.
+Znaczenie biznesowe: kadra firmy. **Data zatrudnienia jest w `employments.start_date`, nie tutaj**. Kohorta założycielska (E01-E06) rozłożona na 4 miesiące 2019-01→2019-04 (nie jeden dzień) — zob. `employments`. **Faza 4**: 22 nowe rekrutacje (E17-E38), pojedyncze, odstępy dokładnie 60 dni (2022-10-15 → 2026-03-28), 20 billable (Leveranse/Teknologi) + 2 wspierające (Salg/Økonomi) — liczba i pensje (950 000 NOK/rok każdy, wyżej niż reszta zespołu — senior/specjalista) wyliczone empirycznie z `roster.calc_target_headcount()` (top-down z celu marży 19%, nie z zgadywanych godzin/przychodu per konsultant — dwa wcześniejsze podejścia w tej samej fazie dały sprzeczne wyniki, zob. `SESSION_HANDOFF.md`).
 
 ### employments
 | Kolumna | Typ | Opis |
@@ -45,20 +45,22 @@ Ograniczenie: brak odejść pracowników (rotacji kadry) — każdy zatrudniony 
 ### customers
 | Kolumna | Typ | Opis |
 |---|---|---|
-| id | INTEGER (PK) | 1-12, `numeric_id("K01")..("K12")` |
+| id | INTEGER (PK) | 1-50, `numeric_id("K01")..("K50")` (Faza 4: +38, K13-K50) |
 | name | TEXT | Nazwa firmy klienta |
-| customer_number | TEXT | Kod "K01"-"K12" |
+| customer_number | TEXT | Kod "K01"-"K50" |
 | city | TEXT | Miasto siedziby |
-| **segment** | VARCHAR(20) | Enterprise / Mid-market / SMB (Faza 1) |
-| **onboarding_date** | DATE | Data rozpoczęcia współpracy — klient nie generuje zamówień przed tą datą (Faza "realistyczny start firmy") |
-| **churn_date** | DATE | Data zakończenia współpracy, NULL = nadal aktywny. Tylko K09 ma wartość (2024-11-30) |
+| **segment** | VARCHAR(20) | Enterprise / Mid-market / SMB (Faza 1) — docelowo 15/18/17 (Faza 4) |
+| **onboarding_date** | DATE | Data rozpoczęcia współpracy — klient nie generuje zamówień przed tą datą (Faza "realistyczny start firmy"). Faza 4: rozłożone 2023-2026 + kohorta fuzji (2022-09-01, 4 klientów, ta sama data co fuzja pracownicza) |
+| **churn_date** | DATE | Data zakończenia współpracy, NULL = nadal aktywny. K09 (2024-11-30) i K15 (2025-10-31, Faza 4) — oba SMB |
 | **price_multiplier** | NUMERIC(5,4) | Indywidualny mnożnik ceny ±8% (0.92-1.08), deterministyczny per klient — symuluje wynik negocjacji B2B |
 | organization_number, email, phone_number, address_line1, postal_code | TEXT | Nigdy wypełniane (NULL) |
 | is_private_individual | BOOLEAN | Zawsze `false` |
 | country_id, currency_id | INTEGER | Zawsze 161 (Norwegia) / 1 (NOK) |
 | invoices_due_in, invoices_due_in_type | INTEGER/TEXT | Kolumny istnieją, ale realny termin płatności per zamówienie jest w `orders.invoices_due_in` (per-order, nie per-customer) |
 
-**Pogrubione kolumny to dodatki Fazy 1** — populowane przez `seed_reference_data()`/`scripts/migrate_customer_metadata.py`, nie były częścią oryginalnego schematu. Ograniczenie: tylko 1 klient ma churn (celowo niski, realistyczny wskaźnik, nie pełny model rotacji portfela).
+**Pogrubione kolumny to dodatki Fazy 1** — populowane przez `seed_reference_data()`/`scripts/migrate_customer_metadata.py`, nie były częścią oryginalnego schematu. Ograniczenie: tylko 2 klienci mają churn (celowo niski, realistyczny wskaźnik, nie pełny model rotacji portfela).
+
+**Faza 4 — dwie kohorty cenowe** (`roster.get_service_price_table()`/`service_by_code_for_customer()`): klienci onboardowani przed `CUSTOMER_PRICING_COHORT_CUTOFF` (2023-01-01, obejmuje K01-K12 + kohortę fuzji 2022-09) płacą ceny `LEGACY_SERVICES` (Faza 2), klienci od tej daty płacą `SCALE_SERVICES` (niżej, ~2,2x). Powód: jeden globalny cennik dla wszystkich 50 klientów przez całą historię 2019-2026 psuł retroaktywnie marżę — obniżka dla nowych klientów obniżała też przychód starych klientów w latach, gdy byli jedyną bazą przychodową. Zob. `services` niżej i `SESSION_HANDOFF.md` (Faza 4) po pełne uzasadnienie.
 
 ### suppliers
 | Kolumna | Typ | Opis |
@@ -131,6 +133,8 @@ Znaczenie biznesowe: 7 produktów sprzedażowych — P01-P03 IT Support (per seg
 | base_price_enterprise / base_price_mid / base_price_smb | NUMERIC(12,2) | Cena bazowa 2019: NOK/mies. dla SUBSCRIPTION, NOK/h dla HOURLY. NULL = usługa niedostępna dla tego segmentu |
 
 Znaczenie biznesowe: katalog ofertowy niezależny od konkretnych cen per klient (te ustala `customers.price_multiplier`). **Faza 2**: każda usługa ma teraz produkt referencyjny (`products.service_code`) i realny bundling per segment (`roster.get_customer_services()` — Enterprise S01+S02+S03, Mid-market S01+S02, SMB S01) — S03 (Cyberbezpieczeństwo) generuje przychód dla wszystkich klientów Enterprise od momentu ich onboardingu (produkt P07).
+
+**Ograniczenie Fazy 4**: ta tabela zawiera TYLKO `LEGACY_SERVICES` (ceny Fazy 2: S01 133k/84,5k/49k NOK/mies., S02 59k/37,5k, S03 44k) — klucz PK jest `code`, jedna cena per usługę, więc `SCALE_SERVICES` (ceny obniżone dla klientów onboardowanych od 2023-01-01: S01 60k/24k/6k, S02 25k/10k, S03 18k) **istnieje tylko w kodzie Python** (`roster.SCALE_SERVICES`), nie ma reprezentacji w tej tabeli. Zapytania SQL liczące przychód per usługa (`order_lines JOIN products`) są poprawne (cena faktycznie wystawiona jest w `order_lines.unit_price_excluding_vat_currency`), ale zapytania odczytujące `services.base_price_*` bezpośrednio pokażą tylko cennik legacy, nie faktyczny cennik nowych klientów.
 
 ---
 
@@ -275,14 +279,14 @@ Znaczenie biznesowe: timesheet konsultantów. **Nie generuje żadnych postingów
 ### projects
 | Kolumna | Typ | Opis |
 |---|---|---|
-| id | SERIAL (PK) | 1-8, `numeric_id("PRJ001")..("PRJ008")` |
-| number | VARCHAR(20) (UNIQUE) | "PRJ001"-"PRJ008" |
-| customer_id | INTEGER (FK) | → customers.id |
-| start_date | DATE | Zawsze 2026-01-01 lub 2026-03-01 (statyczna data utworzenia projektu w katalogu, nie historyczna) |
+| id | SERIAL (PK) | 1-50, `numeric_id("PRJ001")..("PRJ050")` (Faza 4: 1:1 z `customers`, nie 8 ręcznie utrzymywanych wpisów) |
+| number | VARCHAR(20) (UNIQUE) | "PRJ001"-"PRJ050" — ten sam numer co odpowiadający `customer_id` |
+| customer_id | INTEGER (FK) | → customers.id (1:1, dokładnie jeden projekt per klient) |
+| start_date | DATE | **Faza 4**: = `customers.onboarding_date` (naprawione poprzednie mylące ograniczenie — przed Fazą 4 zawsze 2026-01-01/03-01, data założenia rekordu w katalogu, nie data współpracy) |
 | end_date | DATE | Zawsze NULL |
 | status | VARCHAR(20) | Zawsze "ACTIVE" |
 
-Znaczenie biznesowe: kontener godzin konsultanckich per klient — używany wyłącznie przez `hour_entries.project_id`, nie ma bezpośredniego związku z fakturowaniem (`orders`). Ograniczenie: `start_date` to data założenia rekordu w katalogu projektów (2026), **nie** data rozpoczęcia realnej współpracy z klientem (to `customers.onboarding_date`) — nazwa pola myląca, nie mylić przy analizach.
+Znaczenie biznesowe: kontener godzin konsultanckich per klient — używany wyłącznie przez `hour_entries.project_id`, nie ma bezpośredniego związku z fakturowaniem (`orders`). **Faza 4**: rozszerzone z 8 (tylko część klientów, wybranych ręcznie) do 50 (wszystkie, w tym SMB, które wcześniej nie miały żadnego projektu) — niezbędne dla dynamicznego przydziału konsultantów (`hours_generator.assign_customers_to_consultants`), zastępującego statyczny `EMPLOYEE_PROJECT_MAP` sprzed tej fazy.
 
 ---
 
@@ -291,6 +295,7 @@ Znaczenie biznesowe: kontener godzin konsultanckich per klient — używany wył
 1. **Brak postingów przychodowych** (konta 3000/3100) — zob. nagłówek dokumentu. Przychód wyłącznie w `orders`/`order_lines`.
 2. **`bank_transactions` wymaga ręcznego doreperowania po każdym `TRUNCATE`** — `scripts/fix_outgoing_transactions.py` uzupełnia historyczne OUTGOING, ale trzeba go uruchomić po każdym pełnym resecie danych.
 3. **Metadane Fazy 1** (`customers.segment/onboarding_date/churn_date/price_multiplier`, `services`, `products.service_code`) istniały wcześniej **tylko w Pythonie** (`roster.py`) — teraz są też w Supabase, ale historyczne zapytania/dashboardy pisane przed Fazą 1 mogły je pomijać.
-4. **`projects.start_date` ≠ `customers.onboarding_date`** — łatwa pomyłka przy pisaniu zapytań łączących obie tabele.
+4. **`projects.start_date` = `customers.onboarding_date` od Fazy 4** (przed Fazą 4 było niezależne, statyczne 2026-01-01/03-01 — ograniczenie NAPRAWIONE, zostawione w historii jako przykład wcześniejszej pomyłki projektowej).
 5. **RLS włączone bez własnych polityk zapisu** — tylko `postgres` (bypass RLS) może pisać; rola `analyst` ma czysty odczyt (SELECT) na 14 tabelach transakcyjnych/referencyjnych.
-6. **Brak rotacji kadry** (`employments.end_date` zawsze NULL) i **niemal brak churnu klientów** (tylko K09) — model celowo prosty, nie pełna symulacja dynamiki portfela.
+6. **Brak rotacji kadry** (`employments.end_date` zawsze NULL) i **niski churn klientów** (K09, K15 — oba SMB) — model celowo prosty, nie pełna symulacja dynamiki portfela.
+7. **`services` tabela pokazuje tylko `LEGACY_SERVICES`** (Faza 4) — `SCALE_SERVICES` (ceny dla klientów onboardowanych od 2023-01-01) istnieje tylko w kodzie Python, nie w Supabase. Zob. sekcja `services` i `customers` wyżej.

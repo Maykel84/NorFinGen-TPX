@@ -58,7 +58,7 @@ def test_generate_daily_orders_skips_consulting_customer():
 
 
 def test_price_multiplier_within_expected_range():
-    assert len(CUSTOMER_PRICE_MULTIPLIER) == 12
+    assert len(CUSTOMER_PRICE_MULTIPLIER) == 50  # Faza 4: 12 + 38 nowych (K13-K50)
     for multiplier in CUSTOMER_PRICE_MULTIPLIER.values():
         assert 0.92 <= multiplier <= 1.08
 
@@ -273,11 +273,15 @@ def test_customer_churn_no_daily_orders_after_churn_date():
     assert not any(o.customer.id == 9 for o in orders_after_churn)
 
 
-def test_only_churned_customer_has_churn_date():
+def test_only_smb_customers_have_churn_date():
+    # Faza 4 (Zadanie 4, opcjonalne): +1 churn SMB (K15) obok istniejącego K09
+    # -> 2 klientów z churn_date, oboje SMB.
     from norfingen.seed.roster import CUSTOMERS
     churned = [c for c in CUSTOMERS if c.churn_date is not None]
-    assert len(churned) == 1
-    assert churned[0].number == "K09"
+    assert len(churned) == 2
+    assert {c.number for c in churned} == {"K09", "K15"}
+    for c in churned:
+        assert c.segment == "SMB"
     # Enterprise nie mają churnu (długoterminowe kontrakty).
     for c in CUSTOMERS:
         if c.segment == "Enterprise":
@@ -292,14 +296,16 @@ def test_no_orders_before_any_customer_onboarding():
 
 def test_customer_count_grows_with_onboarding_schedule():
     # 2019-03: tylko K01. 2019-12: 6 klientów (K01,K02,K03,K05,K08,K11 wg harmonogramu).
-    # 2023+: pełny portfel 12 klientów (K06 doszedł 2022-03).
     orders_march_2019 = generate_monthly_orders(2019, 3)
     assert {o.customer.id for o in orders_march_2019} == {1}
 
-    # Sierpień: poza wszystkimi progami K06 (Q2/Q4/sty/lip) -> gwarantowane 0% szans,
-    # więc dokładnie 11 klientów A/B/C, bez zależności od losowego wyniku RNG.
+    # Sierpień 2023: poza wszystkimi progami K06 (Q2/Q4/sty/lip) -> gwarantowane
+    # 0% szans na jego udział, więc dokładnie 11 oryginalnych A/B/C (K01-K12
+    # minus K06) + kohorta fuzji 2022-09 (4) + nowi klienci onboardowani do
+    # sierpnia 2023 (Faza 4: K13-K18, zob. roster._NEW_CUSTOMER_SEED_DATA) = 21,
+    # bez zależności od losowego wyniku RNG.
     orders_2023 = generate_monthly_orders(2023, 8)
-    assert len({o.customer.id for o in orders_2023}) == 11
+    assert len({o.customer.id for o in orders_2023}) == 21
 
 
 def test_customer_not_onboarded_yet_generates_no_order():
