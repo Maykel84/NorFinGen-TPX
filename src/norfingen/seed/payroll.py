@@ -17,6 +17,17 @@ AGA_RATE = 0.141
 FERIEPENGER_RATE = 0.12
 
 
+def first_working_day_of_month(year: int, month: int) -> date:
+    """Zwraca pierwszy dzień roboczy (pon-pt) danego miesiąca. Faza 5 —
+    wszyscy pracownicy zaczynają w tym dniu (zob. EMPLOYEES w roster.py) —
+    eliminuje potrzebę liczenia proporcji "ile dni w niepełnym miesiącu",
+    bo pierwszy miesiąc zatrudnienia jest zawsze pełnym miesiącem pracy."""
+    d = date(year, month, 1)
+    while d.weekday() >= 5:  # sobota=5, niedziela=6
+        d += timedelta(days=1)
+    return d
+
+
 def active_employees(on_date: date) -> list[EmployeeSeed]:
     """Pracownicy, których startDate <= on_date — respektuje historyczne fazy
     zatrudnienia (founding 2019-01, growth1 2020-03, growth2 2021-06, merger 2022-09).

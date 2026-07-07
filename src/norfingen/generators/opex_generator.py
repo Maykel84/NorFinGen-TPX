@@ -23,7 +23,7 @@ from datetime import date
 
 from norfingen.generators.order_generator import apply_annual_inflation
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
-from norfingen.seed.payroll import active_employees
+from norfingen.seed.payroll import active_employees, first_working_day_of_month
 from norfingen.seed.roster import (
     CONFERENCE_HOTEL_RATES,
     CUSTOMERS,
@@ -129,7 +129,11 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     month_label = f"{MONTH_NAMES_NO[month - 1]} {year}"
     vouchers: list[Voucher] = []
 
-    employee_count = len(active_employees(on_date))
+    # first_working_day_of_month(), nie on_date (kalendarzowy 1.) — Faza 5:
+    # EMPLOYEES.start_date bywa 2./3. dniem kalendarzowym (jeśli 1. to
+    # weekend), więc on_date błędnie wykluczałby nowego pracownika z jego
+    # własnego miesiąca startu.
+    employee_count = len(active_employees(first_working_day_of_month(year, month)))
     if employee_count > 0:
         canteen_cost = calc_canteen_cost(employee_count)
         vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_CANTEEN, f"Kantinetilskudd {month_label}", canteen_cost))

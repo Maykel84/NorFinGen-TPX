@@ -106,18 +106,20 @@ def test_active_employees_respects_historical_phases():
     assert len(active_employees(date(2020, 6, 1))) == 8
     assert len(active_employees(date(2021, 12, 1))) == 10
     # 2022-10-01: po fuzji (2022-09-01, +6), przed pierwszą rekrutacją Faza 4
-    # (E17, 2022-10-15) -> dokładnie 16.
+    # (E17, 2022-10-03 od Fazy 5 — pierwszy dzień roboczy października) -> 16.
     assert len(active_employees(date(2022, 10, 1))) == 16
 
 
 def test_founding_cohort_staggered_over_four_months():
     # Kohorta założycielska rozłożona 2019-01 -> 2019-04, nie jednego dnia.
+    # Faza 5: E03/E05 przyciągnięte do 1. dnia roboczego swojego miesiąca
+    # (Zadanie 1b) -> teraz start dokładnie tego samego dnia co E02/E04
+    # (oboje w lutym/marcu), staggering wyraża się przez MIESIĄC, nie już
+    # przez dzień w miesiącu.
     assert len(active_employees(date(2019, 1, 1))) == 1  # tylko E01 (CEO)
     assert len(active_employees(date(2019, 1, 31))) == 1
-    assert len(active_employees(date(2019, 2, 1))) == 2  # +E02
-    assert len(active_employees(date(2019, 2, 15))) == 3  # +E03
-    assert len(active_employees(date(2019, 3, 1))) == 4  # +E04
-    assert len(active_employees(date(2019, 3, 15))) == 5  # +E05
+    assert len(active_employees(date(2019, 2, 1))) == 3  # +E02, +E03 (oboje 2019-02-01)
+    assert len(active_employees(date(2019, 3, 1))) == 5  # +E04, +E05 (oboje 2019-03-01)
     assert len(active_employees(date(2019, 4, 1))) == 6  # +E06 -> zespół kompletny
 
 
@@ -132,14 +134,27 @@ def test_customer_count_grows_with_headcount():
 
 
 def test_founding_hires_not_paid_before_their_start_month():
-    # E03 startuje 2019-02-15 -> nieaktywny na 1. dzień lutego (brak wypłaty za luty),
-    # aktywny od marca (active_employees sprawdza start_date <= 1. dzień miesiąca).
-    e03 = employee_by_number("E03")
-    assert e03.start_date == date(2019, 2, 15)
+    # E04 startuje 2019-03-01 -> nieaktywny w lutym, aktywny od marca.
+    e04 = employee_by_number("E04")
+    assert e04.start_date == date(2019, 3, 1)
     active_february = active_employees(date(2019, 2, 1))
     active_march = active_employees(date(2019, 3, 1))
-    assert e03 not in active_february
-    assert e03 in active_march
+    assert e04 not in active_february
+    assert e04 in active_march
+
+
+def test_new_hire_starting_day_two_or_three_paid_in_own_start_month():
+    """Faza 5 — naprawiony błąd: pracownik, którego pierwszy dzień roboczy
+    miesiąca wypada 2./3. (bo 1. to weekend), MUSI dostać wypłatę za SWÓJ
+    miesiąc startu, nie dopiero za kolejny (dawne active_employees(date(year,
+    month, 1)) błędnie porównywało do kalendarzowego dnia 1, wykluczając
+    takiego pracownika z jego własnego miesiąca — zob. salary_generator.py,
+    generate_monthly_salary/brutto_earned_in_year, first_working_day_of_month())."""
+    e17 = employee_by_number("E17")
+    assert e17.start_date == date(2022, 10, 3)  # 1./2. października 2022 to weekend
+    from norfingen.generators.salary_generator import generate_monthly_salary
+    transaction, _ = generate_monthly_salary(2022, 10)
+    assert any(p.employee.id == numeric_id("E17") for p in transaction.payslips)
 
 
 def test_active_employees_brutto_aggregate_matches_docs():

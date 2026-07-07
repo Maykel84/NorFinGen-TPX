@@ -66,12 +66,12 @@ def test_june_2022():
 def test_june_2023():
     on_date = date(2023, 6, 1)
     active = active_employees(on_date)
-    # 16 od fuzji (2022-09) + E17 (2022-10-15) + E18 (2022-12-14) + E19
-    # (2023-02-12) + E20 (2023-04-13) = 20.
-    assert {e.number for e in active} == {f"E{i:02d}" for i in range(1, 17)} | {"E17", "E18", "E19", "E20"}
+    # 16 od fuzji (2022-09) + E17 (2022-10-03) + E18 (2022-12-01) + E19
+    # (2023-02-01) + E20 (2023-04-03) + E21 (2023-06-01, dokładnie ten dzień) = 21.
+    assert {e.number for e in active} == {f"E{i:02d}" for i in range(1, 17)} | {"E17", "E18", "E19", "E20", "E21"}
 
     transaction, vouchers = generate_monthly_salary(2023, 6)
-    assert len(transaction.payslips) == 20
+    assert len(transaction.payslips) == 21
     assert len(vouchers) == 2
 
     for v in vouchers:

@@ -22,8 +22,6 @@ bieżącego miesiąca, jak i do podstawy feriepenger za rok poprzedni.
 
 from __future__ import annotations
 
-from datetime import date
-
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.base import TripletexRef
 from norfingen.models.salary import (
@@ -41,6 +39,7 @@ from norfingen.seed.payroll import (
     calc_june_salary,
     calc_netto,
     calc_skattetrekk,
+    first_working_day_of_month,
     is_june,
     last_working_day,
 )
@@ -55,16 +54,23 @@ MONTH_NAMES_NO = [
 def brutto_earned_in_year(employee: EmployeeSeed, year: int) -> float:
     """Suma brutto zarobionego przez pracownika w danym roku kalendarzowym —
     respektuje startDate (pracownik nieaktywny przed startem ma podstawę 0
-    za te miesiące)."""
+    za te miesiące). Faza 5 — porównanie do first_working_day_of_month(),
+    NIE date(year, month, 1): skoro EMPLOYEES.start_date jest teraz zawsze
+    pierwszym dniem roboczym miesiąca (może to być 2. lub 3. dzień
+    kalendarzowy, jeśli 1. wypada w weekend), porównanie do sztywnego
+    kalendarzowego dnia 1 błędnie wykluczałoby pracownika z jego własnego
+    miesiąca startu (np. start_date=2022-10-03 > date(2022,10,1))."""
     return sum(
         calc_brutto_with_raises(employee, year, month)
         for month in range(1, 13)
-        if employee.start_date <= date(year, month, 1)
+        if employee.start_date <= first_working_day_of_month(year, month)
     )
 
 
 def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, list[Voucher]]:
-    active = active_employees(date(year, month, 1))
+    # first_working_day_of_month(), nie date(year, month, 1) — zob. docstring
+    # brutto_earned_in_year() wyżej, ten sam powód.
+    active = active_employees(first_working_day_of_month(year, month))
     pay_date = last_working_day(year, month)
     june = is_june(month)
 
@@ -88,9 +94,10 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
                 specifications.append(
                     SalarySpecification(wageType=WAGE_TYPE_FAST_LONN, description="Fast lønn", amount=june_salary.gross_salary)
                 )
-            specifications.append(
-                SalarySpecification(wageType=WAGE_TYPE_FERIEPENGER, description="Feriepenger", amount=june_salary.feriepenger)
-            )
+            if june_salary.feriepenger > 0:
+                specifications.append(
+                    SalarySpecification(wageType=WAGE_TYPE_FERIEPENGER, description="Feriepenger", amount=june_salary.feriepenger)
+                )
             if skattetrekk:
                 specifications.append(
                     SalarySpecification(wageType=WAGE_TYPE_SKATTETREKK, description="Skattetrekk", amount=-skattetrekk)
