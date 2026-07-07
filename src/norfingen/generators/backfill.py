@@ -21,6 +21,7 @@ from norfingen.generators.order_generator import generate_monthly_orders
 from norfingen.generators.salary_generator import generate_monthly_salary
 from norfingen.generators.supplier_invoice_generator import build_voucher_for_invoice, generate_monthly_supplier_invoices
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
+from norfingen.seed.payroll import get_generation_cutoff_date, is_date_generatable, should_generate_monthly_salary
 from norfingen.seed.roster import supplier_by_number
 
 logger = logging.getLogger("norfingen.backfill")
@@ -70,24 +71,36 @@ def months_range(start_date: date, end_date: date) -> list[tuple[int, int]]:
     return months
 
 
-def generate_and_persist_month(year: int, month: int, persist_fn: Optional[PersistFn] = None) -> dict:
+def generate_and_persist_month(year: int, month: int, persist_fn: Optional[PersistFn] = None,
+                                cutoff: Optional[date] = None) -> dict:
     """Generuje i (jeśli podano persist_fn) zapisuje Order/SupplierInvoice/
     SalaryTransaction + odpowiadające Vouchery dla JEDNEGO miesiąca. Wydzielone
     z run_backfill(), żeby run_daily.py (i docelowo APScheduler job na Railway)
-    mogły wygenerować tylko bieżący miesiąc bez przechodzenia całej historii."""
+    mogły wygenerować tylko bieżący miesiąc bez przechodzenia całej historii.
+
+    Faza 5a — `cutoff` (domyślnie dzisiaj, zob. seed.payroll.get_generation_cutoff_date):
+    dla BIEŻĄCEGO (niezakończonego) miesiąca ta funkcja wciąż jest wołana raz
+    dla całego (rok, miesiąc) — ale każdy wygenerowany rekord z datą PÓŹNIEJSZĄ
+    niż cutoff jest odrzucany przed zapisem (nie tylko przed persist_fn, ale
+    i przed liczeniem do stats), zamiast zakładać że skoro przetwarzamy dany
+    miesiąc, to cały już minął. Bez tego np. zamówienie klienta z invoice_day=27
+    powstawałoby z datą 27. dnia BIEŻĄCEGO miesiąca, nawet gdy backfill uruchomiono
+    7. dnia tego miesiąca."""
+    if cutoff is None:
+        cutoff = get_generation_cutoff_date()
     stats = dict(EMPTY_MONTH_STATS)
 
     def _emit(obj: object) -> None:
         if persist_fn is not None:
             persist_fn(obj)
 
-    orders = generate_monthly_orders(year, month)
+    orders = [o for o in generate_monthly_orders(year, month) if is_date_generatable(o.orderDate, cutoff)]
     for order in orders:
         _emit(order)
     stats["orders"] += len(orders)
     stats["order_lines"] += sum(len(o.orderLines) for o in orders)
 
-    invoices = generate_monthly_supplier_invoices(year, month)
+    invoices = [i for i in generate_monthly_supplier_invoices(year, month) if is_date_generatable(i.invoiceDate, cutoff)]
     for invoice in invoices:
         supplier_seed = supplier_by_number(invoice.invoiceNumber.split("-")[0])
         voucher = build_voucher_for_invoice(invoice, supplier_seed)
@@ -97,16 +110,17 @@ def generate_and_persist_month(year: int, month: int, persist_fn: Optional[Persi
         stats["postings"] += len(voucher.postings)
     stats["supplier_invoices"] += len(invoices)
 
-    transaction, vouchers = generate_monthly_salary(year, month)
-    _emit(transaction)
-    for voucher in vouchers:
-        _emit(voucher)
-    stats["salary_transactions"] += 1
-    stats["payslips"] += len(transaction.payslips)
-    stats["vouchers"] += len(vouchers)
-    stats["postings"] += sum(len(v.postings) for v in vouchers)
+    if should_generate_monthly_salary(year, month, cutoff):
+        transaction, vouchers = generate_monthly_salary(year, month)
+        _emit(transaction)
+        for voucher in vouchers:
+            _emit(voucher)
+        stats["salary_transactions"] += 1
+        stats["payslips"] += len(transaction.payslips)
+        stats["vouchers"] += len(vouchers)
+        stats["postings"] += sum(len(v.postings) for v in vouchers)
 
-    opex_vouchers = generate_monthly_opex(year, month)
+    opex_vouchers = [v for v in generate_monthly_opex(year, month) if is_date_generatable(v.date, cutoff)]
     for voucher in opex_vouchers:
         _emit(voucher)
     stats["vouchers"] += len(opex_vouchers)
@@ -122,9 +136,18 @@ def run_backfill(
 ) -> dict:
     """Generuje Order/SupplierInvoice/SalaryTransaction + odpowiadające Vouchery
     dla każdego miesiąca w [start_date, end_date]. Zwraca statystyki wolumenu i
-    loguje (logging.INFO) podsumowanie per miesiąc."""
+    loguje (logging.INFO) podsumowanie per miesiąc.
+
+    Faza 5a — `end_date` (jawny lub domyślny `date.today()`) jest zawsze
+    dodatkowo przycięty do `get_generation_cutoff_date()` (też dziś) — generator
+    NIGDY nie tworzy rekordów z datą późniejszą niż rzeczywista data systemowa,
+    niezależnie od tego, jaki `end_date` poda wywołujący. Sam cutoff jest też
+    przekazywany do `generate_and_persist_month()`, żeby BIEŻĄCY (niezakończony)
+    miesiąc w tym zakresie nie został wygenerowany w całości (zob. tamta funkcja)."""
+    cutoff = get_generation_cutoff_date()
     if end_date is None:
-        end_date = date.today()
+        end_date = cutoff
+    end_date = min(end_date, cutoff)
 
     stats = {"months": 0, **EMPTY_MONTH_STATS}
 
@@ -140,7 +163,7 @@ def run_backfill(
 
     for year, month in months_range(start_date, end_date):
         stats["months"] += 1
-        month_stats = generate_and_persist_month(year, month, persist_fn)
+        month_stats = generate_and_persist_month(year, month, persist_fn, cutoff=cutoff)
         for key, value in month_stats.items():
             stats[key] += value
         logger.info(

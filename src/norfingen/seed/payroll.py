@@ -9,6 +9,7 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Optional
 
 from norfingen.seed.roster import EMPLOYEES, EmployeeSeed
 
@@ -115,6 +116,31 @@ def last_working_day(year: int, month: int) -> date:
     elif d.weekday() == 6:  # niedziela
         d -= timedelta(days=2)
     return d
+
+
+# Faza 5a — naprawa krytycznego błędu: backfill miesięczny (generators/backfill.py
+# generate_and_persist_month) przetwarzał CAŁY bieżący miesiąc kalendarzowy na
+# podstawie samego (rok, miesiąc) z months_range(), bez sprawdzenia czy
+# poszczególne dni tego miesiąca faktycznie już minęły względem daty systemowej
+# — skutek: zamówienia/faktury/lista płac z datami do kilkunastu dni w
+# przyszłość (np. cała lista płac lipca 2026 zaksięgowana 31 lipca, mimo że
+# backfill uruchomiono 7 lipca). Generator NIGDY nie powinien tworzyć rekordu
+# z datą późniejszą niż dzisiaj — poniższe funkcje to twardy, reużywalny
+# bezpiecznik stosowany w generate_and_persist_month/run_daily.
+def get_generation_cutoff_date() -> date:
+    """Generator NIGDY nie tworzy rekordów z datą późniejszą niż dzisiaj."""
+    return date.today()
+
+
+def is_date_generatable(target_date: date, cutoff: Optional[date] = None) -> bool:
+    """Czy target_date wolno wygenerować — nie później niż cutoff (domyślnie dziś)."""
+    return target_date <= (cutoff if cutoff is not None else get_generation_cutoff_date())
+
+
+def should_generate_monthly_salary(year: int, month: int, cutoff: Optional[date] = None) -> bool:
+    """Payroll za dany miesiąc generuje się dopiero gdy ten miesiąc faktycznie
+    się zakończył (dzień wypłaty <= dziś), nie z góry."""
+    return is_date_generatable(last_working_day(year, month), cutoff)
 
 
 def is_june(month: int) -> bool:

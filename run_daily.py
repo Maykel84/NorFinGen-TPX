@@ -48,7 +48,7 @@ from norfingen.generators.bank_transaction_generator import generate_daily_bank_
 from norfingen.generators.hours_generator import generate_daily_hours  # noqa: E402
 from norfingen.generators.order_generator import generate_daily_orders  # noqa: E402
 from norfingen.generators.salary_generator import generate_monthly_salary  # noqa: E402
-from norfingen.seed.payroll import active_employees, last_working_day  # noqa: E402
+from norfingen.seed.payroll import active_employees, last_working_day, should_generate_monthly_salary  # noqa: E402
 from norfingen.seed.roster import numeric_id  # noqa: E402
 
 logger = logging.getLogger("run_daily")
@@ -65,6 +65,14 @@ def run_daily(target_date: Optional[date] = None, skip_setup: bool = False) -> d
     do bazy."""
     if target_date is None:
         target_date = date.today()
+
+    # Faza 5a — generator NIGDY nie tworzy rekordów z datą późniejszą niż
+    # dzisiaj; bezpiecznik na wypadek wywołania run_daily() z przyszłą datą
+    # (np. pomyłka wywołującego kodu, nie tylko backfill).
+    if target_date > date.today():
+        logger.warning("run_daily: target_date %s jest w przyszłości — pomijam.", target_date)
+        return {"orders": 0, "bank_transactions": 0, "hour_entries": 0, "salary": 0, "skipped": True}
+
     year, month, day = target_date.year, target_date.month, target_date.day
 
     if not skip_setup:
@@ -95,8 +103,9 @@ def run_daily(target_date: Optional[date] = None, skip_setup: bool = False) -> d
         save_hour_entries(hour_entries)
         stats["hour_entries"] = len(hour_entries)
 
-    # 4. Lista płac — tylko w ostatni dzień roboczy miesiąca
-    if target_date == last_working_day(year, month):
+    # 4. Lista płac — tylko w ostatni dzień roboczy miesiąca, i tylko jeśli
+    # ten dzień faktycznie już minął (should_generate_monthly_salary — Faza 5a).
+    if target_date == last_working_day(year, month) and should_generate_monthly_salary(year, month):
         salary_txn, vouchers = generate_monthly_salary(year, month)
         save_salary(salary_txn, vouchers)
         stats["salary"] = 1
