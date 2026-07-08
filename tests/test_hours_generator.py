@@ -9,7 +9,7 @@ from norfingen.generators.hours_generator import (
 from norfingen.models.hours import ActivityType
 from norfingen.seed.roster import active_customers, employee_by_id
 
-ALL_EMPLOYEE_IDS = list(range(1, 23))
+ALL_EMPLOYEE_IDS = list(range(1, 18))  # Faza 6: zespół 17 osób (E01-E17)
 
 
 def test_is_working_day_excludes_weekends():
@@ -43,14 +43,9 @@ def test_is_billable_employee_department_rule():
 
 
 def test_new_hires_are_billable_by_default():
-    # Faza 4 (korekta #4, finalna): 20 z 22 nowych pracowników (E17-E38) są w
-    # Leveranse/Teknologi -> billable automatycznie. E25 (Salg), E30 (Økonomi)
-    # to role wspierające -> nie billable.
+    # Faza 6: E17 (Leveranse) jest jedynym dociążeniem po fuzji -> billable
+    # automatycznie, bo działa w dziale 2 (BILLABLE_DEPARTMENTS).
     assert is_billable_employee(17) is True  # Leveranse
-    assert is_billable_employee(18) is True  # Teknologi
-    assert is_billable_employee(37) is True  # Leveranse
-    assert is_billable_employee(25) is False  # Salg
-    assert is_billable_employee(30) is False  # Økonomi
 
 
 def test_generate_daily_hours_respects_active_employee_filter():

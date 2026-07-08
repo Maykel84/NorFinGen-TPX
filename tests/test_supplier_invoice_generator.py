@@ -7,22 +7,24 @@ from norfingen.generators.supplier_invoice_generator import (
 from norfingen.seed.roster import supplier_by_number
 
 
-def test_microsoft_cost_split_into_four_invoices():
+def test_microsoft_cost_split_into_three_invoices():
+    # Faza 6 — "Azure hosting" (4. pozycja) usunięta stąd, zastąpiona COGS
+    # pass-through skalującym się z klientami S02 (roster.calc_azure_cogs_monthly).
     invoices = generate_monthly_supplier_invoices(2024, 1)
     l01_invoices = [i for i in invoices if i.invoiceNumber.startswith("L01")]
-    assert len(l01_invoices) == 4
-    assert len({i.invoiceNumber for i in l01_invoices}) == 4  # numery unikalne
+    assert len(l01_invoices) == 3
+    assert len({i.invoiceNumber for i in l01_invoices}) == 3  # numery unikalne
 
 
 def test_microsoft_total_cost_matches_base_year_2019():
-    # Suma bazowa (rok 2019, przed inflacją) = 53 100 NOK/mies. — niżej niż
-    # poprzednie płaskie 85 000, zamierzone (stara kwota była ekonomicznie
-    # nieuzasadniona, zob. docs/SESSION_HANDOFF.md).
+    # Suma bazowa (rok 2019, przed inflacją) = 18 100 NOK/mies. — Faza 6:
+    # Azure hosting (35 000, płaskie) usunięte z tej listy, zastąpione COGS
+    # pass-through S02 (zob. opex_generator.py, roster.calc_azure_cogs_monthly).
     invoices = generate_monthly_supplier_invoices(2019, 1)
     l01_invoices = [i for i in invoices if i.invoiceNumber.startswith("L01")]
     total_netto = sum(i.amountExcludingVatCurrency for i in l01_invoices)
     expected = sum(line["base_monthly"] for line in MICROSOFT_COST_LINES)
-    assert expected == 53_100
+    assert expected == 18_100
     assert round(total_netto) == expected
 
 

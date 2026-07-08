@@ -34,7 +34,7 @@ from norfingen.seed.roster import (
 
 def test_roster_counts_match_docs():
     assert len(DEPARTMENTS) == 4
-    assert len(EMPLOYEES) == 38  # Faza 4: 16 + E17-E38
+    assert len(EMPLOYEES) == 17  # Faza 6: 16 + E17, zespół przestaje rosnąć z portfelem klientów
     assert len(CUSTOMERS) == 50  # Faza 4: 12 + K13-K50
     assert len(SUPPLIERS) == 8
     assert len(PRODUCTS) == 7  # Faza 2: +P07 Cyberbezpieczeństwo (S03)
@@ -58,7 +58,7 @@ def test_services_seed_data():
 
     s04 = service_by_code("S04")
     assert s04.billing_model == BillingModel.HOURLY
-    assert s04.base_price_enterprise == s04.base_price_mid == s04.base_price_smb == 1_450
+    assert s04.base_price_enterprise == s04.base_price_mid == s04.base_price_smb == 950  # Faza 6, Zadanie 1
 
 
 def test_faza4_dual_pricing_cohorts():

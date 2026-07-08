@@ -1,19 +1,31 @@
 """Generator dodatkowych kosztów operacyjnych (Faza 3): kantyna, reprezentacja,
 transport (kilometrówka + konferencje), sprzęt do wdrożenia u klienta (COGS).
+Faza 6 dodaje dwa dalsze koszty COGS: pass-through Microsoft/Azure dla S02
+i, po pierwszym nieudanym sanity-checku, pass-through narzędzi/licencji dla S01.
 
-W przeciwieństwie do supplier_invoice_generator (faktury od zewnętrznych
-dostawców L01-L08, z VAT i dokumentem SupplierInvoice) te koszty NIE mają
-odpowiadającej faktury zakupu — to bezpośrednie koszty gotówkowe firmy,
+Większość tych kosztów (kantyna/reprezentacja/transport/sprzęt wdrożeniowy)
+NIE ma odpowiadającej faktury zakupu — bezpośrednie koszty gotówkowe firmy,
 księgowane wprost: Voucher z 2 postingami (DR konto kosztowe / CR 1910
-Bankinnskudd), bez VAT, zgodnie z wzorcem podanym w zadaniu ("prosty koszt
-gotówkowy, bez VAT").
+Bankinnskudd), bez VAT (_simple_cost_voucher). Azure COGS (Faza 6) używa
+innego wzorca (_cogs_accrual_voucher: DR konto COGS / CR 2400 Leverandørgjeld)
+— modeluje zobowiązanie wobec dostawcy (Microsoft), nie natychmiastową
+płatność gotówkową, świadomie bez osobnej SupplierInvoice/bank_transaction
+(zob. SESSION_HANDOFF.md, Faza 6).
 
 Kwoty (roster.CANTEEN_SUBSIDY_PER_EMPLOYEE_MONTHLY,
 REPRESENTATION_COST_PER_*_CLIENT_MONTHLY, KM_RATE_2019,
 CONFERENCE_HOTEL_RATES) są celowo skromne — lekcja z Fazy 2 (dosłowne
 przepisanie cen bez weryfikacji marży zawaliło wynik do -183%). Sprzęt do
-wdrożenia (Zadanie 4b) to jedyny nowy koszt COGS (konto 4290) — jednorazowy
-przy onboardingu klienta Enterprise/Mid-market, nie powtarzający się.
+wdrożenia (Faza 3, konto 4290) — jednorazowy przy onboardingu klienta
+Enterprise/Mid-market. Azure COGS (Faza 6, konto 4291) — skaluje się co
+miesiąc z liczbą aktywnych klientów S02 (roster.calc_azure_cogs_monthly),
+zastępuje płaski koszt Azure z Fazy 2 (35 000 NOK/mies. stałe). S01 COGS
+(Faza 6, konto 4292) — skaluje się co miesiąc z WSZYSTKIMI aktywnymi
+klientami (roster.calc_s01_cogs_monthly) — dodany po tym, jak offline
+sanity-check wykazał, że S02-only COGS fizycznie nie może wypełnić luki
+między realnym przychodem (52,4M NOK, nie zakładane 35M) a celem
+headcount~17/marża 7% (zob. roster.py, komentarz przy calc_s01_cogs_monthly,
+i SESSION_HANDOFF.md dla pełnego wyprowadzenia).
 """
 
 from __future__ import annotations
@@ -29,18 +41,23 @@ from norfingen.seed.roster import (
     CUSTOMERS,
     CustomerSeed,
     active_customers,
+    calc_azure_cogs_monthly,
     calc_canteen_cost,
     calc_client_visit_transport,
     calc_representation_cost,
+    calc_s01_cogs_monthly,
 )
 
 ACCOUNT_BANK = 1910
+ACCOUNT_LEVERANDORGJELD = 2400
 ACCOUNT_CANTEEN = 7350  # Kantinetilskudd
 ACCOUNT_REPRESENTATION = 7420  # Representasjon
 ACCOUNT_TRANSPORT = 7000  # Reisekostnader — istniejące konto (dzielone z L07 Avis,
 # zob. moduł-level docstring supplier_invoice_generator: brak "miksu" do rozdzielenia,
 # kilometrówka/konferencje to po prostu nowe podkategorie tej samej pozycji NS4102)
 ACCOUNT_SERVICE_EQUIPMENT = 4290  # Driftsmateriell for kundeleveranse (COGS)
+ACCOUNT_AZURE_COGS = 4291  # Videresalgskostnad Microsoft/Azure (COGS, Faza 6)
+ACCOUNT_S01_COGS = 4292  # Driftskostnad Managed IT Support — RMM/EDR/verktøy (COGS, Faza 6, 2. kalibracja)
 
 CONFERENCE_MONTHS = {3, 9, 11}
 CONFERENCE_PROBABILITY = 0.6
@@ -70,6 +87,27 @@ def _simple_cost_voucher(on_date: date, account_number: int, description: str, a
         postings=[
             Posting(date=on_date, account=acct(account_number), amount=amount),
             Posting(date=on_date, account=acct(ACCOUNT_BANK), amount=-amount),
+        ],
+    )
+    assert_voucher_valid(voucher)
+    return voucher
+
+
+def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, amount: float) -> Voucher:
+    """Voucher 2-postingowy: DR konto COGS / CR 2400 Leverandørgjeld, bez VAT
+    — w przeciwieństwie do _simple_cost_voucher (płatność natychmiastowa z
+    banku), to jest zobowiązanie wobec dostawcy (Microsoft), analogicznie do
+    prawdziwej faktury zakupu, ale bez osobnego dokumentu SupplierInvoice ani
+    następczej bank_transaction (świadome uproszczenie Fazy 6 — zob.
+    SESSION_HANDOFF.md)."""
+    amount = round(amount, 2)
+    voucher = Voucher(
+        date=on_date,
+        description=description,
+        voucherType=VoucherType.OPERATING_COST,
+        postings=[
+            Posting(date=on_date, account=acct(account_number), amount=amount),
+            Posting(date=on_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=-amount),
         ],
     )
     assert_voucher_valid(voucher)
@@ -148,6 +186,23 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     transport_cost = calc_client_visit_transport(customers, month)
     if transport_cost > 0:
         vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_TRANSPORT, f"Kjøregodtgjørelse — kundebesøk {month_label}", transport_cost))
+
+    # Faza 6 — COGS pass-through S02 (zastępuje płaski koszt Azure z Fazy 2).
+    azure_cogs_base = calc_azure_cogs_monthly(customers)
+    if azure_cogs_base > 0:
+        azure_cogs_cost = apply_annual_inflation(azure_cogs_base, year)
+        vouchers.append(_cogs_accrual_voucher(
+            on_date, ACCOUNT_AZURE_COGS, f"Videresalgskostnad Microsoft/Azure {month_label}", azure_cogs_cost,
+        ))
+
+    # Faza 6, druga kalibracja — COGS pass-through S01 (wszystkie segmenty,
+    # zob. roster.calc_s01_cogs_monthly dla uzasadnienia rynkowego).
+    s01_cogs_base = calc_s01_cogs_monthly(customers)
+    if s01_cogs_base > 0:
+        s01_cogs_cost = apply_annual_inflation(s01_cogs_base, year)
+        vouchers.append(_cogs_accrual_voucher(
+            on_date, ACCOUNT_S01_COGS, f"Driftskostnad Managed IT Support {month_label}", s01_cogs_cost,
+        ))
 
     conference_rng = random.Random(f"conference-{year}-{month}")
     trip = generate_conference_trip(year, month, conference_rng)

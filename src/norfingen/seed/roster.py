@@ -112,47 +112,28 @@ EMPLOYEES: list[EmployeeSeed] = [
     EmployeeSeed("E14", "Camilla", "Bø", 2, date(2022, 9, 1), "merger", "IT Specialist", 680_000),
     EmployeeSeed("E15", "Anders", "Johansen", 3, date(2022, 9, 1), "merger", "Developer", 760_000),
     EmployeeSeed("E16", "Marit", "Sundby", 4, date(2022, 9, 1), "merger", "Admin Coordinator", 640_000),
-    # --- Faza 4: skalowanie 2022-10 (tuż po fuzji) do 2026-03 — rekrutacje
-    # POJEDYNCZE, odstępy dokładnie 60 dni, NIE wzorzec fuzji z 2022 (6 osób
-    # naraz — to zostaje wyjątkowym, jednorazowym zdarzeniem w historii, nie
-    # powtarzającym się szablonem). Liczba, tempo I PENSJE wyliczone
-    # empirycznie z roster.calc_target_headcount (korekta #4) — pierwsza
-    # próba (16 hires, pensje 640-760k jak reszta zespołu) dała docelowy
-    # zespół 32 osoby, ale to wciąż za mało: rzeczywisty koszt/pracownika w
-    # tym modelu (~890 tys. NOK w pełni obciążony, nie założone 1,15 mln) i
-    # rzeczywisty przychód 50 klientów wymagały ~44 etatów przy tamtych
-    # pensjach — fizycznie niewykonalne przy odstępach >=60 dni w oknie
-    # 2023-2026 (potrzeba by ~4,6 roku, jest ~3,5). Rozwiązanie: 22 rekrutacje
-    # (max mieszczące się przy odstępach 60 dni w oknie 2022-10 -> 2026-03)
-    # + WYŻSZA pensja (950 tys., senior/specjalista, adekwatna do roli
-    # "dociążania" zespołu przy szybkim skalowaniu) zamiast więcej osób.
-    # Rezultat zweryfikowany symulacją PRZED backfillem (nie szacunkiem):
-    # marża 40,8% (2022) -> 29,6% (2023) -> 22,6% (2024) -> 14,9% (2025) ->
-    # 15,0% (2026) — płynny spadek do celu 15-22%, nigdy poniżej progu
-    # bezpieczeństwa 10%. Mix ról: 20 billable (Leveranse/Teknologi) + 2
-    # wspierające (Salg/Økonomi).
+    # --- Faza 6 (druga kalibracja, ZASTĘPUJE Fazę 4): zespół PRZESTAJE rosnąć
+    # po jednym dociążeniu tuż po fuzji (E17) — nie skaluje się już liniowo z
+    # portfelem klientów (Faza 4: 22 dalsze rekrutacje do 38 osób na 50
+    # klientów). Powód: kalibracja względem realnych danych rynkowych
+    # (Brønnøysundregistrene, zob. roster.calc_s01_cogs_monthly) pokazała, że
+    # porównywalne norweskie firmy IT drift/support (Garnes Data AS: 17
+    # pracowników, 48 mln NOK przychodu, marża 5,4%) obsługują duży portfel
+    # klientów małym zespołem właśnie DLATEGO, że większość kosztu obsługi
+    # (narzędzia RMM/PSA, licencje, sprzęt) jest kosztem materiałowym
+    # (COGS pass-through), nie osobową (payroll) — i dlatego, że wsparcie
+    # jest modelem ticketowym (jeden konsultant obsługuje wielu klientów
+    # dziennie, zob. hours_generator.generate_daily_support_hours), nie 1:1
+    # klient-konsultant. Poprzednia próba (Faza 4, 38 etatów) była
+    # kalibrowana pod stary, dużo skromniejszy model kosztów (tylko Faza 3:
+    # kantyna/reprezentacja/transport/sprzęt) i dawała nierealistycznie
+    # wysoki przychód/pracownika względem realnych firm z tego segmentu.
+    # E17 (Vegard Lien) zostaje jedynym dociążeniem po fuzji — zweryfikowane
+    # symulacją PRZED backfillem (nie szacunkiem, zob. calc_target_headcount
+    # niżej): marża 11,5% (2022) -> 7,1% (2023) -> 7,3% (2024) -> 7,0-7,5%
+    # (2025) -> 6,9-7,6% (2026, częściowy/pełny rok) — płynny spadek do celu
+    # 5,5-9%, nigdy poniżej progu bezpieczeństwa w latach dojrzałych.
     EmployeeSeed("E17", "Vegard", "Lien", 2, date(2022, 10, 3), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E18", "Frida", "Solheim", 3, date(2022, 12, 1), "scaling", "Senior Developer", 950_000),
-    EmployeeSeed("E19", "Magnus", "Aas", 2, date(2023, 2, 1), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E20", "Emilie", "Skogen", 3, date(2023, 4, 3), "scaling", "Senior IT Specialist", 950_000),
-    EmployeeSeed("E21", "Jonas", "Reme", 2, date(2023, 6, 1), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E22", "Sunniva", "Vik", 3, date(2023, 8, 1), "scaling", "Senior Developer", 950_000),
-    EmployeeSeed("E23", "Kristoffer", "Bakke", 2, date(2023, 10, 2), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E24", "Tuva", "Nesheim", 3, date(2023, 12, 1), "scaling", "Senior IT Specialist", 950_000),
-    EmployeeSeed("E25", "Oskar", "Vold", 1, date(2024, 2, 1), "scaling", "Account Manager", 950_000),
-    EmployeeSeed("E26", "Ida", "Fjeld", 2, date(2024, 4, 1), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E27", "Håkon", "Strøm", 3, date(2024, 6, 3), "scaling", "Senior Developer", 950_000),
-    EmployeeSeed("E28", "Live", "Berge", 2, date(2024, 8, 1), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E29", "Aksel", "Haug", 3, date(2024, 10, 1), "scaling", "Senior IT Specialist", 950_000),
-    EmployeeSeed("E30", "Thea", "Rud", 4, date(2024, 12, 2), "scaling", "Finance Coordinator", 950_000),
-    EmployeeSeed("E31", "Mathias", "Grande", 2, date(2025, 2, 3), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E32", "Julie", "Wold", 3, date(2025, 4, 1), "scaling", "Senior Developer", 950_000),
-    EmployeeSeed("E33", "Sander", "Vange", 2, date(2025, 6, 2), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E34", "Maren", "Sund", 3, date(2025, 7, 1), "scaling", "Senior IT Specialist", 950_000),
-    EmployeeSeed("E35", "Nikolai", "Dahlen", 2, date(2025, 9, 1), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E36", "Amalie", "Kolstad", 3, date(2025, 11, 3), "scaling", "Senior Developer", 950_000),
-    EmployeeSeed("E37", "Even", "Løken", 2, date(2026, 1, 1), "scaling", "Senior IT Consultant", 950_000),
-    EmployeeSeed("E38", "Selma", "Wik", 3, date(2026, 3, 2), "scaling", "Senior IT Specialist", 950_000),
 ]
 
 
@@ -416,9 +397,9 @@ LEGACY_SERVICES: list[Service] = [
         description="Projekty digitalizacyjne, doradztwo IT, wdrożenia",
         billing_model=BillingModel.HOURLY,
         availability=ServiceSegmentAvailability.ALL,
-        base_price_enterprise=1_450,
-        base_price_mid=1_450,
-        base_price_smb=1_450,
+        base_price_enterprise=950,
+        base_price_mid=950,
+        base_price_smb=950,
     ),
 ]
 
@@ -459,9 +440,9 @@ SCALE_SERVICES: list[Service] = [
         description="Projekty digitalizacyjne, doradztwo IT, wdrożenia",
         billing_model=BillingModel.HOURLY,
         availability=ServiceSegmentAvailability.ALL,
-        base_price_enterprise=1_450,
-        base_price_mid=1_450,
-        base_price_smb=1_450,
+        base_price_enterprise=950,
+        base_price_mid=950,
+        base_price_smb=950,
     ),
 ]
 
@@ -613,6 +594,76 @@ def calc_client_visit_transport(customers: list[CustomerSeed], month: int) -> fl
     return total_km * KM_RATE_2019
 
 
+# Faza 6 — COGS pass-through dla S02 (zastępuje płaski koszt Azure z Fazy 2,
+# 35 000 NOK/mies. stałe — zob. supplier_invoice_generator.MICROSOFT_COST_LINES).
+# Koszt firmy wobec Microsoftu za infrastrukturę klientów, skalujący się z
+# liczbą i segmentem klientów kupujących S02 (Enterprise + Mid-market — SMB
+# nigdy nie kupuje S02 wg bundlingu Faza 2, roster.SEGMENT_SERVICE_BUNDLES).
+# Stawki (rok bazowy 2019, przed inflacją) skalibrowane offline (Faza 6) tak,
+# żeby przy pełnym portfelu S02 w 2026 (15 Enterprise + 18 Mid-market = 33
+# klientów) roczny COGS wyniósł 6,5-8,5M NOK — zob. SESSION_HANDOFF.md dla
+# wyprowadzenia i rzeczywistego wyniku po backfillu.
+AZURE_COGS_PER_ENTERPRISE_S02_CLIENT_MONTHLY = 22_000
+AZURE_COGS_PER_MID_S02_CLIENT_MONTHLY = 11_500
+
+
+def calc_azure_cogs_monthly(customers: list[CustomerSeed]) -> float:
+    """COGS pass-through dla S02 — koszt jaki firma płaci Microsoftowi za
+    infrastrukturę klientów kupujących S02 (Enterprise + Mid-market, nie SMB).
+    Zwraca kwotę bazową (rok 2019) — inflacja +3%/rok stosowana przez
+    wywołującego (opex_generator.generate_monthly_opex, tak jak
+    calc_representation_cost — roster.py celowo nie zależy od modułów
+    generators, zob. ten komentarz przy calc_representation_cost)."""
+    total = 0.0
+    for c in customers:
+        if c.segment == "Enterprise":
+            total += AZURE_COGS_PER_ENTERPRISE_S02_CLIENT_MONTHLY
+        elif c.segment == "Mid-market":
+            total += AZURE_COGS_PER_MID_S02_CLIENT_MONTHLY
+    return total
+
+
+# Faza 6, druga próba kalibracji — COGS pass-through dla S01 (Managed IT
+# Support), NOWY mechanizm dodany po tym, jak offline sanity-check wykazał, że
+# COGS S02-only (Azure, wyżej) nie może fizycznie wypełnić luki między
+# przychodem (52,4M NOK projekcja 2026, nie zakładane 35M) a celem
+# headcount~17/marża 7%: S02 generuje tylko ~13M NOK/rok przychodu, więc
+# nawet przy COGS = 87% przychodu S02 brakowało ~15M NOK/rok. Realny
+# benchmark Garnes Data AS (IT drift/support, odpowiednik S01) ma
+# opex+COGS/przychód = 61,6% — sugeruje, że w tym segmencie to WŁAŚNIE S01
+# (narzędzia RMM/PSA, licencje ticketing, EDR/antywirus odsprzedawane
+# klientom, sprzęt zapasowy), nie S02, niesie główny ciężar kosztów
+# przepływowych. Skaluje się z WSZYSTKIMI klientami S01 (wszyscy segmenty,
+# S01 kupują wszyscy — roster.SEGMENT_SERVICE_BUNDLES), wagi 4:2:1
+# (Enterprise:Mid-market:SMB) — większe organizacje wymagają więcej
+# stanowisk/licencji narzędziowych do obsługi. Stawka SMB (rok bazowy 2019)
+# skalibrowana offline tak, żeby (opex_tradycyjny + cogs_s02 + cogs_s01) /
+# przychód wylądowało w 58-62% (środek 60%, zakotwiczone w Garnes Data
+# 61,6%) — zob. SESSION_HANDOFF.md (Faza 6, druga kalibracja) dla
+# wyprowadzenia i rzeczywistego wyniku po backfillu.
+S01_COGS_PER_ENTERPRISE_CLIENT_MONTHLY = 53_000  # waga 4x
+S01_COGS_PER_MID_CLIENT_MONTHLY = 26_500  # waga 2x
+S01_COGS_PER_SMB_CLIENT_MONTHLY = 13_300  # waga 1x (jednostka bazowa)
+
+
+def calc_s01_cogs_monthly(customers: list[CustomerSeed]) -> float:
+    """COGS pass-through dla S01 — koszt narzędzi/licencji/sprzętu
+    wspierającego Managed IT Support, płacony przez WSZYSTKICH aktywnych
+    klientów (S01 kupują wszystkie segmenty), nie tylko Enterprise+Mid jak
+    calc_azure_cogs_monthly (S02). Zwraca kwotę bazową (rok 2019) — inflacja
+    +3%/rok stosowana przez wywołującego (opex_generator.generate_monthly_opex),
+    tak jak calc_azure_cogs_monthly."""
+    total = 0.0
+    for c in customers:
+        if c.segment == "Enterprise":
+            total += S01_COGS_PER_ENTERPRISE_CLIENT_MONTHLY
+        elif c.segment == "Mid-market":
+            total += S01_COGS_PER_MID_CLIENT_MONTHLY
+        else:
+            total += S01_COGS_PER_SMB_CLIENT_MONTHLY
+    return total
+
+
 # Faza 4 — reguła wzrostu: sprzedaż vs zdolność zespołu (Zadanie 2).
 #
 # SEGMENT_HOURS_PER_MONTH/HOURS_PER_YEAR_PER_CONSULTANT/UTILIZATION_TARGET
@@ -629,17 +680,25 @@ SEGMENT_HOURS_PER_MONTH: dict[str, float] = {
 }
 
 
-# Faza 4, korekta #4 (OSTATECZNA) — rachunek zatrudnienia TOP-DOWN z celu
-# marży, zastępujący porzucone heurystyki godzin/przychodu-per-konsultant
-# (korekty #2 i #3 wyżej w historii tego pliku — obie dały sprzeczne wyniki:
-# #2 nie ograniczała wzrostu marży wcale [40-73%], #3 [ceny 2 kohorty +
-# REVENUE_PER_CONSULTANT_YEARLY] naprawiła retroaktywne psucie starych lat,
-# ale sama bramka onboardingu i tak nie trzymała marży w ryzach [42-54%] —
-# bo "ile godzin/przychodu potrzeba" to zła strona równania: właściwe
-# pytanie to wprost "ile powinien kosztować payroll, żeby marża wyszła
-# w celu". Stąd rachunek odwrócony: znany przychód/opex -> budżet payrollu
-# -> liczba etatów, nie odwrotnie.
-TARGET_MARGIN = 0.19  # środek zakresu 18-20%, zweryfikowanego w Fazie 3
+# Faza 6 (druga kalibracja) — TARGET_MARGIN obniżony z 0,19 (Faza 3/4) do
+# 0,07: realne norweskie firmy IT tego segmentu (Brønnøysundregistrene, zob.
+# roster.calc_s01_cogs_monthly) mają marże 3-10%, nie 15-25%. Rachunek
+# TOP-DOWN (Faza 4, korekta #4) zostaje niezmieniony w STRUKTURZE — znany
+# przychód/opex+COGS -> budżet payrollu -> liczba etatów — ale offline
+# sanity-check tej fazy wykazał, że projekcja przychodu jest realnie ~52,4M
+# NOK w 2026, nie ~35M jak pierwotnie zakładano: przy TYM przychodzie i
+# skromnym, realistycznym COGS (S02-only, Zadanie 2a) formuła dawała
+# headcount ~31, nie ~17 (COGS S02 fizycznie nie mógł przekroczyć własnego
+# przychodu S02, ~13M/rok). Rozwiązanie: DRUGI kubełek COGS (S01, zob.
+# calc_s01_cogs_monthly) zakotwiczony w realnym Garnes Data AS (IT
+# drift/support, opex+COGS/przychód = 61,6%) — nie stałe TARGET_COGS_S02/
+# TARGET_TRADITIONAL_OPEX (niezależne od przychodu), tylko funkcje
+# `calc_*_cogs_monthly(customers)` skalujące się z rzeczywistym portfelem, tak
+# jak payroll skaluje się z rzeczywistym EMPLOYEES — dlatego
+# calc_target_headcount() świadomie NIE przyjmuje stałych progów kosztowych,
+# tylko projected_opex_cogs policzony z prawdziwych generatorów (jak w Fazie
+# 4), żeby nigdy nie rozjechać się z tym, co faktycznie trafia do bazy.
+TARGET_MARGIN = 0.07  # środek zakresu 5,5-9%, zweryfikowanego w Fazie 6 (2. kalibracja)
 AVG_FULLY_LOADED_EMPLOYEE_COST_2026 = 1_150_000  # NOK, z rzeczywistych danych payrollu (uwzględnia AGA, feriepenger)
 
 
@@ -648,23 +707,28 @@ def calc_target_headcount(projected_revenue: float, projected_opex_cogs: float) 
     przychodu per konsultant (korekty #2/#3, porzucone) — allowed_total_cost
     to maksymalny koszt (payroll+opex+COGS) przy TARGET_MARGIN, payroll_budget
     to co z tego zostaje na płace po odjęciu opex/COGS (Faza 3: kantyna,
-    reprezentacja, transport, sprzęt wdrożeniowy + L01-L08)."""
+    reprezentacja, transport, sprzęt wdrożeniowy + L01-L08; Faza 6: + COGS
+    S02 Azure + COGS S01 narzędzia/licencje, zob. calc_azure_cogs_monthly/
+    calc_s01_cogs_monthly)."""
     allowed_total_cost = projected_revenue * (1 - TARGET_MARGIN)
     payroll_budget = allowed_total_cost - projected_opex_cogs
     return round(payroll_budget / AVG_FULLY_LOADED_EMPLOYEE_COST_2026)
 
 
-# Weryfikacja harmonogramu zatrudnienia (Zadanie 2b, po korekcie #4) —
+# Weryfikacja harmonogramu zatrudnienia (Faza 6, 2. kalibracja) —
 # calc_target_headcount() vs rzeczywista liczba EMPLOYEES aktywnych na koniec
 # każdego roku, z rzeczywistym przychodem/opex+COGS wygenerowanym przez
-# generatory (nie przybliżeniem) — zob. SESSION_HANDOFF.md (Faza 4) dla
+# generatory (nie przybliżeniem) — zob. SESSION_HANDOFF.md (Faza 6) dla
 # pełnych danych liczbowych z offline sanity-checku wykonanego PRZED
-# backfillem. Docelowa trajektoria zatrudnienia: 16 (2022 po fuzji) -> 19
-# (2023) -> 23 (2024) -> 27 (2025) -> 32 (2026-07), rekrutacje pojedyncze
-# (E17-E32), odstępy >= 2 miesiące, mix ~13 billable (Leveranse/Teknologi) +
-# 3 role wspierające (Salg/Økonomi) — proporcja zbliżona do już istniejącego
-# zespołu (11 billable / 16 = 69%, tutaj 13/16 = 81%, lekko wyżej bo wzrost
-# klientów wymaga głównie dostawy, nie administracji).
+# backfillem. Docelowa trajektoria zatrudnienia: 16 (2022 po fuzji) -> 17
+# (2022-10, E17, jedyne dociążenie) -> 17 (bez zmian do 2026) — zespół
+# PRZESTAJE rosnąć z portfelem klientów (12 -> 48 aktywnych 2019 -> 2026),
+# bo model wsparcia jest ticketowy (hours_generator.generate_daily_support_hours,
+# jeden konsultant obsługuje kilku klientów dziennie), nie 1:1 klient-konsultant,
+# a większość kosztu obsługi jest kosztem materiałowym (COGS), nie osobowym.
+# Zmierzona marża: 11,5% (2022) -> 7,1% (2023) -> 7,3% (2024) -> 7,0-7,5%
+# (2025) -> 6,9-7,6% (2026, częściowy/pełny rok) — w celu 5,5-9% dla obu lat
+# dojrzałych wymaganych przez próg bezpieczeństwa.
 
 
 def employee_by_number(number: str) -> EmployeeSeed:
@@ -675,7 +739,7 @@ def employee_by_number(number: str) -> EmployeeSeed:
 
 
 def employee_by_id(employee_id: int) -> EmployeeSeed:
-    """Odwrotność numeric_id() dla pracowników — employee_id z bazy (1-22)
+    """Odwrotność numeric_id() dla pracowników — employee_id z bazy (1-17)
     -> EmployeeSeed. Potrzebne w hours_generator (Faza 4) — generate_daily_hours
     dostaje tylko listę int id, nie obiekty EmployeeSeed."""
     return employee_by_number(f"E{employee_id:02d}")
@@ -746,8 +810,9 @@ def project_for_customer(customer: CustomerSeed) -> ProjectSeed:
 
 def numeric_id(code: str) -> int:
     """Konwertuje kod seed (E07, K03, L05, P02, PRJ001) na numeryczne id
-    Warstwy 1/2 (Employee 1-22, Customer 1-45, Supplier 1-8, Product 1-7,
-    Project 1-45 — Faza 4 rozszerzyła Employee/Customer/Project — przypisywane
+    Warstwy 1/2 (Employee 1-17, Customer 1-50, Supplier 1-8, Product 1-7,
+    Project 1-50 — Faza 4 rozszerzyła Customer/Project, Faza 6 skróciła
+    Employee z powrotem do 17 — przypisywane
     sekwencyjnie wg kolejności w dokumentacji). Obsługuje zarówno
     jednoliterowe (E/K/L/P), jak i wieloliterowe (PRJ) prefiksy."""
     return int(re.sub(r"^[A-Za-z]+", "", code))

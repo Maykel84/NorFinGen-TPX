@@ -16,19 +16,21 @@ Opis wszystkich 20 tabel w schemacie Supabase (`src/norfingen/db/schema.sql`). W
 | number | TEXT | Kod tekstowy = `id` |
 | is_inactive | BOOLEAN | Zawsze `false` — brak logiki dezaktywacji działów |
 
-Znaczenie biznesowe: struktura organizacyjna firmy, używana do przypisania pracowników i (opcjonalnie) postingów kosztowych. Ograniczenie: statyczne, nie zmienia się w czasie mimo że firma rośnie z 4 do 16 osób.
+Znaczenie biznesowe: struktura organizacyjna firmy, używana do przypisania pracowników i (opcjonalnie) postingów kosztowych. Ograniczenie: statyczne, nie zmienia się w czasie mimo że firma rośnie z 1 do 17 osób.
 
 ### employees
 | Kolumna | Typ | Opis |
 |---|---|---|
-| id | INTEGER (PK) | 1-38, odpowiada `numeric_id("E01")..("E38")` (Faza 4: +22, E17-E38) |
+| id | INTEGER (PK) | 1-17, odpowiada `numeric_id("E01")..("E17")` (Faza 6 skróciła z 1-38 — zob. niżej) |
 | first_name / last_name | TEXT | Imię / nazwisko |
-| employee_number | TEXT | Kod "E01"-"E38" |
+| employee_number | TEXT | Kod "E01"-"E17" |
 | department_id | INTEGER (FK) | → departments.id |
 | bank_account_number, national_identity_number, date_of_birth | TEXT/DATE | Nigdy nie wypełniane (NULL) — placeholder pod przyszłe rozszerzenia |
 | allow_information_registration | BOOLEAN | Zawsze `true`, bez znaczenia biznesowego w generatorze |
 
-Znaczenie biznesowe: kadra firmy. **Data zatrudnienia jest w `employments.start_date`, nie tutaj**. Kohorta założycielska (E01-E06) rozłożona na 4 miesiące 2019-01→2019-04 (nie jeden dzień) — zob. `employments`. **Faza 4**: 22 nowe rekrutacje (E17-E38), pojedyncze (2022-10 → 2026-03), 20 billable (Leveranse/Teknologi) + 2 wspierające (Salg/Økonomi) — liczba i pensje (950 000 NOK/rok każdy, wyżej niż reszta zespołu — senior/specjalista) wyliczone empirycznie z `roster.calc_target_headcount()` (top-down z celu marży 19%, nie z zgadywanych godzin/przychodu per konsultant — dwa wcześniejsze podejścia w tej samej fazie dały sprzeczne wyniki, zob. `SESSION_HANDOFF.md`).
+Znaczenie biznesowe: kadra firmy. **Data zatrudnienia jest w `employments.start_date`, nie tutaj**. Kohorta założycielska (E01-E06) rozłożona na 4 miesiące 2019-01→2019-04 (nie jeden dzień) — zob. `employments`.
+
+**Faza 6 (ZASTĘPUJE Fazę 4) — zespół obcięty z 38 do 17 osób (E18-E38 usunięte)**: kalibracja względem realnych danych rynkowych (Brønnøysundregistrene, 4 norweskie firmy IT — zob. `SESSION_HANDOFF.md`) wykazała, że porównywalne firmy IT drift/support (Garnes Data AS: 17 pracowników, ~48-59 mln NOK przychodu, marża 5,4%) obsługują duży portfel klientów małym zespołem, bo większość kosztu obsługi jest kosztem materiałowym (COGS pass-through, zob. `accounts` 4291/4292), nie osobowym. E17 (Vegard Lien, Leveranse, 2022-10-03) pozostaje jedynym dociążeniem po fuzji 2022-09 — dalszy wzrost zespołu (Faza 4: E18-E38, 22 rekrutacje do 2026-03) usunięty w całości.
 
 **Faza 5 — wszystkie `start_date` przyciągnięte do pierwszego dnia roboczego miesiąca** (`payroll.first_working_day_of_month()`) — eliminuje potrzebę liczenia proporcji "ile dni w niepełnym miesiącu"; pierwszy miesiąc zatrudnienia jest zawsze pełnym miesiącem pracy. Kilka par pracowników (E02/E03, E04/E05 w kohorcie założycielskiej; kilka par z Fazy 4) ma teraz identyczny `start_date` w efekcie tego przyciągnięcia — staggering wyraża się przez MIESIĄC startu, nie już przez dzień w miesiącu. **Naprawiony bugfix**: `generate_monthly_salary()`/`brutto_earned_in_year()` porównywały aktywność pracownika do kalendarzowego dnia 1 (`date(year, month, 1)`), co błędnie wykluczało z wypłaty pracownika, którego pierwszy dzień roboczy wypadał 2./3. dnia miesiąca (bo 1. to weekend) — naprawione porównaniem do `first_working_day_of_month()`.
 
@@ -95,7 +97,7 @@ Znaczenie biznesowe: stały słownik stawek VAT (jedyna realnie używana stawka 
 | type | TEXT | ASSETS / EQUITY_AND_LIABILITY / OPERATING_INCOME / OPERATING_EXPENSE |
 | vat_type_id | INTEGER (FK) | → vat_types.id, tylko dla kont przychodowych/kosztowych z VAT |
 
-Znaczenie biznesowe: 27-pozycyjny plan kont (24 + 3 z Fazy 3) używany przez wszystkie `postings.account_number`. **Konta 3000/3100 (przychód) istnieją w tym słowniku, ale nigdy nie mają postingów** — zob. ograniczenie na górze dokumentu.
+Znaczenie biznesowe: 29-pozycyjny plan kont (24 + 3 z Fazy 3 + 2 z Fazy 6) używany przez wszystkie `postings.account_number`. **Konta 3000/3100 (przychód) istnieją w tym słowniku, ale nigdy nie mają postingów** — zob. ograniczenie na górze dokumentu.
 
 **Faza 3 — 3 nowe konta kosztowe** (`generators/opex_generator.py`), wszystkie bez VAT (`vat_type_id=NULL`) — koszty gotówkowe księgowane bezpośrednio (DR koszt / CR 1910), bez pośredniego `SupplierInvoice`:
 - **4290** "Driftsmateriell for kundeleveranse" — COGS (klasa 4 NS4102, nie 6xxx/7xxx jak reszta kosztów operacyjnych): jednorazowy sprzęt wdrożeniowy (routery/serwery) przy onboardingu klienta Enterprise/Mid-market, 45-90 tys. NOK (Enterprise) / 15-35 tys. NOK (Mid-market). Ponieważ obecni 12 klientów onboardowali się 2019-2022, ten koszt występuje niemal wyłącznie w latach historycznych.
@@ -103,6 +105,10 @@ Znaczenie biznesowe: 27-pozycyjny plan kont (24 + 3 z Fazy 3) używany przez wsz
 - **7420** "Representasjon" — koszty reprezentacyjne per aktywny klient: 1000 NOK/mies. (Enterprise) / 400 NOK/mies. (Mid-market), z inflacją +3%/rok. SMB nie generuje kosztu (relacja czysto transakcyjna). **Nie zaimplementowano** flagi `tax_deductible_pct` (ograniczona odliczalność podatkowa reprezentacji w Norwegii) — zadanie explicite dopuszczało pominięcie, zostawione jako komentarz w kodzie na przyszłość.
 
 Kilometrówka (kwartalne wizyty u klientów) i wyjazdy konferencyjne (2-3x/rok, losowe) księgowane na **istniejące konto 7000** "Reisekostnader" — to samo konto co L07 Avis (dostawca kosztowy z Fazy wcześniejszej), bo to logicznie ta sama kategoria NS4102 (koszty podróży), nie osobny nowy numer. L07 Avis pozostaje bez zmian (żadnego "miksu" service/transport nie było do rozdzielenia — L07 to czysto wynajem samochodów).
+
+**Faza 6 — 2 nowe konta COGS** (`generators/opex_generator.py`, wzorzec `_cogs_accrual_voucher`: DR koszt / CR 2400 Leverandørgjeld — zobowiązanie wobec dostawcy, nie natychmiastowa płatność gotówkowa jak konta Fazy 3), skalujące się co miesiąc z portfelem klientów:
+- **4291** "Videresalgskostnad Microsoft/Azure" — pass-through dla S02, tylko klienci Enterprise+Mid (`roster.calc_azure_cogs_monthly`): 22 000/11 500 NOK/mies. (rok bazowy 2019, ×liczba klientów, +inflacja). Zastępuje płaską pozycję "Azure hosting" (35 000 NOK/mies.) usuniętą z `supplier_invoices` L01 (zob. niżej).
+- **4292** "Driftskostnad Managed IT Support (RMM/EDR/verktøy)" — pass-through dla S01, WSZYSCY aktywni klienci niezależnie od segmentu (`roster.calc_s01_cogs_monthly`): 53 000/26 500/13 300 NOK/mies. (Enterprise/Mid/SMB, waga 4:2:1). Dodany po tym, jak offline sanity-check wykazał, że S02-only COGS fizycznie nie może wypełnić luki między realnym przychodem (~52 mln NOK w 2026, nie zakładane ~35 mln) a celem headcount~17/marża 7% — S02 generuje tylko ~13 mln NOK/rok przychodu, za mało jako baza. Zakotwiczone w Garnes Data AS (IT drift/support, realny opex+COGS/przychód = 61,6%) — cel `(opex_tradycyjny + cogs_s02 + cogs_s01) / przychód ≈ 58-62%`. Zob. `roster.py` (komentarz przy `calc_s01_cogs_monthly`) i `SESSION_HANDOFF.md` (Faza 6) dla pełnego wyprowadzenia.
 
 ### products
 | Kolumna | Typ | Opis |
@@ -188,7 +194,9 @@ Znaczenie biznesowe: pojedyncza pozycja faktury sprzedaży. **Faza 2**: jedna li
 
 Znaczenie biznesowe: **faktura zakupu (koszt)**. Ograniczenie: 526 historycznych faktur miało status PAID nadany starą heurystyką czasową (sprzed wdrożenia `bank_transactions`) — naprawione jednorazowo przez `scripts/fix_outgoing_transactions.py`, ale **ten skrypt trzeba uruchamiać ponownie po każdym pełnym resecie tabel** (TRUNCATE zeruje `bank_transactions`).
 
-**Faza 2 — L01 (Microsoft Norge) rozbite na 4 faktury/miesiąc** (nie 1 płaska pozycja 85 000 NOK) — `supplier_invoice_generator.MICROSOFT_COST_LINES`: M365 E3 licencje, Azure hosting, Visual Studio/narzędzia deweloperskie, wsparcie CSP/Premier. Suma bazowa 2019 = 53 100 NOK/mies. (niżej niż poprzednie 85 000 — poprzednia kwota była ekonomicznie nieuzasadniona), z inflacją +3%/rok (`apply_annual_inflation`, w przeciwieństwie do L02-L08, które pozostają płaskie). `invoice_number` dla L01 ma dodatkowy sufiks `-{1..4}` (np. `L01-2024-01-1`). Azure hosting **nie jest** (jeszcze) dynamicznie powiązany z liczbą klientów S02 — uproszczenie świadome, odłożone do Fazy 4.
+**Faza 2 — L01 (Microsoft Norge) rozbite na kilka faktur/miesiąc** (nie 1 płaska pozycja 85 000 NOK) — `supplier_invoice_generator.MICROSOFT_COST_LINES`: M365 E3 licencje, Visual Studio/narzędzia deweloperskie, wsparcie CSP/Premier. Suma bazowa 2019 = 18 100 NOK/mies., z inflacją +3%/rok (`apply_annual_inflation`, w przeciwieństwie do L02-L08, które pozostają płaskie). `invoice_number` dla L01 ma dodatkowy sufiks `-{1..3}` (np. `L01-2024-01-1`).
+
+**Faza 6 — "Azure hosting" (4. pozycja, 35 000 NOK/mies. płaska) USUNIĘTA stąd**, zastąpiona COGS pass-through skalującym się z liczbą klientów S02 (konto 4291, zob. `accounts` wyżej) — koszt odsprzedaży, nie stały koszt operacyjny.
 
 ### salary_transactions
 | Kolumna | Typ | Opis |
@@ -271,12 +279,16 @@ Znaczenie biznesowe: rzeczywisty ruch na koncie bankowym, przesunięty w czasie 
 |---|---|---|
 | id | SERIAL (PK) | |
 | date | DATE | Dzień roboczy (pon-pt) |
-| employee_id | INTEGER (FK) | Tylko 11 z 16 pracowników loguje godziny (działy Leveranse/Teknologi, bez E05) |
+| employee_id | INTEGER (FK) | Tylko 12 z 17 pracowników loguje godziny (działy Leveranse/Teknologi, bez E05) |
 | project_id | INTEGER (FK) | NULL dla INTERNAL/SICK |
 | activity_type | VARCHAR(20) | BILLABLE / INTERNAL / SICK |
 | hours | NUMERIC(4,1) | Godziny, suma BILLABLE+INTERNAL = 7.5/dzień (albo SICK=0) |
 
-Znaczenie biznesowe: timesheet konsultantów. **Nie generuje żadnych postingów księgowych** — czysto operacyjne dane (nie ma wpływu na P&L). Ograniczenie: BILLABLE tylko do projektów, których klient jest już onboardowany i jeszcze nie odszedł (churn) — w przeciwnym razie cały dzień loguje się jako INTERNAL.
+Znaczenie biznesowe: timesheet konsultantów. **Nie generuje żadnych postingów księgowych** — czysto operacyjne dane (nie ma wpływu na P&L, niezależne od `salary_generator`). Ograniczenie: BILLABLE tylko do projektów, których klient jest już onboardowany i jeszcze nie odszedł (churn) — w przeciwnym razie cały dzień loguje się jako INTERNAL.
+
+**Faza 6 — dwa modele dzienne wg działu** (`hours_generator.py`, zastępują wzorzec "jeden klient dziennie" z Fazy 4 — realizm danych, bez wpływu na przychód/payroll):
+- **Leveranse (support)** — model ticketowy (`generate_daily_support_hours`): konsultant obsługuje 2-5 klientów dziennie, krótkie bloki godzin proporcjonalne do segmentu (`TICKET_AVG_HOURS`), suma billable dąży do losowego celu 5,5-7,0h.
+- **Teknologi (projekty)** — cykl życia klienta (`client_lifecycle_phase`): pełny dzień (7,5h) u klienta w fazie ONBOARDING (pierwsze 2-6 tygodni od `onboarding_date`, zależnie od segmentu), rozproszona konserwacja (jak model ticketowy) u klientów w fazie MAINTENANCE poza tym. Mały zespół (2 billable Teknologi) prowadzi jeden aktywny projekt wdrożeniowy naraz (`CONCURRENT_ONBOARDING_CAPACITY=1`).
 
 ### projects
 | Kolumna | Typ | Opis |
@@ -302,5 +314,6 @@ Znaczenie biznesowe: kontener godzin konsultanckich per klient — używany wył
 6. **Brak rotacji kadry** (`employments.end_date` zawsze NULL) i **niski churn klientów** (K09, K15 — oba SMB) — model celowo prosty, nie pełna symulacja dynamiki portfela.
 7. **`services` tabela pokazuje tylko `LEGACY_SERVICES`** (Faza 4) — `SCALE_SERVICES` (ceny dla klientów onboardowanych od 2023-01-01) istnieje tylko w kodzie Python, nie w Supabase. Zob. sekcja `services` i `customers` wyżej.
 8. **Extra-consulting (S04 poza K06) nie działa w trybie dziennym `run_daily.py`** — `should_generate_extra_consulting`/K06-style consulting działają tylko w `generate_monthly_orders` (backfill historyczny), nie w rytmie dziennym produkcyjnym. Zob. `SESSION_HANDOFF.md` (Faza 2).
-9. **Pensje senior/specjalista podniesione do 950 000 NOK/rok w Fazie 4** (E17-E38) pod presją kalibracji budżetu płacowego (top-down z celu marży, `roster.calc_target_headcount`) — **nie z analizy rynkowej płac w Norwegii**. Do ewentualnej rewizji, jeśli ktoś dalej kalibruje model względem realnych stawek.
-10. **Retry/reconnect istnieje dla backfillu** (`run_backfill_daily()`, `terminate_stale_sessions()`) **ale sam proces nie przetrwa faktycznego wyłączenia/uśpienia komputera** — w takim wypadku trzeba wznowić backfill ręcznie od ostatniego przetworzonego dnia (`SELECT MAX(date) FROM hour_entries`).
+9. **Pensja E17 (950 000 NOK/rok)** ustalona pod presją kalibracji budżetu płacowego Fazy 4 (top-down z celu marży) — **nie z analizy rynkowej płac w Norwegii**, zostawiona bez zmian w Fazie 6 (headcount, nie stawka, był dźwignią tamtej korekty). Do ewentualnej rewizji, jeśli ktoś dalej kalibruje model względem realnych stawek.
+10. **Retry/reconnect istnieje dla backfillu** (`run_backfill_daily()`, `terminate_stale_sessions()`) **ale sam proces nie przetrwa faktycznego wyłączenia/uśpienia komputera ani zawieszonego (nie failed-fast) połączenia sieciowego** — w takim wypadku proces wisi bez logowania błędu (obserwowane w Fazie 6: `ps` pokazywał proces żywy, ale bez przyrostu czasu CPU i bez nowych wierszy w bazie przez >30 min) i trzeba go zabić ręcznie oraz wznowić backfill od ostatniego przetworzonego dnia (`SELECT MAX(date) FROM hour_entries`) — sprawdzać żywotność procesu po **realnym postępie w bazie**, nie tylko po tym czy proces nadal istnieje.
+11. **Faza 6 — GitHub Actions `daily.yml` (cron 3x/dzień na `main`) zapisuje do TEJ SAMEJ produkcyjnej bazy Supabase** — podczas backfillu tej fazy cron odpalił się starym (przed-Fazą-6, 38-osobowym) kodem i wstawił skażone `hour_entries`/`bank_transactions` dla bieżącego dnia PO `TRUNCATE`, zanim zauważono problem. Workflow został ręcznie wyłączony w GitHub UI na czas backfillu — **wymaga ponownego włączenia dopiero PO wypchnięciu commitu Fazy 6 na `main`**, inaczej znów odpali się starym kodem. Każdy przyszły reset danych musi najpierw wstrzymać ten workflow.

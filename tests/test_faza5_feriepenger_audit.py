@@ -38,17 +38,19 @@ def test_feriepengegrunnlag_prorated_for_partial_previous_year():
 def test_no_feriepenger_in_employees_own_hire_year():
     """Zadanie 2c — pracownik zatrudniony w TRAKCIE roku nie dostaje
     feriepenger w czerwcu TEGO SAMEGO roku (brak podstawy z roku poprzedniego,
-    bo jeszcze nie pracował) — dostaje tylko normalną pensję czerwcową."""
-    e20 = employee_by_number("E20")
-    assert e20.start_date == date(2023, 4, 3)
+    bo jeszcze nie pracował) — dostaje tylko normalną pensję czerwcową.
+    E06 (Faza 6 — zastępuje usuniętego E20 z rozwiązanego zespołu skalowania):
+    start 2019-04-01, więc rok firmy jeszcze nie istniał w 2018."""
+    e06 = employee_by_number("E06")
+    assert e06.start_date == date(2019, 4, 1)
 
-    basis_2022 = brutto_earned_in_year(e20, 2022)
-    assert basis_2022 == 0
+    basis_2018 = brutto_earned_in_year(e06, 2018)
+    assert basis_2018 == 0
 
-    june_2023 = calc_june_salary(e20, 2023, basis_2022)
-    assert june_2023.feriepenger == 0
-    assert june_2023.gross_salary > 0
-    assert june_2023.total_brutto == june_2023.gross_salary
+    june_2019 = calc_june_salary(e06, 2019, basis_2018)
+    assert june_2019.feriepenger == 0
+    assert june_2019.gross_salary > 0
+    assert june_2019.total_brutto == june_2019.gross_salary
 
 
 def test_no_feriepenger_specification_line_when_amount_is_zero():
@@ -57,9 +59,9 @@ def test_no_feriepenger_specification_line_when_amount_is_zero():
     audytu: 'nie generuje się żadne feriepenger' rozumiane dosłownie)."""
     from norfingen.models.salary import WAGE_TYPE_FERIEPENGER
 
-    transaction, _ = generate_monthly_salary(2023, 6)
-    e20_payslip = next(p for p in transaction.payslips if p.employee.id == numeric_id("E20"))
-    feriepenger_specs = [s for s in e20_payslip.specifications if s.wageType.id == WAGE_TYPE_FERIEPENGER.id]
+    transaction, _ = generate_monthly_salary(2019, 6)
+    e06_payslip = next(p for p in transaction.payslips if p.employee.id == numeric_id("E06"))
+    feriepenger_specs = [s for s in e06_payslip.specifications if s.wageType.id == WAGE_TYPE_FERIEPENGER.id]
     assert feriepenger_specs == []
 
 
@@ -71,10 +73,12 @@ def test_new_hire_day_two_or_three_paid_in_own_start_month():
     transaction, _ = generate_monthly_salary(2022, 10)
     assert any(p.employee.id == numeric_id("E17") for p in transaction.payslips)
 
-    e38 = employee_by_number("E38")
-    assert e38.start_date == date(2026, 3, 2)  # 1 marca 2026 to niedziela
-    transaction_mar, _ = generate_monthly_salary(2026, 3)
-    assert any(p.employee.id == numeric_id("E38") for p in transaction_mar.payslips)
+    # E07 (Faza 6 — zastępuje usuniętego E38): start 2020-03-02 (1 marca 2020
+    # to niedziela) — ten sam wzorzec "dzień 2", inny miesiąc/rok.
+    e07 = employee_by_number("E07")
+    assert e07.start_date == date(2020, 3, 2)
+    transaction_mar, _ = generate_monthly_salary(2020, 3)
+    assert any(p.employee.id == numeric_id("E07") for p in transaction_mar.payslips)
 
 
 def test_feriepenger_accounts_for_july_raise_in_prior_year():

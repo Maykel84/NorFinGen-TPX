@@ -66,12 +66,12 @@ def test_june_2022():
 def test_june_2023():
     on_date = date(2023, 6, 1)
     active = active_employees(on_date)
-    # 16 od fuzji (2022-09) + E17 (2022-10-03) + E18 (2022-12-01) + E19
-    # (2023-02-01) + E20 (2023-04-03) + E21 (2023-06-01, dokładnie ten dzień) = 21.
-    assert {e.number for e in active} == {f"E{i:02d}" for i in range(1, 17)} | {"E17", "E18", "E19", "E20", "E21"}
+    # Faza 6 — zespół przestaje rosnąć po E17 (2022-10-03, jedyne dociążenie
+    # po fuzji), więc czerwiec 2023 to nadal ci sami 17 pracownicy.
+    assert {e.number for e in active} == {f"E{i:02d}" for i in range(1, 17)} | {"E17"}
 
     transaction, vouchers = generate_monthly_salary(2023, 6)
-    assert len(transaction.payslips) == 21
+    assert len(transaction.payslips) == 17
     assert len(vouchers) == 2
 
     for v in vouchers:

@@ -51,35 +51,15 @@ def test_target_headcount_tracks_actual_hiring_within_tolerance():
             f"{year}: actual={actual} target={target} (revenue={revenue:.0f})"
 
 
-def test_new_hires_individually_staggered():
-    """Nowi pracownicy (E17+) mają różne, pojedyncze daty startu — nie grupowe
-    (w przeciwieństwie do fuzji 2022-09, gdzie 6 osób startowało tego samego dnia)."""
-    new_hire_dates = [e.start_date for e in EMPLOYEES if int(e.number[1:]) >= 17]
-    assert len(new_hire_dates) == 22
-    assert len(set(new_hire_dates)) == len(new_hire_dates)  # wszystkie unikalne
-
-
-def test_new_hires_spaced_at_least_two_months_apart():
-    # Faza 5: wszystkie start_date przyciągnięte do pierwszego dnia roboczego
-    # miesiąca (Zadanie 1b) — to ma priorytet nad ścisłym odstępem 60 dni z
-    # Fazy 4, więc kilka par skróciło się nieznacznie (min. 29 dni zamiast
-    # 60 — E33 2025-06-02 -> E34 2025-07-01, oba miesiące niezmienione,
-    # tylko dzień w miesiącu). Nadal wszystkie daty unikalne (brak powtórki
-    # wzorca fuzji "6 osób jednego dnia") — próg obniżony do 25 dni, żeby
-    # dopuścić ten legitymny efekt uboczny bez utraty sensu testu.
-    new_hire_dates = sorted(e.start_date for e in EMPLOYEES if int(e.number[1:]) >= 17)
-    for earlier, later in zip(new_hire_dates, new_hire_dates[1:]):
-        gap_days = (later - earlier).days
-        assert gap_days >= 25, f"Rekrutacje zbyt blisko siebie: {earlier} -> {later} ({gap_days} dni)"
-
-
-def test_new_hires_include_billable_and_support_roles():
-    # Faza 4 korekta #4 (finalna): 20 billable (Leveranse/Teknologi) + 2 role
-    # wspierające (Salg/Økonomi) — 22 rekrutacje to maksimum mieszczące się
-    # przy odstępach >=60 dni w oknie 2022-10 -> 2026-03 (fizyczne
-    # ograniczenie okna czasowego, nie wybór).
+def test_only_one_new_hire_after_merger():
+    """Faza 6 (2. kalibracja) ZASTĘPUJE Fazę 4 — zespół przestaje rosnąć z
+    portfelem klientów po jednym dociążeniu tuż po fuzji (E17). Poprzednie 21
+    dalsze rekrutacje (E18-E38) usunięte: kalibracja rynkowa (Brønnøysundregistrene)
+    pokazała, że porównywalne firmy IT drift/support obsługują duży portfel
+    małym zespołem, bo koszt obsługi jest głównie kosztem materiałowym (COGS
+    pass-through S01/S02), nie osobowym — zob. roster.py, komentarz przy
+    calc_s01_cogs_monthly."""
     new_hires = [e for e in EMPLOYEES if int(e.number[1:]) >= 17]
-    billable = [e for e in new_hires if e.department_number in (2, 3)]
-    support = [e for e in new_hires if e.department_number in (1, 4)]
-    assert len(billable) == 20
-    assert len(support) == 2
+    assert len(new_hires) == 1
+    assert new_hires[0].number == "E17"
+    assert new_hires[0].department_number == 2  # Leveranse, billable

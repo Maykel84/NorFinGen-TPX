@@ -26,18 +26,22 @@ GROSS_UP_FACTOR = 1.25  # amountCurrency (incl. VAT) = netto * 1.25, VAT 25%
 PAID_AFTER_DAYS = 45  # faktury z payment_due_date starszym niż 45 dni → PAID
 
 # Faza 2 — L01 Microsoft Norge rozbite z jednej płaskiej pozycji (85 000 NOK/mies.,
-# ekonomicznie nieuzasadnionej) na 4 pozycje kosztowe realnie odpowiadające
-# strukturze wydatków firmy IT (licencje M365, Azure hosting, narzędzia
-# deweloperskie, wsparcie CSP/Premier). Suma bazowa (rok 2019, przed inflacją)
-# to 53 100 NOK/mies. — inflacja +3%/rok jak przy cenach sprzedaży
+# ekonomicznie nieuzasadnionej) na pozycje kosztowe realnie odpowiadające
+# strukturze wydatków firmy IT (licencje M365, narzędzia deweloperskie,
+# wsparcie CSP/Premier). Inflacja +3%/rok jak przy cenach sprzedaży
 # (apply_annual_inflation), w przeciwieństwie do pozostałych dostawców (L02-L08),
 # których kwoty pozostają płaskie/z szumem — poza zakresem tej fazy.
-# Uwaga: Azure hosting nie jest (jeszcze) powiązany dynamicznie z liczbą
-# klientów Enterprise/Mid kupujących S02 — uproszczenie świadome, odłożone do
-# Fazy 4 (zob. docs/SESSION_HANDOFF.md), gdy portfel klientów faktycznie rośnie.
+#
+# Faza 6 — "Azure hosting — infrastruktura klientów" (35 000 NOK/mies. płaskie,
+# Faza 2) USUNIĘTA stąd i ZASTĄPIONA mechanizmem skalującym się z liczbą
+# klientów S02 (roster.calc_azure_cogs_monthly, opex_generator.py) — koszt
+# odsprzedaży (COGS, konto 4291), nie stały koszt operacyjny (6xxx). Powód:
+# kalibracja względem realnych danych rynkowych (Brønnøysundregistrene) —
+# firmy z komponentem odsprzedaży Azure/licencji mają wysoki przychód/
+# pracownika, ale niską marżę, bo koszt "znika" w COGS pass-through, nie w
+# płacach. Zob. SESSION_HANDOFF.md (Faza 6) dla kalibrowanych stawek.
 MICROSOFT_COST_LINES = [
     {"name": "M365 E3 licencje (16 stanowisk)", "base_monthly": 6_100},
-    {"name": "Azure hosting — infrastruktura klientów", "base_monthly": 35_000},
     {"name": "Visual Studio / narzędzia deweloperskie", "base_monthly": 4_000},
     {"name": "Wsparcie CSP/Premier", "base_monthly": 8_000},
 ]

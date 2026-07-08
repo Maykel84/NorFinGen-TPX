@@ -82,6 +82,11 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (4290, "Driftsmateriell for kundeleveranse", "OPERATING_EXPENSE", None),
     (7350, "Kantinetilskudd", "OPERATING_EXPENSE", None),
     (7420, "Representasjon", "OPERATING_EXPENSE", None),
+    # Faza 6 — COGS pass-through S02 (zastępuje płaski koszt Azure z Fazy 2).
+    (4291, "Videresalgskostnad Microsoft/Azure", "OPERATING_EXPENSE", None),
+    # Faza 6 — COGS pass-through S01 (narzędzia RMM/PSA, licencje ticketing,
+    # EDR/antywirus odsprzedawane klientom, sprzęt zapasowy — zob. roster.calc_s01_cogs_monthly).
+    (4292, "Driftskostnad Managed IT Support (RMM/EDR/verktøy)", "OPERATING_EXPENSE", None),
 ]
 
 # (id, name, number, percentage, vat_code) — id zgodny z TripletexRef(id=...)
