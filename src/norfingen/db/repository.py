@@ -35,6 +35,7 @@ from norfingen.models.order import Order, OrderLine, OrderStatus
 from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import (
+    CUSTOMER_NACE,
     CUSTOMER_PRICE_MULTIPLIER,
     CUSTOMERS,
     DEPARTMENTS,
@@ -216,21 +217,26 @@ def seed_reference_data() -> None:
             )
 
         for customer in CUSTOMERS:
+            nace = CUSTOMER_NACE[customer.number]
             cur.execute(
                 """INSERT INTO customers
                        (id, name, customer_number, city, country_id, currency_id,
-                        onboarding_date, churn_date, segment, price_multiplier)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        onboarding_date, churn_date, segment, price_multiplier,
+                        nace_code, nace_name)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                        onboarding_date = EXCLUDED.onboarding_date,
                        churn_date = EXCLUDED.churn_date,
                        segment = EXCLUDED.segment,
-                       price_multiplier = EXCLUDED.price_multiplier""",
+                       price_multiplier = EXCLUDED.price_multiplier,
+                       nace_code = EXCLUDED.nace_code,
+                       nace_name = EXCLUDED.nace_name""",
                 (
                     numeric_id(customer.number), customer.name, customer.number, customer.city,
                     NORWAY_COUNTRY_ID, NOK_CURRENCY_ID,
                     customer.onboarding_date, customer.churn_date, customer.segment,
                     CUSTOMER_PRICE_MULTIPLIER[customer.number],
+                    nace.code, nace.name,
                 ),
             )
 

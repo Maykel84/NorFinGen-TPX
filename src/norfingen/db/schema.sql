@@ -290,6 +290,9 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS onboarding_date DATE;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS churn_date DATE;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS segment VARCHAR(20);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS price_multiplier NUMERIC(5,4);
+-- Dodatek NACE/SN2007 — kod branżowy klienta (roster.CUSTOMER_NACE), czysto opisowy.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS nace_code VARCHAR(10);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS nace_name VARCHAR(200);
 
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_lines_order ON order_lines(order_id);

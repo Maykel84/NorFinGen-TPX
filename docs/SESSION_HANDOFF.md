@@ -126,3 +126,14 @@ Zapytanie SQL z promptu Fazy 6 (przychód z `orders`/`order_lines`, płacowe/ope
 ## 8. Kontekst poprzednich faz
 
 Faza 6 następuje po zamknięciu 5-fazowego planu (`v5.0-faza1-fundament` → `v5.4-faza5-final`) i hotfixu dat w przyszłość (`v5.4a-future-date-fix`, zob. commit `b482ac0` i wcześniejsza wersja tego dokumentu w historii git dla pełnych szczegółów). Zastępuje harmonogram zatrudnienia Fazy 4 (38 osób, TARGET_MARGIN 0,19) nowym, skalibrowanym względem realnych danych rynkowych (17 osób, TARGET_MARGIN 0,07). Kluczowa lekcja pozostaje aktualna: offline sanity-check PRZED każdym pełnym backfillem, top-down kalibracja zatrudnienia z celu marży (nie z zgadywanych godzin/przychodu per konsultant), `random.Random(string)` nigdy `hash()`.
+
+---
+
+## 9. Dodatek — kody branżowe NACE/SN2007 (`v5.6-nace-classification`)
+
+Niezależny od modelu finansowego dodatek metadanych — **nie zmienia cen/kosztów/przychodu, nie wymaga backfillu transakcyjnego**.
+
+- **Kod główny firmy**: `roster.COMPANY_NACE_CODE = "62.020"` (Konsulentvirksomhet tilknyttet informasjonsteknologi og forvaltning og drift av it-systemer) — obejmuje S01+S02+S03+S04 naraz. Realny odpowiednik: Garnes Data AS (benchmark Fazy 6), zarejestrowany pod pokrewnym 62.030.
+- **Kod sekundarny**: pominięty — udział S04 (konsulting) w przychodzie 2025-2026 to **1,9%** (zweryfikowane SQL na żywej bazie, `order_lines` JOIN `products.service_code`), daleko poniżej progu 20% z zadania. Cena S04 obniżona w Fazie 6 do 950 NOK/h — sprawdzono aktualny stan, nie założono wyniku sprzed tej zmiany.
+- **Kody klientów**: `roster.CUSTOMER_NACE` — dict `customer_number -> NaceCode(code, name)` dla wszystkich 50 klientów (K01-K50), dopasowany do rzeczywistej nazwy firmy (nie losowo), 18 różnych sektorów. Nowe kolumny `customers.nace_code`/`customers.nace_name` (schema.sql, `seed_reference_data()`, `scripts/migrate_customer_metadata.py` — ten sam wzorzec `ON CONFLICT DO UPDATE` co pozostałe metadane Fazy 1).
+- **Weryfikacja**: `tests/test_nace_classification.py` (4 testy, 175/175 łącznie), migracja uruchomiona na żywej bazie, zapytanie kontrolne (rozkład przychodu per sektor) pokazuje sensowny podział bez braków (`nace_code IS NULL` → 0 wierszy).

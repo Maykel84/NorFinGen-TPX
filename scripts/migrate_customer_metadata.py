@@ -18,25 +18,30 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from norfingen.db.repository import get_connection  # noqa: E402
-from norfingen.seed.roster import CUSTOMER_PRICE_MULTIPLIER, CUSTOMERS, SERVICES  # noqa: E402
+from norfingen.seed.roster import CUSTOMER_NACE, CUSTOMER_PRICE_MULTIPLIER, CUSTOMERS, SERVICES  # noqa: E402
 
 
 def migrate_customer_metadata() -> None:
     conn = get_connection()
     with conn.cursor() as cur:
         for customer in CUSTOMERS:
+            nace = CUSTOMER_NACE[customer.number]
             cur.execute(
                 """UPDATE customers
                    SET onboarding_date = %s,
                        churn_date = %s,
                        segment = %s,
-                       price_multiplier = %s
+                       price_multiplier = %s,
+                       nace_code = %s,
+                       nace_name = %s
                    WHERE customer_number = %s""",
                 (
                     customer.onboarding_date,
                     customer.churn_date,
                     customer.segment,
                     CUSTOMER_PRICE_MULTIPLIER[customer.number],
+                    nace.code,
+                    nace.name,
                     customer.number,
                 ),
             )

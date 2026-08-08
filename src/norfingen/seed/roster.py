@@ -264,6 +264,107 @@ CUSTOMER_PRICE_MULTIPLIER: dict[str, float] = {
 }
 
 
+# Dodatek — kody branżowe NACE/SN2007 (norweska klasyfikacja "næringskode",
+# zgodna z unijnym NACE Rev.2). Czysto opisowy dodatek metadanych — nie
+# wpływa na przychód/koszty/marżę, nie wymaga backfillu transakcyjnego.
+
+# Kod główny firmy — łączy S01 (Managed IT Support) + S02 (zarządzanie
+# Microsoft/Azure) + S03 (Cyberbezpieczeństwo). Realny odpowiednik: Garnes
+# Data AS, benchmark marżowy z Fazy 6, zarejestrowany pod 62.030 (bliższy
+# czystemu "drift"); 62.020 wybrany tu jako kod NADRZĘDNY, bo obejmuje
+# explicite i konsulting/zarządzanie IT, i drift systemów — pasuje do
+# całego portfela usług, nie tylko do S01.
+COMPANY_NACE_CODE = "62.020"
+COMPANY_NACE_NAME = "Konsulentvirksomhet tilknyttet informasjonsteknologi og forvaltning og drift av it-systemer"
+
+# Kod sekundarny (70.220, konsulting >20% przychodu) NIE dodany — S04
+# (Konsulting i digitalizacja) to ~1,9% przychodu 2025-2026 po obniżce ceny
+# w Fazie 6 (950 NOK/h), daleko poniżej progu 20% z zadania. Zweryfikowane
+# zapytaniem SQL na żywej bazie (order_lines JOIN products.service_code),
+# nie założone z poprzedniej (wyższej) ceny S04 sprzed tej fazy.
+COMPANY_NACE_SECONDARY_CODE: Optional[str] = None
+COMPANY_NACE_SECONDARY_NAME: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class NaceCode:
+    code: str
+    name: str
+
+
+# Kod branżowy per klient, dopasowany do rzeczywistej nazwy firmy (nie
+# losowo) — jeden z osobnym mapowaniem od CustomerSeed (jak
+# CUSTOMER_PRICE_MULTIPLIER wyżej), nie nowe pole na CustomerSeed, żeby
+# uniknąć zmiany sygnatury w 50 miejscach konstrukcji CUSTOMERS. Grupowanie
+# wg powtarzających się wzorców nazw (nie każdy klient unikalny sektor):
+# Energi -> 35.140, Finans -> 64.190, Logistikk/Transport -> 49.410,
+# Bygg -> 41.200, Industri/Teknikk -> 25.110, Elektro -> 43.210,
+# Verksted -> 45.200, Rådgivning/Konsult -> 70.220, Eiendom -> 68.100,
+# Maritime -> 50.200 (transport morski), Data -> 62.090 (inne usługi IT —
+# klienci nazwani "Data AS" to mniejsze firmy technologiczne kupujące nasz
+# S01/S02, nie sama nasza branża), Design -> 74.100, Havbruk -> 03.210
+# (akwakultura), Sjømat -> 10.200 (przetwórstwo rybne), Helse -> 86.909,
+# Handel -> 47.190, Partnere (kancelaria) -> 69.100, Gruppen (holding,
+# licencja bez wsparcia — wzorzec C) -> 70.100.
+CUSTOMER_NACE: dict[str, NaceCode] = {
+    "K01": NaceCode("25.110", "Produksjon av metallkonstruksjoner"),  # Bergström Industri
+    "K02": NaceCode("69.100", "Juridisk tjenesteyting"),  # Halvorsen & Partnere
+    "K03": NaceCode("35.140", "Handel med elektrisitet"),  # Nordkraft Energi
+    "K04": NaceCode("41.200", "Oppføring av bygninger"),  # Solberg Bygg
+    "K05": NaceCode("49.410", "Godstransport på vei"),  # Fjord Logistikk
+    "K06": NaceCode("70.220", "Bedriftsrådgivning og annen administrativ rådgivning"),  # Telemark Konsult
+    "K07": NaceCode("64.190", "Bankvirksomhet ellers"),  # Østfold Finans
+    "K08": NaceCode("86.909", "Andre helsetjenester"),  # Innlandet Helse
+    "K09": NaceCode("47.190", "Annen butikkhandel med bredt vareutvalg"),  # Vestfold Handel
+    "K10": NaceCode("70.100", "Hovedkontortjenester"),  # Kristiansen Gruppen (licencja-only, wzorzec C)
+    "K11": NaceCode("25.110", "Produksjon av metallkonstruksjoner"),  # Rogaland Teknikk
+    "K12": NaceCode("50.200", "Sjøtransport med gods"),  # Agder Maritime
+    "K13": NaceCode("25.110", "Produksjon av metallkonstruksjoner"),  # Trøndelag Industri
+    "K14": NaceCode("70.220", "Bedriftsrådgivning og annen administrativ rådgivning"),  # Sørlandet Rådgivning
+    "K15": NaceCode("43.210", "Elektrisk installasjonsarbeid"),  # Moss Elektro
+    "K16": NaceCode("50.200", "Sjøtransport med gods"),  # Vestland Maritime
+    "K17": NaceCode("68.100", "Kjøp og salg av egen fast eiendom"),  # Drammen Eiendom
+    "K18": NaceCode("62.090", "Andre tjenester tilknyttet informasjonsteknologi"),  # Larvik Data
+    "K19": NaceCode("49.410", "Godstransport på vei"),  # Sandefjord Transport
+    "K20": NaceCode("03.210", "Havbruk av fisk i sjøvann"),  # Nordland Havbruk
+    "K21": NaceCode("64.190", "Bankvirksomhet ellers"),  # Buskerud Finans
+    "K22": NaceCode("45.200", "Vedlikehold og reparasjon av motorvogner"),  # Gjøvik Verksted
+    "K23": NaceCode("25.110", "Produksjon av metallkonstruksjoner"),  # Møre Industri
+    "K24": NaceCode("49.410", "Godstransport på vei"),  # Hedmark Logistikk
+    "K25": NaceCode("74.100", "Spesialisert designvirksomhet"),  # Halden Design
+    "K26": NaceCode("25.110", "Produksjon av metallkonstruksjoner"),  # Kongsberg Teknikk
+    "K27": NaceCode("35.140", "Handel med elektrisitet"),  # Grenland Energi
+    "K28": NaceCode("10.200", "Bearbeiding og konservering av fisk, skalldyr og bløtdyr"),  # Molde Sjømat
+    "K29": NaceCode("41.200", "Oppføring av bygninger"),  # Steinkjer Bygg
+    "K30": NaceCode("70.220", "Bedriftsrådgivning og annen administrativ rådgivning"),  # Askøy Rådgivning
+    "K31": NaceCode("62.090", "Andre tjenester tilknyttet informasjonsteknologi"),  # Innlandet Data
+    "K32": NaceCode("64.190", "Bankvirksomhet ellers"),  # Harstad Finans
+    "K33": NaceCode("43.210", "Elektrisk installasjonsarbeid"),  # Narvik Elektro
+    "K34": NaceCode("49.410", "Godstransport på vei"),  # Kristiansund Transport
+    "K35": NaceCode("25.110", "Produksjon av metallkonstruksjoner"),  # Stjørdal Industri
+    "K36": NaceCode("68.100", "Kjøp og salg av egen fast eiendom"),  # Hønefoss Eiendom
+    "K37": NaceCode("49.410", "Godstransport på vei"),  # Sarpsborg Logistikk
+    "K38": NaceCode("45.200", "Vedlikehold og reparasjon av motorvogner"),  # Notodden Verksted
+    "K39": NaceCode("50.200", "Sjøtransport med gods"),  # Bodø Maritime
+    "K40": NaceCode("70.220", "Bedriftsrådgivning og annen administrativ rådgivning"),  # Tromsø Rådgivning
+    "K41": NaceCode("35.140", "Handel med elektrisitet"),  # Ålesund Energi
+    "K42": NaceCode("62.090", "Andre tjenester tilknyttet informasjonsteknologi"),  # Fredrikstad Data
+    "K43": NaceCode("41.200", "Oppføring av bygninger"),  # Kongsvinger Bygg
+    "K44": NaceCode("25.110", "Produksjon av metallkonstruksjoner"),  # Hamar Teknikk
+    "K45": NaceCode("64.190", "Bankvirksomhet ellers"),  # Bergen Finans
+    "K46": NaceCode("45.200", "Vedlikehold og reparasjon av motorvogner"),  # Lillestrøm Verksted
+    "K47": NaceCode("62.090", "Andre tjenester tilknyttet informasjonsteknologi"),  # Skien Data
+    "K48": NaceCode("43.210", "Elektrisk installasjonsarbeid"),  # Levanger Elektro
+    "K49": NaceCode("41.200", "Oppføring av bygninger"),  # Mo i Rana Bygg
+    "K50": NaceCode("74.100", "Spesialisert designvirksomhet"),  # Jessheim Design
+}
+
+
+def customer_nace(customer: CustomerSeed) -> NaceCode:
+    """Kod NACE/SN2007 klienta — zob. CUSTOMER_NACE."""
+    return CUSTOMER_NACE[customer.number]
+
+
 SUPPLIERS: list[SupplierSeed] = [
     SupplierSeed("L01", "Microsoft Norge AS", "Licencje software", 6410, "monthly_day_1", 85_000, 85_000),
     SupplierSeed("L02", "Telenor Norge AS", "Telekomunikacja", 6900, "monthly_day_5", 17_100, 18_900),

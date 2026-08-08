@@ -6,6 +6,18 @@ Opis wszystkich 20 tabel w schemacie Supabase (`src/norfingen/db/schema.sql`). W
 
 ---
 
+## Profil branżowy firmy (dodatek NACE/SN2007)
+
+Norwegia klasyfikuje firmy wg SN2007 (Standard for næringsgruppering), zgodnego z unijnym NACE Rev.2 — każda firma zarejestrowana w Brønnøysundregistrene ma przypisany kod branżowy (næringskode).
+
+**Kod główny firmy**: `roster.COMPANY_NACE_CODE` = **62.020** "Konsulentvirksomhet tilknyttet informasjonsteknologi og forvaltning og drift av it-systemer" — obejmuje explicite i konsulting/zarządzanie IT (S02, S04), i drift/wsparcie systemów (S01, S03), więc pasuje do całego portfela usług naraz, nie tylko do jednej. Realny odpowiednik z tego samego segmentu: **Garnes Data AS** (benchmark marżowy Fazy 6, zarejestrowany pod pokrewnym 62.030 "Forvaltning og drift av IT-systemer" — bliższym czystemu S01/drift).
+
+**Kod sekundarny**: brak (`COMPANY_NACE_SECONDARY_CODE = None`). Zadanie przewidywało dodanie 70.220 "Bedriftsrådgivning og annen administrativ rådgivning", jeśli S04 (konsulting) przekracza 20% przychodu — zweryfikowane zapytaniem SQL na żywej bazie (`order_lines` JOIN `products.service_code`, lata 2025-2026): S04 to **1,9%** przychodu, daleko poniżej progu (cena S04 obniżona w Fazie 6 do 950 NOK/h). Próg nieprzekroczony, kod sekundarny pominięty.
+
+Kody klientów: zob. sekcja `customers` niżej (`roster.CUSTOMER_NACE`).
+
+---
+
 ## Warstwa 1 — wymiary / referencje
 
 ### departments
@@ -57,12 +69,16 @@ Ograniczenie: brak odejść pracowników (rotacji kadry) — każdy zatrudniony 
 | **onboarding_date** | DATE | Data rozpoczęcia współpracy — klient nie generuje zamówień przed tą datą (Faza "realistyczny start firmy"). Faza 4: rozłożone 2023-2026 + kohorta fuzji (2022-09-01, 4 klientów, ta sama data co fuzja pracownicza) |
 | **churn_date** | DATE | Data zakończenia współpracy, NULL = nadal aktywny. K09 (2024-11-30) i K15 (2025-10-31, Faza 4) — oba SMB |
 | **price_multiplier** | NUMERIC(5,4) | Indywidualny mnożnik ceny ±8% (0.92-1.08), deterministyczny per klient — symuluje wynik negocjacji B2B |
+| **nace_code** | VARCHAR(10) | Kod branżowy SN2007/NACE klienta (dodatek NACE) — format "XX.XXX" |
+| **nace_name** | VARCHAR(200) | Nazwa branży wg SN2007 (po norwesku) |
 | organization_number, email, phone_number, address_line1, postal_code | TEXT | Nigdy wypełniane (NULL) |
 | is_private_individual | BOOLEAN | Zawsze `false` |
 | country_id, currency_id | INTEGER | Zawsze 161 (Norwegia) / 1 (NOK) |
 | invoices_due_in, invoices_due_in_type | INTEGER/TEXT | Kolumny istnieją, ale realny termin płatności per zamówienie jest w `orders.invoices_due_in` (per-order, nie per-customer) |
 
-**Pogrubione kolumny to dodatki Fazy 1** — populowane przez `seed_reference_data()`/`scripts/migrate_customer_metadata.py`, nie były częścią oryginalnego schematu. Ograniczenie: tylko 2 klienci mają churn (celowo niski, realistyczny wskaźnik, nie pełny model rotacji portfela).
+**Pogrubione kolumny to dodatki Fazy 1 (+ dodatek NACE dla `nace_code`/`nace_name`)** — populowane przez `seed_reference_data()`/`scripts/migrate_customer_metadata.py`, nie były częścią oryginalnego schematu. Ograniczenie: tylko 2 klienci mają churn (celowo niski, realistyczny wskaźnik, nie pełny model rotacji portfela).
+
+**Dodatek — kody branżowe NACE/SN2007** (`roster.CUSTOMER_NACE`, dict `customer_number -> NaceCode(code, name)`, nie osobne pole na `CustomerSeed` — analogicznie do `CUSTOMER_PRICE_MULTIPLIER`, żeby nie zmieniać sygnatury konstrukcji w 50 miejscach). Kod dopasowany do rzeczywistej nazwy firmy klienta (np. "Nordkraft Energi AS" → 35.140 Handel med elektrisitet, "Halden Design AS" → 74.100 Spesialisert designvirksomhet), nie losowo — 18 różnych sektorów wśród 50 klientów. Czysto opisowy dodatek, **nie wpływa na przychód/koszty/marżę**, nie wymaga backfillu transakcyjnego.
 
 **Faza 4 — dwie kohorty cenowe** (`roster.get_service_price_table()`/`service_by_code_for_customer()`): klienci onboardowani przed `CUSTOMER_PRICING_COHORT_CUTOFF` (2023-01-01, obejmuje K01-K12 + kohortę fuzji 2022-09) płacą ceny `LEGACY_SERVICES` (Faza 2), klienci od tej daty płacą `SCALE_SERVICES` (niżej, ~2,2x). Powód: jeden globalny cennik dla wszystkich 50 klientów przez całą historię 2019-2026 psuł retroaktywnie marżę — obniżka dla nowych klientów obniżała też przychód starych klientów w latach, gdy byli jedyną bazą przychodową. Zob. `services` niżej i `SESSION_HANDOFF.md` (Faza 4) po pełne uzasadnienie.
 
