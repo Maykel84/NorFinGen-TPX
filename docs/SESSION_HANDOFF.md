@@ -137,3 +137,81 @@ Niezależny od modelu finansowego dodatek metadanych — **nie zmienia cen/koszt
 - **Kod sekundarny**: pominięty — udział S04 (konsulting) w przychodzie 2025-2026 to **1,9%** (zweryfikowane SQL na żywej bazie, `order_lines` JOIN `products.service_code`), daleko poniżej progu 20% z zadania. Cena S04 obniżona w Fazie 6 do 950 NOK/h — sprawdzono aktualny stan, nie założono wyniku sprzed tej zmiany.
 - **Kody klientów**: `roster.CUSTOMER_NACE` — dict `customer_number -> NaceCode(code, name)` dla wszystkich 50 klientów (K01-K50), dopasowany do rzeczywistej nazwy firmy (nie losowo), 18 różnych sektorów. Nowe kolumny `customers.nace_code`/`customers.nace_name` (schema.sql, `seed_reference_data()`, `scripts/migrate_customer_metadata.py` — ten sam wzorzec `ON CONFLICT DO UPDATE` co pozostałe metadane Fazy 1).
 - **Weryfikacja**: `tests/test_nace_classification.py` (4 testy, 175/175 łącznie), migracja uruchomiona na żywej bazie, zapytanie kontrolne (rozkład przychodu per sektor) pokazuje sensowny podział bez braków (`nace_code IS NULL` → 0 wierszy).
+
+---
+
+## 10. Poprawki eksportu (`v5.7-export-bi-ready`) — ID kontrahentów, kody pocztowe, payroll per pracownik, ujednolicenie nazewnictwa
+
+Niezależny od modelu finansowego — **nie zmienia logiki generowania danych, cen ani kosztów**, wyłącznie `export_excel.py`/`export_csv.py`/`export_queries.py` + metadane adresowe. SQL zapytań wydzielony do `export_queries.py` (Faza 6, druga sesja) — ta zmiana edytuje tylko ten jeden plik, oba skrypty eksportu automatycznie dziedziczą poprawki.
+
+### 10a. Mapa zmian nazw kolumn (stara polska → nowa, Tripletex/DB-zgodna)
+
+**PL_miesiecznie:**
+| Stara nazwa | Nowa nazwa |
+|---|---|
+| `miesiac` | `month` |
+| `przychody` | `revenue` |
+| `koszty_pracownicze` | `labor_cost` |
+| `koszty_operacyjne` | `operating_cost` |
+| `wynik_operacyjny` | `operating_result` |
+| `cogs` | *(bez zmian — już angielskie z Fazy 6)* |
+
+**Faktury_sprzedazy:**
+| Stara nazwa | Nowa nazwa |
+|---|---|
+| `klient` | `customer_name` |
+| `ilosc` | `count` |
+| `cena_netto` | `unit_price_excluding_vat_currency` |
+| `wartosc_netto` | `amount_excluding_vat_currency` |
+| `wartosc_brutto` | `amount_currency` |
+| *(brak)* | **`customer_id`** (nowa kolumna, Zadanie 1) |
+| *(brak)* | **`postal_code`** (nowa kolumna, Zadanie 2) |
+| `order_id`, `order_date`, `invoice_date`, `customer_number`, `city` | bez zmian |
+
+**Faktury_zakupu:**
+| Stara nazwa | Nowa nazwa |
+|---|---|
+| `dostawca` | `supplier_name` |
+| `netto` | `amount_excluding_vat_currency` |
+| `vat` | `vat_amount_currency` |
+| `brutto` | `amount_currency` |
+| *(brak)* | **`supplier_id`** (nowa kolumna, Zadanie 1) |
+| *(brak)* | **`postal_code`** (nowa kolumna, Zadanie 2) |
+| `invoice_number`, `invoice_date`, `payment_due_date`, `status` | bez zmian |
+
+**Payroll_miesiecznie:**
+| Stara nazwa | Nowa nazwa |
+|---|---|
+| `miesiac` | `month` |
+| `data_wyplaty` | `date` |
+| `liczba_pracownikow` | `headcount` |
+| `laczne_netto` | `total_net_payroll` |
+
+**Postingi_GL:**
+| Stara nazwa | Nowa nazwa |
+|---|---|
+| `opis` | `description` |
+| `konto` | `account_number` |
+| `kwota` | `amount` |
+| `vat` | `vat_amount` |
+| `date`, `voucher_type`, `customer_id`, `supplier_id`, `employee_id` | bez zmian |
+
+**Nowy arkusz — Payroll_per_pracownik** (Zadanie 3, nazwa arkusza po polsku, jak zaznaczono w zadaniu — tylko kolumny są angielskie): `date`, `month`, `employee_id`, `employee_name`, `department_name`, `net_amount`, `gross_amount`, `tax_amount`.
+
+**Nazwy arkuszy (klucze `queries`/`QUERIES`) nie zmienione** — `PL_miesiecznie`, `Faktury_sprzedazy`, `Faktury_zakupu`, `Payroll_miesiecznie`, `Postingi_GL`, `Payroll_per_pracownik` — zgodnie z Zadaniem 0.
+
+### 10b. Świadome odstępstwa od podanych fragmentów kodu
+
+- **`ps.gross_amount`/`ps.tax_amount` z przykładu Zadania 3a NIE ISTNIEJĄ w `payslips`** (tabela ma tylko `amount` = netto, zob. `DATA_DICTIONARY.md`) — gross/tax policzone przez `LEFT JOIN` z `salary_specifications` zagregowanym per `payslip_id`: `gross_amount` = suma `wage_type_id IN (100, 260)` (Fast lønn + Feriepenger), `tax_amount` = `-SUM(wage_type_id = 920)` (Skattetrekk, przechowywane jako ujemne). Zob. `models/salary.py` dla stałych `WAGE_TYPE_*`.
+- **`e.department`/`e.role` z przykładu Zadania 3a NIE ISTNIEJĄ na `employees`** — tabela ma tylko `department_id` (FK), żadnej kolumny `role` w ogóle (rola istnieje wyłącznie w `EmployeeSeed.role` w Pythonie, nigdy nie była persystowana do Supabase). `department_name` doklejone przez `LEFT JOIN departments`; `role` **pominięte całkowicie** z eksportu — dodanie go wymagałoby rozszerzenia schematu (nowa kolumna na `employees`), co wykracza poza "poprawka eksportu" tego promptu.
+- **Wewnętrzne aliasy CTE w `PL_miesiecznie` też przepisane na angielski** (`przychody`→`revenue_cte`, `koszty`→`cost_cte`, `miesiac`→`month` w środku zapytania) — nie tylko finalne kolumny wyjściowe. Wychwycone przez `tests/test_export_naming.py::test_export_queries_use_consistent_naming` (sprawdza WSZYSTKIE aliasy `AS` w tekście SQL, nie tylko ostatni `SELECT`).
+- **`suppliers.postal_code` zostaje `NULL`** — `SupplierSeed` (roster.py) nigdy nie miał pola `city` (dostawcy nie mają przypisanego miasta w tym modelu, potwierdzone `DATA_DICTIONARY.md`), więc nie ma z czego wyprowadzić kodu pocztowego bez wymyślania nowych danych adresowych spoza zakresu zadania. Kolumna `suppliers.postal_code` (już istniała w schema.sql, nieużywana) zostaje pusta, udokumentowane świadomie.
+- **Żadnego `ALTER TABLE ... ADD COLUMN postal_code`** — `customers.postal_code`/`suppliers.postal_code` **już istniały** w oryginalnym `CREATE TABLE` (schema.sql), po prostu nigdy nie były wypełniane. Zadanie 2b z promptu było już zrealizowane wcześniej niż ten prompt zakładał.
+
+### 10c. Breaking change dla zewnętrznych narzędzi
+
+**Brak pliku dashboardu HTML w repo** (`find . -iname "*dashboard*"` → nic) — jeśli istnieje POZA repo (np. lokalnie u użytkownika, Tableau/Power BI z zapisanymi zapytaniami), **złamie się** przy odczycie starych polskich nazw kolumn (`klient`, `dostawca`, `wartosc_netto`, `wartosc_brutto`, `cena_netto`, `ilosc`, `przychody`, `koszty_pracownicze`, `koszty_operacyjne`, `wynik_operacyjny`, `miesiac`, `liczba_pracownikow`, `laczne_netto`, `opis`, `konto`) — zob. mapa w 10a. **Nie naprawiane w tym prompcie** (świadomie, zgodnie z zadaniem) — jeśli taki dashboard/raport istnieje, wymaga osobnej aktualizacji referencji do kolumn.
+
+### 10d. Weryfikacja
+
+`tests/test_export_naming.py` (4 testy, offline — sprawdza tekst `export_queries.QUERIES` i `roster.py`, bez połączenia do bazy, zgodnie z konwencją reszty pakietu testów) + **179/179 łącznie**. Migracja (`scripts/migrate_customer_metadata.py`) uruchomiona na żywej bazie — `customers.postal_code IS NULL` → 0 wierszy. Oba eksporty (`export_excel.py`, `export_csv.py`) wygenerowane i nagłówki sprawdzone programowo (`openpyxl`, brak GUI Excela w tym środowisku) — wszystkie 6 arkuszy mają spójne, angielskie nazwy kolumn.

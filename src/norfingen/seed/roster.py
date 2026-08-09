@@ -365,6 +365,64 @@ def customer_nace(customer: CustomerSeed) -> NaceCode:
     return CUSTOMER_NACE[customer.number]
 
 
+# Poprawki eksportu — kody pocztowe (postnummer) dla geokodowania w BI.
+# `customers.postal_code`/`suppliers.postal_code` już istnieją w schema.sql
+# (TEXT, część oryginalnego schematu) — nigdy nie były wypełniane. Realne
+# kody centrów miast/głównych urzędów pocztowych (Posten/Bring
+# postnummerregister), nie losowe. Tylko klienci — SupplierSeed nie ma pola
+# `city` (dostawcy nigdy nie mieli przypisanego miasta w tym modelu, zob.
+# DATA_DICTIONARY.md), więc nie ma z czego wyprowadzić kodu pocztowego dla
+# dostawców bez wymyślania nowych danych adresowych spoza zakresu tego
+# zadania — `suppliers.postal_code` zostaje NULL, świadomie udokumentowane
+# ograniczenie (nie przeoczenie).
+NORWEGIAN_POSTAL_CODES: dict[str, str] = {
+    "Oslo": "0150",
+    "Bergen": "5003",
+    "Trondheim": "7010",
+    "Stavanger": "4005",
+    "Tromsø": "9008",
+    "Kristiansand": "4611",
+    "Fredrikstad": "1607",
+    "Skien": "3717",
+    "Hamar": "2317",
+    "Tønsberg": "3111",
+    "Sandefjord": "3210",
+    "Bodø": "8005",
+    "Ålesund": "6002",
+    "Drammen": "3017",
+    "Kongsvinger": "2212",
+    "Mo i Rana": "8622",
+    "Notodden": "3671",
+    "Jessheim": "2050",
+    "Kristiansund": "6509",
+    "Arendal": "4836",
+    "Askøy": "5300",
+    "Elverum": "2408",
+    "Gjøvik": "2815",
+    "Halden": "1767",
+    "Harstad": "9405",
+    "Haugesund": "5527",
+    "Hønefoss": "3510",
+    "Kongsberg": "3611",
+    "Larvik": "3256",
+    "Levanger": "7600",
+    "Lillehammer": "2609",
+    "Lillestrøm": "2000",
+    "Molde": "6413",
+    "Moss": "1530",
+    "Narvik": "8514",
+    "Porsgrunn": "3915",
+    "Sarpsborg": "1721",
+    "Steinkjer": "7713",
+    "Stjørdal": "7500",
+}
+
+
+def customer_postal_code(customer: CustomerSeed) -> str:
+    """Kod pocztowy klienta na podstawie jego miasta — zob. NORWEGIAN_POSTAL_CODES."""
+    return NORWEGIAN_POSTAL_CODES[customer.city]
+
+
 SUPPLIERS: list[SupplierSeed] = [
     SupplierSeed("L01", "Microsoft Norge AS", "Licencje software", 6410, "monthly_day_1", 85_000, 85_000),
     SupplierSeed("L02", "Telenor Norge AS", "Telekomunikacja", 6900, "monthly_day_5", 17_100, 18_900),

@@ -18,7 +18,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from norfingen.db.repository import get_connection  # noqa: E402
-from norfingen.seed.roster import CUSTOMER_NACE, CUSTOMER_PRICE_MULTIPLIER, CUSTOMERS, SERVICES  # noqa: E402
+from norfingen.seed.roster import (  # noqa: E402
+    CUSTOMER_NACE,
+    CUSTOMER_PRICE_MULTIPLIER,
+    CUSTOMERS,
+    NORWEGIAN_POSTAL_CODES,
+    SERVICES,
+)
 
 
 def migrate_customer_metadata() -> None:
@@ -33,7 +39,8 @@ def migrate_customer_metadata() -> None:
                        segment = %s,
                        price_multiplier = %s,
                        nace_code = %s,
-                       nace_name = %s
+                       nace_name = %s,
+                       postal_code = %s
                    WHERE customer_number = %s""",
                 (
                     customer.onboarding_date,
@@ -42,6 +49,7 @@ def migrate_customer_metadata() -> None:
                     CUSTOMER_PRICE_MULTIPLIER[customer.number],
                     nace.code,
                     nace.name,
+                    NORWEGIAN_POSTAL_CODES[customer.city],
                     customer.number,
                 ),
             )

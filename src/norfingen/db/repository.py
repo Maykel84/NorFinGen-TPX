@@ -40,6 +40,7 @@ from norfingen.seed.roster import (
     CUSTOMERS,
     DEPARTMENTS,
     EMPLOYEES,
+    NORWEGIAN_POSTAL_CODES,
     PRODUCTS,
     PROJECTS,
     SERVICES,
@@ -218,25 +219,27 @@ def seed_reference_data() -> None:
 
         for customer in CUSTOMERS:
             nace = CUSTOMER_NACE[customer.number]
+            postal_code = NORWEGIAN_POSTAL_CODES[customer.city]
             cur.execute(
                 """INSERT INTO customers
                        (id, name, customer_number, city, country_id, currency_id,
                         onboarding_date, churn_date, segment, price_multiplier,
-                        nace_code, nace_name)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        nace_code, nace_name, postal_code)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                        onboarding_date = EXCLUDED.onboarding_date,
                        churn_date = EXCLUDED.churn_date,
                        segment = EXCLUDED.segment,
                        price_multiplier = EXCLUDED.price_multiplier,
                        nace_code = EXCLUDED.nace_code,
-                       nace_name = EXCLUDED.nace_name""",
+                       nace_name = EXCLUDED.nace_name,
+                       postal_code = EXCLUDED.postal_code""",
                 (
                     numeric_id(customer.number), customer.name, customer.number, customer.city,
                     NORWAY_COUNTRY_ID, NOK_CURRENCY_ID,
                     customer.onboarding_date, customer.churn_date, customer.segment,
                     CUSTOMER_PRICE_MULTIPLIER[customer.number],
-                    nace.code, nace.name,
+                    nace.code, nace.name, postal_code,
                 ),
             )
 

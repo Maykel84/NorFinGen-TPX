@@ -71,12 +71,13 @@ Ograniczenie: brak odejść pracowników (rotacji kadry) — każdy zatrudniony 
 | **price_multiplier** | NUMERIC(5,4) | Indywidualny mnożnik ceny ±8% (0.92-1.08), deterministyczny per klient — symuluje wynik negocjacji B2B |
 | **nace_code** | VARCHAR(10) | Kod branżowy SN2007/NACE klienta (dodatek NACE) — format "XX.XXX" |
 | **nace_name** | VARCHAR(200) | Nazwa branży wg SN2007 (po norwesku) |
-| organization_number, email, phone_number, address_line1, postal_code | TEXT | Nigdy wypełniane (NULL) |
+| **postal_code** | TEXT | Kod pocztowy (postnummer) na podstawie `city` — realne kody Posten/Bring (`roster.NORWEGIAN_POSTAL_CODES`), poprawka eksportu, format "XXXX" |
+| organization_number, email, phone_number, address_line1 | TEXT | Nigdy wypełniane (NULL) |
 | is_private_individual | BOOLEAN | Zawsze `false` |
 | country_id, currency_id | INTEGER | Zawsze 161 (Norwegia) / 1 (NOK) |
 | invoices_due_in, invoices_due_in_type | INTEGER/TEXT | Kolumny istnieją, ale realny termin płatności per zamówienie jest w `orders.invoices_due_in` (per-order, nie per-customer) |
 
-**Pogrubione kolumny to dodatki Fazy 1 (+ dodatek NACE dla `nace_code`/`nace_name`)** — populowane przez `seed_reference_data()`/`scripts/migrate_customer_metadata.py`, nie były częścią oryginalnego schematu. Ograniczenie: tylko 2 klienci mają churn (celowo niski, realistyczny wskaźnik, nie pełny model rotacji portfela).
+**Pogrubione kolumny to dodatki Fazy 1 (+ dodatek NACE dla `nace_code`/`nace_name`, + poprawka eksportu dla `postal_code`)** — populowane przez `seed_reference_data()`/`scripts/migrate_customer_metadata.py`. `postal_code` jako kolumna **istniała już w oryginalnym schemacie** (`schema.sql`), tylko nigdy nie była wypełniana — poprawka eksportu (2026-07) dodała jej wypełnianie, nie samą kolumnę. Ograniczenie: tylko 2 klienci mają churn (celowo niski, realistyczny wskaźnik, nie pełny model rotacji portfela).
 
 **Dodatek — kody branżowe NACE/SN2007** (`roster.CUSTOMER_NACE`, dict `customer_number -> NaceCode(code, name)`, nie osobne pole na `CustomerSeed` — analogicznie do `CUSTOMER_PRICE_MULTIPLIER`, żeby nie zmieniać sygnatury konstrukcji w 50 miejscach). Kod dopasowany do rzeczywistej nazwy firmy klienta (np. "Nordkraft Energi AS" → 35.140 Handel med elektrisitet, "Halden Design AS" → 74.100 Spesialisert designvirksomhet), nie losowo — 18 różnych sektorów wśród 50 klientów. Czysto opisowy dodatek, **nie wpływa na przychód/koszty/marżę**, nie wymaga backfillu transakcyjnego.
 
@@ -93,6 +94,8 @@ Ograniczenie: brak odejść pracowników (rotacji kadry) — każdy zatrudniony 
 | country_id, currency_id | INTEGER | Zawsze 161 / 1 |
 
 Znaczenie biznesowe: 8 dostawców kosztowych (Microsoft, Telenor, Reitan, Statsbygg, Sandvik, Thommessen, Avis, Nordic Insurance) — każdy z własnym rytmem fakturowania i wariancją kwot (Q1/Q3 wyższe u Avis, sezonowość Sandvik).
+
+**`postal_code` zostaje NULL nawet po poprawce eksportu (2026-07)** — `SupplierSeed` (roster.py) nigdy nie miał pola `city` (w przeciwieństwie do `CustomerSeed`), więc nie ma z czego wyprowadzić kodu pocztowego bez wymyślania nowych danych adresowych. Świadome ograniczenie, nie przeoczenie — zob. `SESSION_HANDOFF.md` p. 10.
 
 ### vat_types
 | Kolumna | Typ | Opis |
