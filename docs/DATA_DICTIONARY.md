@@ -323,13 +323,24 @@ Znaczenie biznesowe: kontener godzin konsultanckich per klient — używany wył
 
 ---
 
+## Dostęp read-only (BI / Power BI, Krok 2)
+
+Dwie role, warstwowo:
+
+- **`analyst`** (`NOLOGIN`) — czysto techniczna, definiuje docelowy zestaw uprawnień: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (20 tabel — 14 z aktywną polityką RLS `USING (true)`, 6 referencyjnych bez RLS: `accounts`, `departments`, `products`, `vat_types`, `employments`, `salary_specifications`) + `ALTER DEFAULT PRIVILEGES` (przyszłe tabele automatycznie czytelne, bez ręcznego GRANT-a przy każdej migracji).
+- **`powerbi_reader`** (`LOGIN`, `CONNECTION LIMIT 3`) — realna rola do faktycznego logowania z Power BI (lub dowolnego innego narzędzia BI). Dziedziczy komplet uprawnień/polityk `analyst` przez `GRANT analyst TO powerbi_reader` — nic nie jest duplikowane. Utworzona/rotowana przez `scripts/setup_powerbi_reader.py` (hasło generowane losowo za każdym uruchomieniem, wypisywane TYLKO na stdout, nigdy nie trafia do repo/`.env`).
+
+**Connection string dla Power BI Desktop** (Get Data → PostgreSQL database): host/port/dbname z `DATABASE_URL`, ale **username musi być w formacie poolera Supabase** `powerbi_reader.<project_ref>` (nie sam `powerbi_reader`) — `scripts/setup_powerbi_reader.py` wypisuje gotowy, poprawny username. Wymagane `Encrypt connection` (SSL).
+
+Zweryfikowane działanie (nie tylko konfiguracja): połączenie jako `powerbi_reader` poprawnie **czyta** tabele RLS i referencyjne, i poprawnie **odrzuca** próbę zapisu (`INSERT` → `InsufficientPrivilege: permission denied for table orders`).
+
 ## Znane ograniczenia całościowe
 
 1. **Brak postingów przychodowych** (konta 3000/3100) — zob. nagłówek dokumentu. Przychód wyłącznie w `orders`/`order_lines`.
 2. **`bank_transactions` wymaga ręcznego doreperowania po każdym `TRUNCATE`** — `scripts/fix_outgoing_transactions.py` uzupełnia historyczne OUTGOING, ale trzeba go uruchomić po każdym pełnym resecie danych.
 3. **Metadane Fazy 1** (`customers.segment/onboarding_date/churn_date/price_multiplier`, `services`, `products.service_code`) istniały wcześniej **tylko w Pythonie** (`roster.py`) — teraz są też w Supabase, ale historyczne zapytania/dashboardy pisane przed Fazą 1 mogły je pomijać.
 4. **`projects.start_date` = `customers.onboarding_date` od Fazy 4** (przed Fazą 4 było niezależne, statyczne 2026-01-01/03-01 — ograniczenie NAPRAWIONE, zostawione w historii jako przykład wcześniejszej pomyłki projektowej).
-5. **RLS włączone bez własnych polityk zapisu** — tylko `postgres` (bypass RLS) może pisać; rola `analyst` ma czysty odczyt (SELECT) na 14 tabelach transakcyjnych/referencyjnych.
+5. **RLS włączone bez własnych polityk zapisu** — tylko `postgres` (bypass RLS) może pisać; rola `analyst` ma czysty odczyt (SELECT) na 14 tabelach transakcyjnych/referencyjnych z RLS + 6 tabelach referencyjnych bez RLS (20 łącznie — zob. "Dostęp read-only" niżej). **Krok 2 (2026-07) naprawił lukę z Fazy 1**: same polityki RLS nie wystarczały do odczytu — brakowało bazowego `GRANT SELECT`, więc `analyst` (i dziedzicząca po niej `powerbi_reader`) dostawałaby "permission denied" na każdym zapytaniu mimo poprawnych polityk.
 6. **Brak rotacji kadry** (`employments.end_date` zawsze NULL) i **niski churn klientów** (K09, K15 — oba SMB) — model celowo prosty, nie pełna symulacja dynamiki portfela.
 7. **`services` tabela pokazuje tylko `LEGACY_SERVICES`** (Faza 4) — `SCALE_SERVICES` (ceny dla klientów onboardowanych od 2023-01-01) istnieje tylko w kodzie Python, nie w Supabase. Zob. sekcja `services` i `customers` wyżej.
 8. **Extra-consulting (S04 poza K06) nie działa w trybie dziennym `run_daily.py`** — `should_generate_extra_consulting`/K06-style consulting działają tylko w `generate_monthly_orders` (backfill historyczny), nie w rytmie dziennym produkcyjnym. Zob. `SESSION_HANDOFF.md` (Faza 2).

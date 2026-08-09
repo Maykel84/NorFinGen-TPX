@@ -215,3 +215,25 @@ Niezależny od modelu finansowego — **nie zmienia logiki generowania danych, c
 ### 10d. Weryfikacja
 
 `tests/test_export_naming.py` (4 testy, offline — sprawdza tekst `export_queries.QUERIES` i `roster.py`, bez połączenia do bazy, zgodnie z konwencją reszty pakietu testów) + **179/179 łącznie**. Migracja (`scripts/migrate_customer_metadata.py`) uruchomiona na żywej bazie — `customers.postal_code IS NULL` → 0 wierszy. Oba eksporty (`export_excel.py`, `export_csv.py`) wygenerowane i nagłówki sprawdzone programowo (`openpyxl`, brak GUI Excela w tym środowisku) — wszystkie 6 arkuszy mają spójne, angielskie nazwy kolumn.
+
+---
+
+## 11. Krok 2 — dostęp read-only gotowy pod Power BI
+
+**Odkrycie przy okazji weryfikacji (Zadanie 1c)**: RLS z Fazy 1 miał komplet poprawnych polityk `SELECT` na dokładnie 14 tabelach z promptu (zweryfikowane `pg_policies` na żywej bazie — nic nie brakowało), **ale rola `analyst` nigdy nie dostała bazowego `GRANT SELECT`** — `information_schema.role_table_grants` dla `analyst` był pusty. RLS filtruje wiersze, nie zastępuje uprawnień tabelowych — bez GRANT-a każde zapytanie kończyłoby się `permission denied` zanim RLS w ogóle by się uruchomił. `analyst` była więc od Fazy 1 rolą deklaratywnie poprawną, ale funkcjonalnie bezużyteczną do odczytu (niewidoczne wcześniej, bo `NOLOGIN` — nikt się nią nie logował).
+
+Naprawione w `schema.sql` (idempotentne, bezpieczne do wielokrotnego `ensure_schema()`):
+```sql
+GRANT USAGE ON SCHEMA public TO analyst;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analyst;
+```
+`ALL TABLES` (nie lista 14 z promptu) — świadome rozszerzenie: objęło też 6 tabel referencyjnych bez RLS (`accounts`, `departments`, `products`, `vat_types`, `employments`, `salary_specifications`), bez których Power BI nie mogłoby np. rozwiązać nazw kont przy rozbiciu kosztów czy nazw działów przy payrollu — bez tych tabel eksport BI byłby technicznie "read-only", ale praktycznie bezużyteczny do analizy. `ALTER DEFAULT PRIVILEGES` pilnuje, żeby przyszłe tabele (kolejne fazy) nie wymagały ręcznego GRANT-a.
+
+**`powerbi_reader`** — nowa rola `LOGIN`, `CONNECTION LIMIT 3`, dziedziczy `analyst` przez `GRANT analyst TO powerbi_reader` (żadnej duplikacji polityk). Tworzona/rotowana przez `scripts/setup_powerbi_reader.py` — hasło losowe (32 znaki, `secrets`), wypisywane WYŁĄCZNIE na stdout, nigdy do pliku. **Hasło pokazane w tej sesji użytkownikowi bezpośrednio w terminalu — nie zapisane tutaj ani nigdzie w repo.** Każde ponowne uruchomienie skryptu rotuje hasło (poprzednie przestaje działać) — świadomy, bezpieczny sposób na "zapomniałem/skompromitowane hasło", nie bug.
+
+**Świadome odstępstwo od promptu**: pominięty jawny `ALTER ROLE powerbi_reader WITH NOCREATEDB NOCREATEROLE NOSUPERUSER` (był w pierwszej wersji skryptu) — Supabase'owa rola `postgres`, którą łączy się ten projekt, nie jest prawdziwym superuserem (ma tylko `CREATEROLE`), więc Postgres odrzucał tę komendę (`Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute`) i wywalał całą transakcję (DDL w Postgresie jest transakcyjne — nic się nie zapisywało, zweryfikowane `SELECT * FROM pg_roles` po błędzie). Usunięte jako zbędne: świeżo utworzona `CREATE ROLE ... WITH LOGIN` i tak domyślnie nie ma żadnego z tych atrybutów.
+
+**Weryfikacja end-to-end** (nie tylko "GRANT się wykonał") — połączenie jako `powerbi_reader` z prawdziwym hasłem: `SELECT COUNT(*) FROM orders` (RLS) i `SELECT COUNT(*) FROM accounts`/`departments` (referencyjne, bez RLS) działają; `INSERT INTO orders (...)` poprawnie odrzucony (`InsufficientPrivilege`). Test wykonany przez rotację hasła w locie (żeby nie zostawiać działającego hasła w historii poleceń/logach) — finalne, aktualne hasło wygenerowane osobnym, czystym uruchomieniem skryptu po teście.
+
+**Connection string dla Power BI** — `username` musi być w formacie poolera Supabase `powerbi_reader.<project_ref>`, NIE sam `powerbi_reader` — skrypt wypisuje to poprawnie sformatowane. Zob. `DATA_DICTIONARY.md` (sekcja "Dostęp read-only") po pełne instrukcje Power BI Desktop.

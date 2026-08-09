@@ -373,3 +373,22 @@ DROP POLICY IF EXISTS analyst_read_only ON services;
 CREATE POLICY analyst_read_only ON services FOR SELECT TO analyst USING (true);
 DROP POLICY IF EXISTS analyst_read_only ON projects;
 CREATE POLICY analyst_read_only ON projects FOR SELECT TO analyst USING (true);
+
+-- ─────────────────────────────────────────────────── Krok 2 — dostęp read-only (Power BI)
+--
+-- Polityki RLS wyżej FILTRUJĄ wiersze, ale NIE nadają samego prawa odczytu —
+-- bez GRANT SELECT Postgres odrzuca zapytanie ZANIM RLS w ogóle się uruchomi
+-- ("permission denied for table"). Faza 1 utworzyła rolę `analyst` i komplet
+-- polityk, ale nigdy nie nadała jej GRANT-ów, więc rola była nieużywalna do
+-- faktycznego czytania danych (nie było to widoczne, bo nikt się nią nie
+-- logował — jest NOLOGIN). Naprawione tutaj.
+--
+-- GRANT ... ON ALL TABLES (nie lista tabel po przecinku) — obejmuje też
+-- tabele referencyjne bez RLS (accounts, departments, products, vat_types,
+-- employments, salary_specifications), niezbędne do analizy P&L w BI
+-- (np. nazwy kont do rozbicia kosztów, działy do payrollu). ALTER DEFAULT
+-- PRIVILEGES pilnuje, żeby przyszłe tabele też były od razu czytelne dla
+-- analysta — bez tego każda nowa tabela wymagałaby ręcznego GRANT-a.
+GRANT USAGE ON SCHEMA public TO analyst;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analyst;
