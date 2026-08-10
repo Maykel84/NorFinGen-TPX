@@ -334,6 +334,24 @@ Dwie role, warstwowo:
 
 Zweryfikowane działanie (nie tylko konfiguracja): połączenie jako `powerbi_reader` poprawnie **czyta** tabele RLS i referencyjne, i poprawnie **odrzuca** próbę zapisu (`INSERT` → `InsufficientPrivilege: permission denied for table orders`).
 
+### Widoki BI (Krok 2, Zadanie 2)
+
+Trzy płaskie widoki (`CREATE OR REPLACE VIEW ... WITH (security_invoker = true)`, PG15+/Supabase PG17) — Power BI dostaje gotowe tabele zamiast pisania JOIN-ów przy każdym raporcie:
+
+| Widok | Źródło | Uwaga |
+|---|---|---|
+| `v_sales_flat` | `orders` JOIN `customers` JOIN `order_lines` | `amount_including_vat_currency` to **alias** kolumny `order_lines.amount_currency` (nie rename — zob. niżej) |
+| `v_pl_monthly` | `orders`/`order_lines` (revenue) FULL OUTER JOIN `vouchers`/`postings` (koszty) | Ten sam wzorzec co `export_queries.PL_miesiecznie` |
+| `v_headcount_monthly` | `hour_entries` | Liczy tylko pracowników **billable** (logujących godziny) — niedoszacowuje prawdziwy headcount o role wspierające (Salg/Økonomi) |
+
+Wszystkie trzy: `GRANT SELECT ... TO analyst` (dziedziczone przez `powerbi_reader`).
+
+**Dwa świadome odstępstwa od szkicu SQL z promptu** (nie kopiowane bezrefleksyjnie):
+1. `v_pl_monthly` liczy `revenue` z `orders`/`order_lines`, **nie** z `postings` (`account_number BETWEEN 3000 AND 3999`, jak sugerował szkic) — te postingi nigdy nie istnieją w tej bazie (zweryfikowane: 0 wierszy), zob. nagłówek tego dokumentu. Kopiowanie szkicu 1:1 dałoby widok zawsze zwracający `revenue = NULL`.
+2. `v_sales_flat.amount_including_vat_currency` to alias, nie fizyczny rename `order_lines.amount_currency` — "Koszyk 1" (rename kolumny na zgodną z realnym Tripletex API) był tylko **proponowany**, nigdy jawnie zaakceptowany ani wykonany w generatorach/testach. Widok daje poprawną nazwę w BI już teraz bez ryzykownej zmiany fizycznego schematu.
+
+**`security_invoker = true`** na wszystkich trzech — bez tego widok domyślnie czyta tabele źródłowe z uprawnieniami *właściciela widoku* (`postgres`, który omija RLS), nie roli faktycznie odpytującej. Dziś polityki są `USING (true)` więc nie zmienia to widocznych danych, ale zapobiega cichemu ominięciu RLS przez widok, gdyby ktoś kiedyś dodał faktycznie filtrującą politykę.
+
 ## Znane ograniczenia całościowe
 
 1. **Brak postingów przychodowych** (konta 3000/3100) — zob. nagłówek dokumentu. Przychód wyłącznie w `orders`/`order_lines`.

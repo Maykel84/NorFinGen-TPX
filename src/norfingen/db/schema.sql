@@ -392,3 +392,90 @@ CREATE POLICY analyst_read_only ON projects FOR SELECT TO analyst USING (true);
 GRANT USAGE ON SCHEMA public TO analyst;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analyst;
+
+-- ─────────────────────────────────────────────────── Krok 2, Zadanie 2 — widoki BI
+--
+-- Dwa świadome odstępstwa od szkicu w prompcie (nie kopiowane bezrefleksyjnie):
+--
+-- 1. v_pl_monthly NIE liczy przychodu z postings (account_number 3000-3999) —
+--    te postingi NIGDY nie istnieją w tej bazie (zweryfikowane: 0 wierszy).
+--    Powód udokumentowany na samej górze DATA_DICTIONARY.md od początku
+--    projektu: Order.invoiceDate w prawdziwym Tripletex automatycznie tworzy
+--    Voucher przychodowy — NorFinGen nie wywołuje realnego API, więc ten
+--    Voucher nigdy nie powstaje lokalnie. Przychód ZAWSZE liczy się z
+--    orders/order_lines, nigdy z postings (ten sam wzorzec co
+--    export_queries.PL_miesiecznie — CTE revenue z order_lines FULL OUTER
+--    JOIN CTE kosztów z postings). Kopiowanie szkicu 1:1 dałoby widok, który
+--    zawsze zwraca revenue=NULL.
+--
+-- 2. v_sales_flat.amount_including_vat_currency to ALIAS kolumny fizycznej
+--    order_lines.amount_currency, NIE rename tej kolumny — "Koszyk 1"
+--    (rename order_lines.amount_currency -> amount_including_vat_currency,
+--    zgodnie z realną nazwą pola OrderLine w Tripletex API) był tylko
+--    PROPONOWANY w tej sesji, nigdy jawnie zaakceptowany przez użytkownika
+--    ani wykonany w kodzie/generatorach/testach. Ten widok daje poprawną,
+--    Tripletex-zgodną nazwę w BI już teraz, bez ryzykownej zmiany fizycznego
+--    schematu/generatorów w tle. Jeśli Koszyk 1 zostanie kiedyś wykonany,
+--    ten alias stanie się zbędny (kolumna źródłowa już będzie się tak
+--    nazywać) — do wtedy zostaje jako pomost.
+--
+-- security_invoker=true (PG15+, Supabase = PG17) na wszystkich trzech
+-- widokach — bez tego widok domyślnie czyta tabele źródłowe z
+-- uprawnieniami WŁAŚCICIELA widoku (postgres, który omija RLS), nie
+-- roli faktycznie odpytującej (analyst/powerbi_reader) — znany "RLS
+-- bypass przez widok" w Postgresie. Dziś polityki są USING (true), więc
+-- widoczne dane są identyczne niezależnie od trybu, ale bez tej flagi
+-- każda przyszła, faktycznie filtrująca polityka RLS zostałaby po cichu
+-- ominięta przy odpytywaniu przez widok zamiast tabeli wprost.
+CREATE OR REPLACE VIEW v_sales_flat WITH (security_invoker = true) AS
+SELECT o.id AS order_id, o.customer_id, o.order_date, o.invoice_date,
+       c.name AS customer_name, c.customer_number, c.segment,
+       c.city, c.postal_code, c.nace_code, c.nace_name,
+       ol.count, ol.unit_price_excluding_vat_currency,
+       ol.amount_excluding_vat_currency,
+       ol.amount_currency AS amount_including_vat_currency
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+JOIN order_lines ol ON ol.order_id = o.id;
+
+CREATE OR REPLACE VIEW v_pl_monthly WITH (security_invoker = true) AS
+WITH revenue_cte AS (
+    SELECT DATE_TRUNC('month', o.order_date) AS month_start,
+           SUM(ol.amount_excluding_vat_currency) AS revenue
+    FROM orders o JOIN order_lines ol ON ol.order_id = o.id
+    GROUP BY 1
+),
+cost_cte AS (
+    SELECT DATE_TRUNC('month', v.date) AS month_start,
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 5000 AND 5999) AS labor_cost,
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 6000 AND 7999) AS operating_cost,
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 4000 AND 4999) AS cogs
+    FROM vouchers v JOIN postings p ON p.voucher_id = v.id
+    GROUP BY 1
+)
+SELECT TO_CHAR(COALESCE(r.month_start, c.month_start), 'YYYY-MM') AS month,
+       ROUND(COALESCE(r.revenue, 0), 2)         AS revenue,
+       ROUND(COALESCE(c.labor_cost, 0), 2)      AS labor_cost,
+       ROUND(COALESCE(c.operating_cost, 0), 2)  AS operating_cost,
+       ROUND(COALESCE(c.cogs, 0), 2)            AS cogs,
+       ROUND(COALESCE(r.revenue, 0)
+           - COALESCE(c.labor_cost, 0)
+           - COALESCE(c.operating_cost, 0)
+           - COALESCE(c.cogs, 0), 2)            AS operating_result
+FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month_start = c.month_start
+ORDER BY 1;
+
+-- v_headcount_monthly liczy TYLKO pracowników billable, którzy faktycznie
+-- logują hour_entries (Leveranse/Teknologi, bez E05 — zob. hours_generator.py)
+-- — Salg/Økonomi (5 z 17 etatów w Fazie 6) nigdy nie mają wpisów godzin, więc
+-- ten widok NIEDOSZACOWUJE prawdziwy headcount firmy. Zostawione zgodnie ze
+-- szkicem z promptu (poprawne SQL, zgodne nazwy kolumn) — to świadomy
+-- kompromis nazwany "active_employees" (godzinowo aktywni), nie "headcount"
+-- w sensie kadrowym; jeśli potrzebny prawdziwy headcount kadrowy, właściwe
+-- źródło to employments.start_date (jak roster.active_employees() w Pythonie),
+-- nie hour_entries.
+CREATE OR REPLACE VIEW v_headcount_monthly WITH (security_invoker = true) AS
+SELECT TO_CHAR(date, 'YYYY-MM') AS month, COUNT(DISTINCT employee_id) AS active_employees
+FROM hour_entries GROUP BY 1 ORDER BY 1;
+
+GRANT SELECT ON v_sales_flat, v_pl_monthly, v_headcount_monthly TO analyst;
