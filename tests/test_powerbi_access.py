@@ -4,6 +4,7 @@ ktoś w przyszłości usunął GRANT z schema.sql, `analyst`/`powerbi_reader`
 wróciłyby do stanu "polityki RLS poprawne, ale funkcjonalnie bezużyteczne"
 (zob. SESSION_HANDOFF.md p. 11)."""
 
+import re
 from pathlib import Path
 
 SCHEMA_SQL = (Path(__file__).resolve().parents[1] / "src" / "norfingen" / "db" / "schema.sql").read_text()
@@ -47,3 +48,19 @@ def test_bi_views_use_security_invoker():
 
 def test_bi_views_granted_to_analyst():
     assert "GRANT SELECT ON v_sales_flat, v_pl_monthly, v_headcount_monthly TO analyst" in SCHEMA_SQL
+
+
+def test_connection_test_script_never_takes_password_as_cli_arg():
+    """Zadanie 3b — odstępstwo od szkicu w prompcie: hasło w argv trafiłoby
+    do historii powłoki / listy procesów. Musi przyjść z env albo getpass."""
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "test_powerbi_connection.py").read_text()
+    assert "getpass" in script
+    assert "POWERBI_READER_PASSWORD" in script
+
+
+def test_powerbi_connection_doc_has_no_hardcoded_password():
+    doc = (Path(__file__).resolve().parents[1] / "docs" / "POWERBI_CONNECTION.md").read_text()
+    assert "przekazane bezpiecznie, nie w tym dokumencie" in doc
+    # heurystyka: hasła generowane przez setup_powerbi_reader.py mają charakterystyczne
+    # znaki specjalne obok siebie w krótkim tokenie — dokument nie powinien takiego zawierać
+    assert not re.search(r"Password.*:\s*\S{20,}", doc)
