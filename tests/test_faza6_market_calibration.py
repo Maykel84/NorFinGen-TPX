@@ -1,5 +1,5 @@
 import random
-from datetime import date
+from datetime import date, timedelta
 
 from norfingen.generators.backfill import DEFAULT_START_DATE, run_backfill
 from norfingen.generators.hours_generator import (
@@ -21,6 +21,27 @@ from norfingen.seed.roster import (
 # ten zakres, backfill NIE powinien być uruchamiany bez ponownej kalibracji.
 MARGIN_SAFETY_LOW = 0.055
 MARGIN_SAFETY_HIGH = 0.09
+
+
+def last_fully_closed_month_end(today: date) -> date:
+    """Ostatni dzień poprzedniego miesiąca kalendarzowego — gwarantuje, że
+    payroll dla tego miesiąca już zdążył się zaksięgować.
+
+    DLACZEGO to ograniczenie istnieje (nie usuwać / nie zastępować
+    `date.today()` z powrotem): lista płac księguje się JEDNORAZOWO, na
+    ostatni dzień roboczy miesiąca (`should_generate_monthly_salary`) —
+    trwający, jeszcze niezakończony miesiąc ma więc payroll=0, mimo że jego
+    opex/COGS (księgowane 1. dnia miesiąca) i część przychodu już istnieją.
+    To tymczasowo, sztucznie ZAWYŻA marżę tego miesiąca (brakuje mu
+    największej pojedynczej pozycji kosztowej) i ciągnie w górę całoroczną
+    marżę kumulatywną — niezależnie od tego, czy cokolwiek w kalibracji się
+    zmieniło. Zaobserwowane na żywo 2026-08-17: marża 2026 przez lipiec
+    (miesiące w pełni zamknięte) = 7,47% (w progu), ale z doliczonym
+    trwającym sierpniem (payroll=0, ale pełny COGS/opex + połowa przychodu)
+    skoczyła do 9,12%+ (poza górną granicą) — czysty artefakt dnia
+    uruchomienia testu, nie regresja modelu finansowego."""
+    first_of_this_month = today.replace(day=1)
+    return first_of_this_month - timedelta(days=1)
 
 
 def test_azure_cogs_scales_with_s02_clients():
@@ -52,9 +73,16 @@ def test_headcount_matches_realistic_target():
 def test_margin_within_safety_threshold_2025_2026():
     """Regresja kalibracji Fazy 6 (2. próba, COGS S01+S02) — offline
     sanity-check wykonany PRZED backfillem wykazał marżę 2025 (pełny rok) i
-    2026 (częściowy, do rzeczywistego cutoff) w zakresie 5,5-9%. Ten test
-    zamraża tamten wynik jako regresję: jeśli ktoś zmieni ceny/COGS/headcount
-    bez ponownej kalibracji, test się wywali zamiast cichego rozjazdu marży."""
+    2026 (do ostatniego W PEŁNI zamkniętego miesiąca) w zakresie 5,5-9%. Ten
+    test zamraża tamten wynik jako regresję: jeśli ktoś zmieni ceny/COGS/
+    headcount bez ponownej kalibracji, test się wywali zamiast cichego
+    rozjazdu marży.
+
+    end_date ograniczony do last_fully_closed_month_end() — NIE
+    `date.today()` — zob. docstring tamtej funkcji: trwający miesiąc zawsze
+    tymczasowo zawyża marżę (payroll księguje się dopiero na jego koniec),
+    co dawało fałszywe alarmy zależne wyłącznie od dnia uruchomienia testu,
+    nie od faktycznego stanu kalibracji."""
     revenue: dict[int, float] = {}
     payroll: dict[int, float] = {}
     opex: dict[int, float] = {}
@@ -79,7 +107,11 @@ def test_margin_within_safety_threshold_2025_2026():
                 elif 4000 <= n <= 4999:
                     cogs[year] = cogs.get(year, 0.0) + p.amount
 
-    run_backfill(start_date=DEFAULT_START_DATE, persist_fn=collect)
+    run_backfill(
+        start_date=DEFAULT_START_DATE,
+        end_date=last_fully_closed_month_end(date.today()),
+        persist_fn=collect,
+    )
 
     for year in (2025, 2026):
         r = revenue[year]
