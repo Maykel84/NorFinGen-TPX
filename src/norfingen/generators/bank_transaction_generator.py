@@ -17,6 +17,25 @@ Wzorce DR/CR:
     DR 2400 Leverandørgjeld           +kwota
     CR 1910 Bankinnskudd driftskonto -kwota
     date = payment_due_date
+
+  Wypłata payrollu (Krok 2 — naprawa luki: payroll nigdy nie generował
+  transakcji bankowej, od Tier 2, nie regresja Fazy 6):
+    DR 2710 Skyldig lønn               +netto pracowników
+    DR 2740 Skyldig skattetrekk        +skattetrekk (jeśli >0, nie zawsze — np.
+                                          długoletni pracownicy w czerwcu mają 0)
+    DR 2700 Skyldig arbeidsgiveravgift +AGA
+    CR 1910 Bankinnskudd driftskonto   -suma
+    date = salary_transaction.date (dzień wypłaty = dzień odpływu z banku,
+           w przeciwieństwie do faktur nie ma tu osobnego terminu płatności)
+
+    Świadome uproszczenie (jak dopuszczał prompt Kroku 2): JEDNA
+    zagregowana transakcja/miesiąc (netto+skattetrekk+AGA razem), nie trzy
+    osobne do trzech różnych odbiorców (pracownicy / Skatteetaten x2) — to
+    właściwe rozliczenie wymagałoby też modelowania przesuniętego w czasie
+    terminu przekazania skattetrekk/AGA do urzędu (w Norwegii zwykle 15.
+    dnia miesiąca NASTĘPUJĄCEGO po wypłacie, nie tego samego dnia), co
+    wykracza poza zakres tej naprawy (ona dotyczy TEGO, że transakcja w
+    ogóle nie istniała, nie precyzyjnego rozbicia w czasie).
 """
 
 from __future__ import annotations
@@ -27,12 +46,17 @@ from typing import Optional
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
 from norfingen.models.order import Order, OrderStatus
+from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import customer_by_id
 
 ACCOUNT_BANK = 1910  # Bankinnskudd, driftskonto
 ACCOUNT_KUNDEFORDRINGER = 1500
 ACCOUNT_LEVERANDORGJELD = 2400
+ACCOUNT_SKYLDIG_LONN = 2710
+ACCOUNT_SKYLDIG_SKATTETREKK = 2740
+ACCOUNT_SKYLDIG_AGA = 2700
+PAYROLL_LIABILITY_ACCOUNTS = (ACCOUNT_SKYLDIG_LONN, ACCOUNT_SKYLDIG_SKATTETREKK, ACCOUNT_SKYLDIG_AGA)
 
 OVERDUE_PAYMENT_DELAY_DAYS = 90  # OVERDUE płaci payment_terms + 90 dni, nie na czas
 
@@ -155,3 +179,64 @@ def build_outgoing_payment(invoice: SupplierInvoice) -> tuple[BankTransaction, V
     )
     assert_voucher_valid(voucher)
     return transaction, voucher
+
+
+def generate_payroll_bank_transaction(
+    transaction: SalaryTransaction, vouchers: list[Voucher]
+) -> Optional[tuple[BankTransaction, Voucher]]:
+    """Firma wypłaca listę płac — wypływ z konta bankowego (Krok 2, naprawa
+    luki: payroll nigdy nie generował BankTransaction, zob. moduł-level
+    docstring). Kwoty NIE liczone od nowa — wyciągnięte z postingów
+    zobowiązaniowych (2710/2740/2700) `vouchers` zwróconych przez
+    `salary_generator.generate_monthly_salary()` (te same dwa vouchery co
+    zawsze: lista płac + AGA), żeby wypłata gwarantowanie zgadzała się co
+    do grosza z tym, co faktycznie zaksięgowano jako zobowiązanie — nie ma
+    ryzyka rozjazdu przez duplikowanie logiki obliczeniowej.
+
+    `transaction.id` MUSI być już prawdziwym ID z bazy (nie None) — wołający
+    ustawia je po `save_salary()` (zob. `run_daily.py`) albo po ręcznym
+    dociągnięciu z bazy (zob. `scripts/fix_missing_payroll_transactions.py`).
+
+    Zwraca None jeśli w `vouchers` nie ma żadnego postingu zobowiązaniowego
+    (nie powinno się zdarzyć dla prawdziwej listy płac — zabezpieczenie na
+    pusty/zerowy miesiąc)."""
+    assert transaction.id is not None, "generate_payroll_bank_transaction: transaction.id musi być ustawione (prawdziwe ID z bazy)"
+
+    owed_by_account: dict[int, float] = {}
+    for voucher in vouchers:
+        for posting in voucher.postings:
+            account_number = posting.account.number
+            if account_number in PAYROLL_LIABILITY_ACCOUNTS and posting.amount < 0:
+                owed_by_account[account_number] = owed_by_account.get(account_number, 0.0) - posting.amount
+
+    total = round(sum(owed_by_account.values()), 2)
+    if total <= 0:
+        return None
+
+    payment_date = transaction.date
+    month_label = payment_date.strftime("%B %Y")
+
+    bank_transaction = BankTransaction(
+        date=payment_date,
+        amount=total,
+        transaction_type=BankTransactionType.OUTGOING,
+        description=f"Lønnsutbetaling {month_label}",
+        salary_transaction_id=transaction.id,
+        account_from=ACCOUNT_SKYLDIG_LONN,
+        account_to=ACCOUNT_BANK,
+    )
+
+    postings = [
+        Posting(date=payment_date, account=acct(account_number), amount=round(owed, 2))
+        for account_number, owed in sorted(owed_by_account.items())
+    ]
+    postings.append(Posting(date=payment_date, account=acct(ACCOUNT_BANK), amount=-total))
+
+    voucher = Voucher(
+        date=payment_date,
+        description=f"Lønnsutbetaling {month_label}",
+        voucherType=VoucherType.BANK,
+        postings=postings,
+    )
+    assert_voucher_valid(voucher)
+    return bank_transaction, voucher

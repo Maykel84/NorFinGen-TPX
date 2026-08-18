@@ -252,3 +252,46 @@ def test_save_all_accepts_dict():
     reconstructed = repository._model_from_dict(as_dict)
     assert reconstructed.voucherType == voucher.voucherType
     assert len(reconstructed.postings) == len(voucher.postings)
+
+
+def test_prune_orphaned_employees_deletes_stale_ids():
+    """Regresja incydentu Fazy 6 — 21 osieroconych rekordów employees
+    (E18-E38) przetrwały TRUNCATE (który świadomie pomija tabele
+    referencyjne), bo ON CONFLICT DO NOTHING w seed_reference_data() tylko
+    dodaje nowych pracowników, nigdy nie usuwa tych, którzy wypadli z
+    roster.EMPLOYEES. Mockowany kursor (bez żywej bazy, zob. nagłówek pliku)
+    — symuluje bazę z 3 dodatkowymi ID (18, 19, 20) spoza aktualnego 17-osobowego
+    rosteru i sprawdza, że _prune_orphaned_employees() wydaje poprawne DELETE."""
+    from norfingen.db import repository
+    from norfingen.seed.roster import EMPLOYEES, numeric_id
+
+    current_ids = {numeric_id(e.number) for e in EMPLOYEES}
+    fake_db_ids = sorted(current_ids | {18, 19, 20})
+
+    cur = FakeCursor()
+    cur.fetchall_queue = [[(i,) for i in fake_db_ids]]
+
+    orphaned = repository._prune_orphaned_employees(cur)
+
+    assert orphaned == [18, 19, 20]
+    delete_statements = [sql for sql, _ in cur.executed if sql.strip().upper().startswith("DELETE")]
+    assert any("employments" in sql for sql in delete_statements)
+    assert any("FROM employees" in sql for sql in delete_statements)
+    assert cur.executed[-1][1] == (orphaned,)  # parametry ostatniego DELETE = lista osieroconych ID
+
+
+def test_prune_orphaned_employees_no_op_when_db_matches_roster():
+    """Gdy baza już zgadza się z roster.EMPLOYEES (stan po naprawie) —
+    zero DELETE-ów, idempotentne przy każdym kolejnym uruchomieniu."""
+    from norfingen.db import repository
+    from norfingen.seed.roster import EMPLOYEES, numeric_id
+
+    current_ids = sorted({numeric_id(e.number) for e in EMPLOYEES})
+
+    cur = FakeCursor()
+    cur.fetchall_queue = [[(i,) for i in current_ids]]
+
+    orphaned = repository._prune_orphaned_employees(cur)
+
+    assert orphaned == []
+    assert not any(sql.strip().upper().startswith("DELETE") for sql, _ in cur.executed)

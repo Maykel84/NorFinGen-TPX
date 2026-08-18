@@ -19,11 +19,14 @@ wywołują ją zawsze, idempotentnie, na wszelki wypadek pustej bazy).
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional, Union
 
 import psycopg2
+
+logger = logging.getLogger("norfingen.repository")
 
 from norfingen.config import settings
 from norfingen.generators.bank_transaction_generator import OVERDUE_PAYMENT_DELAY_DAYS
@@ -161,6 +164,28 @@ def ensure_schema() -> None:
     conn.commit()
 
 
+def _prune_orphaned_employees(cur) -> list[int]:
+    """Usuwa z employees/employments rekordy, których ID wypadło z aktualnego
+    roster.EMPLOYEES — bez tego INSERT ... ON CONFLICT DO NOTHING (niżej)
+    dodaje nowych pracowników, ale nigdy nie usuwa starych, gdy roster się
+    kurczy (dokładnie to się stało w Fazie 6: 38→17, a TRUNCATE świadomie
+    pomija tabele referencyjne jak employees/customers — zob.
+    SESSION_HANDOFF.md, incydent "osierocone rekordy employees").
+
+    Bezpieczne z konstrukcji: employee_id na payslips/postings/hour_entries
+    nie ma ON DELETE CASCADE (zwykłe REFERENCES) — gdyby kiedyś jakiś
+    osierocony ID miał jednak prawdziwe dane transakcyjne, Postgres odrzuci
+    DELETE naruszeniem FK zamiast po cichu skasować dane."""
+    current_ids = {numeric_id(e.number) for e in EMPLOYEES}
+    cur.execute("SELECT id FROM employees")
+    db_ids = {row[0] for row in cur.fetchall()}
+    orphaned = sorted(db_ids - current_ids)
+    if orphaned:
+        cur.execute("DELETE FROM employments WHERE employee_id = ANY(%s)", (orphaned,))
+        cur.execute("DELETE FROM employees WHERE id = ANY(%s)", (orphaned,))
+    return orphaned
+
+
 def seed_reference_data() -> None:
     """Zasila tabele referencyjne Warstwy 1 z norfingen.seed.roster + statyczny
     plan kont/kody MVA. Idempotentne (ON CONFLICT DO NOTHING) — bezpieczne do
@@ -169,6 +194,10 @@ def seed_reference_data() -> None:
 
     conn = get_connection()
     with conn.cursor() as cur:
+        orphaned = _prune_orphaned_employees(cur)
+        if orphaned:
+            logger.info("seed_reference_data: usunięto %d osieroconych rekordów employees: %s", len(orphaned), orphaned)
+
         for d in DEPARTMENTS:
             cur.execute(
                 "INSERT INTO departments (id, name, number) VALUES (%s, %s, %s) "
@@ -406,7 +435,7 @@ def _save_supplier_invoice(cur, invoice: SupplierInvoice) -> None:
     )
 
 
-def _save_salary_transaction(cur, transaction: SalaryTransaction) -> None:
+def _save_salary_transaction(cur, transaction: SalaryTransaction) -> int:
     transaction_id = _upsert_get_id(
         cur,
         """INSERT INTO salary_transactions (date, year, month, status)
@@ -437,6 +466,8 @@ def _save_salary_transaction(cur, transaction: SalaryTransaction) -> None:
                    ON CONFLICT (payslip_id, wage_type_id) DO NOTHING""",
                 (payslip_id, spec.wageType.id, spec.description, spec.amount),
             )
+
+    return transaction_id
 
 
 def _save_voucher(cur, voucher: Voucher) -> int:
@@ -526,8 +557,8 @@ def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Option
     cur.execute(
         """INSERT INTO bank_transactions
                (date, amount, transaction_type, description, customer_id, supplier_id,
-                order_id, supplier_invoice_id, account_from, account_to, voucher_id)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                order_id, supplier_invoice_id, salary_transaction_id, account_from, account_to, voucher_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT DO NOTHING""",
         (
             transaction.date,
@@ -538,6 +569,7 @@ def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Option
             transaction.supplier_id,
             transaction.order_id,
             transaction.supplier_invoice_id,
+            transaction.salary_transaction_id,
             transaction.account_from,
             transaction.account_to,
             voucher_id,
@@ -580,13 +612,24 @@ def save_hour_entries(entries: list[HourEntry]) -> None:
     conn.commit()
 
 
-def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> None:
+def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> int:
     """Zapisuje SalaryTransaction (+payslips+specifications) i odpowiadające
     Vouchery (lista płac, AGA, ew. feriepenger) — para zwracana przez
-    generate_monthly_salary()."""
-    save_all(transaction)
+    generate_monthly_salary(). Zwraca prawdziwe (z bazy) `salary_transactions.id`
+    — Krok 2: potrzebne wołającemu (run_daily.py) do zbudowania
+    `generate_payroll_bank_transaction()`, której `salary_transaction_id`
+    FK wymaga rzeczywistego ID, nie `None` ze świeżo wygenerowanego obiektu.
+    Woła `_save_salary_transaction()` bezpośrednio zamiast przez `save_all()`
+    właśnie po to, żeby dostać ten zwracany ID (save_all() ma jednolitą
+    sygnaturę `persist_fn(obj) -> None` używaną jako callback w backfill.py,
+    nie może zwracać różnych typów zależnie od klasy `data`)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        transaction_id = _save_salary_transaction(cur, transaction)
+    conn.commit()
     for voucher in vouchers:
         save_all(voucher)
+    return transaction_id
 
 
 ORDER_PAYMENT_LOOKBACK_DAYS = MAX_PAYMENT_TERMS_DAYS + OVERDUE_PAYMENT_DELAY_DAYS  # OVERDUE płaci +90 dni później

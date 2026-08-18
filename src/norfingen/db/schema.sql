@@ -294,6 +294,28 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS price_multiplier NUMERIC(5,4);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS nace_code VARCHAR(10);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS nace_name VARCHAR(200);
 
+-- Krok 2 — naprawa: payroll (SalaryTransaction) nigdy nie generował
+-- odpowiadającej transakcji bankowej OUTGOING (luka od Tier 2, nie
+-- regresja Fazy 6 — zob. SESSION_HANDOFF.md). FK jawny (nie dopasowanie po
+-- opisie tekstowym ILIKE), analogicznie do order_id/supplier_invoice_id.
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS salary_transaction_id INTEGER REFERENCES salary_transactions(id);
+
+-- ADD CONSTRAINT nie wspiera IF NOT EXISTS w Postgresie — DO blok, ten sam
+-- wzorzec co CREATE POLICY (DROP IF EXISTS) niżej w tym pliku. UNIQUE
+-- potrzebne żeby ON CONFLICT DO NOTHING w _save_bank_transaction() było
+-- idempotentne dla płatności payrollowych (ponowne uruchomienie backfillu
+-- dla tego samego miesiąca nie tworzy duplikatu).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'bank_transactions_salary_unique'
+    ) THEN
+        ALTER TABLE bank_transactions
+            ADD CONSTRAINT bank_transactions_salary_unique UNIQUE (date, salary_transaction_id, transaction_type);
+    END IF;
+END
+$$;
+
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_lines_order ON order_lines(order_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier ON supplier_invoices(supplier_id);

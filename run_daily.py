@@ -44,7 +44,10 @@ from norfingen.db.repository import (  # noqa: E402
     save_salary,
     seed_reference_data,
 )
-from norfingen.generators.bank_transaction_generator import generate_daily_bank_transactions  # noqa: E402
+from norfingen.generators.bank_transaction_generator import (  # noqa: E402
+    generate_daily_bank_transactions,
+    generate_payroll_bank_transaction,
+)
 from norfingen.generators.hours_generator import generate_daily_hours  # noqa: E402
 from norfingen.generators.order_generator import generate_daily_orders  # noqa: E402
 from norfingen.generators.salary_generator import generate_monthly_salary  # noqa: E402
@@ -107,8 +110,19 @@ def run_daily(target_date: Optional[date] = None, skip_setup: bool = False) -> d
     # ten dzień faktycznie już minął (should_generate_monthly_salary — Faza 5a).
     if target_date == last_working_day(year, month) and should_generate_monthly_salary(year, month):
         salary_txn, vouchers = generate_monthly_salary(year, month)
-        save_salary(salary_txn, vouchers)
+        transaction_id = save_salary(salary_txn, vouchers)
         stats["salary"] = 1
+
+        # Krok 2 — naprawa: payroll wypłacony tego samego dnia = odpływ z
+        # banku (dawniej brakowało tego kroku w ogóle, zob.
+        # bank_transaction_generator.generate_payroll_bank_transaction).
+        # transaction_id to prawdziwe ID z bazy (save_salary je zwraca) —
+        # potrzebne do FK salary_transaction_id.
+        salary_txn.id = transaction_id
+        payroll_payment = generate_payroll_bank_transaction(salary_txn, vouchers)
+        if payroll_payment is not None:
+            save_bank_transactions([payroll_payment])
+            stats["bank_transactions"] += 1
 
     logger.info("run_daily %s: %s", target_date.isoformat(), stats)
     return stats

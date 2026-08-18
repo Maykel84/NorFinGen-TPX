@@ -31,5 +31,6 @@ class BankTransaction(BaseModel):
     supplier_id: Optional[int] = None  # jeśli płatność do dostawcy
     order_id: Optional[int] = None  # powiązana faktura sprzedaży
     supplier_invoice_id: Optional[int] = None  # powiązana faktura zakupu
+    salary_transaction_id: Optional[int] = None  # powiązana lista płac (Krok 2, naprawa payroll OUTGOING)
     account_from: int  # konto źródłowe
     account_to: int  # konto docelowe
