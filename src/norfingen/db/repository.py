@@ -92,6 +92,10 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     # Faza 6 — COGS pass-through S01 (narzędzia RMM/PSA, licencje ticketing,
     # EDR/antywirus odsprzedawane klientom, sprzęt zapasowy — zob. roster.calc_s01_cogs_monthly).
     (4292, "Driftskostnad Managed IT Support (RMM/EDR/verktøy)", "OPERATING_EXPENSE", None),
+    # Faza 7, Zadanie 3c — UNPROFITABLE_QUARTER: jednorazowy koszt opex
+    # (company_events.ACCOUNT_UNEXPECTED_COST), księgowany przez
+    # _simple_cost_voucher (bez VAT, jak 7350/7420) — stąd vat_type_id=None.
+    (7790, "Annen driftskostnad", "OPERATING_EXPENSE", None),
 ]
 
 # (id, name, number, percentage, vat_code) — id zgodny z TripletexRef(id=...)

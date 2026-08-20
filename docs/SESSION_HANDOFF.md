@@ -483,3 +483,13 @@ Wszystkie w progu bezpieczeństwa 5,5-9%.
 | 2025-09 | SUPPLIER_RENEGOTIATION | L01 Microsoft, -1,8% |
 
 Żadne zdarzenie BANKRUPTCY poza K12, żadna renegocjacja poza L01/2025-09 — jedna SUPPLIER_RENEGOTIATION (2026-09, dostawca L07 +2,2%) wypada POZA zasięgiem backfillu (po lipcu 2026), świadomie wykluczona z tej listy (zob. `scripts/log_life_events.py` — filtruje do cutoffu, żeby log pokazywał wyłącznie to, co faktycznie trafi do bazy).
+
+### 13i. Incydent podczas produkcyjnego backfillu — brakujące konto 7790 (2026-08-20)
+
+Użytkownik wykonał pełną sekwencję (`daily.yml` disabled, `TRUNCATE`, `run_backfill.py --start 2019-01-01`) — **backfill wywalił się z `psycopg2.errors.ForeignKeyViolation`** na pierwszym `UNPROFITABLE_QUARTER` (kwiecień 2020): `Key (account_number)=(7790) is not present in table "accounts"`.
+
+**Przyczyna**: konto 7790 ("Annen driftskostnad", Zadanie 3c) zostało zdefiniowane jako stała w `company_events.py`, ale **nigdy nie dodane do `repository.ACCOUNTS_SEED`** — tabeli referencyjnej, którą `seed_reference_data()` wypełnia na starcie każdego uruchomienia. Offline sanity-check (Zadanie 5) tego nie złapał, bo `run_backfill(persist_fn=collect)` w pamięci nigdy nie dotyka prawdziwej bazy ani jej ograniczeń FK — dziura w metodologii testowej tej fazy: **testy jednostkowe/offline weryfikują logikę generatorów, nie zgodność z rzeczywistym schematem bazy**. Żadna z poprzednich faz nie miała tego problemu, bo nowe konta (4291, 4292 w Fazie 6) były dodawane do `ACCOUNTS_SEED` przy okazji, tu to zwyczajnie przeoczone.
+
+**Naprawa**: `(7790, "Annen driftskostnad", "OPERATING_EXPENSE", None)` dodane do `ACCOUNTS_SEED` (`repository.py`). Zweryfikowano na żywej bazie po crashu: **brak osieroconych rekordów** (dane 2019-01→2020-04 kompletne aż do etapu opex miesiąca kwietnia, kolejność w `generate_and_persist_month`: orders→invoices→salary→opex — salary kwietnia 2020 już zapisane, crash na pierwszym voucherze opex tego miesiąca, żaden posting/voucher nie osierocony). Ponowne uruchomienie `run_backfill.py --start 2019-01-01` jest bezpieczne bez powtórnego `TRUNCATE` — `seed_reference_data()`/`ON CONFLICT DO NOTHING` na już zapisanych miesiącach są idempotentne.
+
+**Do zrobienia w przyszłości**: rozważyć dodanie testu, który realnie weryfikuje że każde konto użyte w generatorach (`grep` po stałych `ACCOUNT_*`) istnieje w `repository.ACCOUNTS_SEED` — zapobiegłoby dokładnie tej klasie błędu bez potrzeby dotykania żywej bazy.
