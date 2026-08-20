@@ -38,6 +38,7 @@ from norfingen.generators.client_events import (
     effective_customer_services,
     event_aware_is_customer_active,
 )
+from norfingen.generators.company_events import ACCOUNT_UNEXPECTED_COST, unprofitable_quarter_cost_spike
 from norfingen.generators.order_generator import apply_annual_inflation
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.seed.payroll import active_employees, first_working_day_of_month
@@ -238,5 +239,15 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
                 customer.onboarding_date, ACCOUNT_SERVICE_EQUIPMENT,
                 f"Driftsmateriell for kundeleveranse — {customer.number}", equipment_cost,
             ))
+
+    # Faza 7, Zadanie 3c — UNPROFITABLE_QUARTER: jednorazowy wzrost kosztu
+    # opex, zaksięgowany DOKŁADNIE w wylosowanym miesiącu (nie powtarzany co
+    # miesiąc kwartału — to redukcja ticketów w hours_generator jest
+    # rozciągnięta na cały kwartał, koszt jest "jednorazowy" per zadanie).
+    cost_spike = unprofitable_quarter_cost_spike(year, month)
+    if cost_spike is not None:
+        vouchers.append(_simple_cost_voucher(
+            on_date, ACCOUNT_UNEXPECTED_COST, f"Uforutsett driftskostnad — svakt kvartal {month_label}", cost_spike,
+        ))
 
     return vouchers

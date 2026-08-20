@@ -16,11 +16,12 @@ import calendar
 import random
 from datetime import date, timedelta
 
+from norfingen.generators.company_events import equipment_investment_trigger, supplier_cost_multiplier
 from norfingen.generators.order_generator import apply_annual_inflation
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid, expected_vat_amount
 from norfingen.models.base import TripletexRef
 from norfingen.models.supplier_invoice import SupplierInvoice
-from norfingen.seed.roster import SUPPLIERS, SupplierSeed, numeric_id
+from norfingen.seed.roster import SUPPLIERS, SupplierSeed, numeric_id, supplier_by_number
 
 GROSS_UP_FACTOR = 1.25  # amountCurrency (incl. VAT) = netto * 1.25, VAT 25%
 PAID_AFTER_DAYS = 45  # faktury z payment_due_date starszym niż 45 dni → PAID
@@ -91,12 +92,17 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
     for supplier in SUPPLIERS:
         seq = month  # jedna faktura per miesiąc dla większości dostawców -> wystarczy numer miesiąca
 
+        # Faza 7, Zadanie 3c — SUPPLIER_RENEGOTIATION: mnożnik trwały od
+        # miesiąca renegocjacji (company_events.supplier_cost_multiplier),
+        # 1.0 (bez zmian) dla dostawców, którzy nigdy nie byli renegocjowani.
+        renegotiation_multiplier = supplier_cost_multiplier(supplier.number, year, month)
+
         if supplier.number == "L01":
             invoice_date = _month_day(year, month, 1)
             payment_due = invoice_date + timedelta(days=30)
             paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
             for idx, cost_line in enumerate(MICROSOFT_COST_LINES, start=1):
-                netto = round(apply_annual_inflation(cost_line["base_monthly"], year), 2)
+                netto = round(apply_annual_inflation(cost_line["base_monthly"], year) * renegotiation_multiplier, 2)
                 account_number = _account_for_invoice(supplier, netto)
                 invoices.append(SupplierInvoice(
                     invoiceNumber=f"{supplier.number}-{year}-{month:02d}-{idx}",
@@ -138,7 +144,7 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
         else:
             raise ValueError(f"Nieznany dostawca: {supplier.number}")
 
-        netto = round(netto, 2)
+        netto = round(netto * renegotiation_multiplier, 2)
         account_number = _account_for_invoice(supplier, netto)
         payment_due = invoice_date + timedelta(days=30)
         paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
@@ -153,6 +159,27 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
             status="PAID" if paid else "UNPAID",
         )
         invoices.append(invoice)
+
+    # Faza 7, Zadanie 3c — EQUIPMENT_INVESTMENT: jednorazowy zakup L05 poza
+    # zwykłym harmonogramem 3-5x/rok (sandvik_months), zawsze >= progu
+    # kapitalizacji (80k-250k >> 30k) — trafia na konto 1200 automatycznie
+    # przez _account_for_invoice, tak jak każda inna faktura L05.
+    equipment_amount = equipment_investment_trigger(year, month)
+    if equipment_amount is not None:
+        l05 = supplier_by_number("L05")
+        invoice_date = _month_day(year, month, 28)
+        account_number = _account_for_invoice(l05, equipment_amount)
+        payment_due = invoice_date + timedelta(days=30)
+        paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
+        invoices.append(SupplierInvoice(
+            invoiceNumber=f"L05-{year}-{month:02d}-EQUIP",
+            supplier=TripletexRef(id=numeric_id("L05")),
+            invoiceDate=invoice_date,
+            amountCurrency=round(equipment_amount * GROSS_UP_FACTOR, 2),
+            account=TripletexRef(id=account_number),
+            comment="Utstyrsinvestering (uforutsett)",
+            status="PAID" if paid else "UNPAID",
+        ))
 
     return invoices
 

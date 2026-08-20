@@ -33,6 +33,7 @@ import random
 from datetime import date, timedelta
 
 from norfingen.generators.client_events import event_aware_is_customer_active, hardship_ticket_multiplier_for
+from norfingen.generators.company_events import unprofitable_quarter_ticket_multiplier
 from norfingen.generators.seasonality import fellesferie_activity_multiplier
 from norfingen.models.hours import ActivityType, HourEntry
 from norfingen.seed.roster import (
@@ -203,9 +204,14 @@ def generate_daily_support_hours(
     # lipcu (uwolnione godziny trafiają do INTERNAL, zob. internal_hours
     # niżej). Czysto realizm hour_entries — jak reszta tego modelu, nie ma
     # wpływu na przychód/payroll (zob. docstring modułu).
+    # Faza 7, Zadanie 3c — UNPROFITABLE_QUARTER: dodatkowy, firmowy (nie
+    # per-klient jak TEMPORARY_HARDSHIP) mnożnik 0,85-0,95 przez cały
+    # kwartał — mnoży się z fellesferie, jeśli oba akurat trafią ten sam
+    # miesiąc (niezależne zdarzenia, brak przesłanki żeby się wykluczały).
     target_billable = (
         rng.uniform(TICKET_TARGET_BILLABLE_MIN, TICKET_TARGET_BILLABLE_MAX)
         * fellesferie_activity_multiplier(on_date.month)
+        * unprofitable_quarter_ticket_multiplier(on_date.year, on_date.month)
     )
     n_clients_today = min(len(assigned_customers), rng.randint(TICKET_CLIENTS_PER_DAY_MIN, TICKET_CLIENTS_PER_DAY_MAX))
     todays_clients = rng.sample(assigned_customers, n_clients_today)
