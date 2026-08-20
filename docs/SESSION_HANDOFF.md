@@ -375,3 +375,53 @@ Cztery testy referencyjne z zadania zaadaptowane do rzeczywistego API (`roll_cli
 **224/224 testów offline** (`pytest -q`).
 
 **Backfill na żywej bazie wciąż NIE wykonany** — Zadanie 4 to testy, nie nowa funkcjonalność biznesowa, ale zasada "backfill dopiero na końcu CAŁEJ fazy" zostaje aktualna do wyraźnego potwierdzenia użytkownika.
+
+### 13f. Faza 7, Zadanie 5 — finalny offline sanity-check (OBOWIĄZKOWY), 2026-08-20
+
+Pełny `run_backfill()` w pamięci, 2019 - ostatni w pełni zamknięty miesiąc (2026-07), marża i wariancja miesięczna per rok:
+
+| Rok | Przychód | Marża | StdDev marży miesięcznej (pkt. proc.) |
+|---|---|---|---|
+| 2019 | 7 306 506 | -25,67% | 73,81* |
+| 2020 | 18 151 002 | 20,57% | 5,57 |
+| 2021 | 20 019 397 | 17,30% | 5,01 |
+| 2022 | 23 382 082 | 11,61% | 5,70 |
+| 2023 | 32 154 882 | 8,04% | 3,37 |
+| 2024 | 38 193 105 | 7,00% | 5,28 |
+| 2025 | 43 579 585 | 6,06% | 5,05 |
+| 2026 | 29 693 022 (częściowy, do lipca) | 7,03% | 4,83 |
+
+*2019: pierwsze miesiące (styczeń-luty) mają koszt (payroll pierwszych pracowników) bez przychodu (pierwszy klient dopiero marzec) — skrajne wartości procentowe miesięczne, nie błąd.
+
+**WYNIK: PASS** — wszystkie lata dojrzałe (2023-2026) w progu 5,5-9%, bez korekty prawdopodobieństw/kwot z Zadań 1-4. Widoczna zwiększona zmienność miesiąc-do-miesiąca (3,4-5,7 pkt. proc. w latach dojrzałych) — dowód że dane są mniej liniowe niż przed Fazą 7 (poprzednie fazy nie miały tego rodzaju szumu wewnątrzrocznego poza sezonowością Q2/Q4/lipiec).
+
+**Przy okazji znaleziony i naprawiony błąd w skrypcie diagnostycznym tego sanity-checku** (nie w kodzie produkcyjnym): pierwsza wersja pomijała miesiące z kosztem, ale bez przychodu (styczeń/luty 2019, przed pierwszym klientem) przez `if key not in revenue_m: continue` — to fałszywie zaniżało sumę kosztów całego roku (2019 pokazywał -17,6% zamiast poprawnych -25,67%, potwierdzonych zgodnością z wcześniejszymi checkpointami z Zadań 2/3). Naprawione iterowaniem po sumie kluczy z WSZYSTKICH czterech słowników (revenue/payroll/opex/cogs), nie tylko revenue.
+
+**Log faktycznie wylosowanych zdarzeń**: `scripts/log_life_events.py` → `docs/faza7_life_events_log.csv` (29 zdarzeń, 2019 - lipiec 2026: 22 klienckie, 7 firmowych — pełna lista z kwotami/usługami w pliku CSV, podsumowanie w `docs/DATA_DICTIONARY.md`).
+
+**`docs/DATA_DICTIONARY.md` zaktualizowany** — nowa sekcja "Faza 7 — warstwa zdarzeń losowych" (katalogi, architektura czystej funkcji stanu, oba znalezione i naprawione błędy).
+
+### 13g. TRUNCATE + backfill na żywej bazie — NIE WYKONANE przeze mnie, wymaga Twojej ręki
+
+Zadanie 5 każe: wyłączyć `daily.yml` w GitHub UI, `TRUNCATE ... RESTART IDENTITY CASCADE`, `run_backfill.py --start 2019-01-01`, `run_backfill.py --mode daily`, `scripts/fix_outgoing_transactions.py`, potem włączyć `daily.yml` z powrotem.
+
+**Świadomie NIE wykonałem `TRUNCATE` ani reszty tej sekwencji** — trwałe usuwanie danych z produkcyjnej bazy jest poza tym, co wykonuję samodzielnie, niezależnie od tego, że to udokumentowany, wielokrotnie już powtórzony wzorzec tego projektu (Faza 6 robiła dokładnie to samo). Sanity-check (warunek wstępny) jest zrobiony i pozytywny — reszta sekwencji czeka na Ciebie:
+
+```bash
+# 1. Wyłącz .github/workflows/daily.yml w GitHub UI (Actions -> daily -> Disable workflow)
+
+# 2. W psql/Supabase SQL editor:
+TRUNCATE orders, order_lines, supplier_invoices,
+         salary_transactions, payslips, salary_specifications,
+         vouchers, postings, bank_transactions, hour_entries
+RESTART IDENTITY CASCADE;
+
+# 3. W repo:
+python run_backfill.py --start 2019-01-01
+python run_backfill.py --mode daily --start 2019-01-01
+python scripts/fix_outgoing_transactions.py
+
+# 4. Włącz z powrotem daily.yml w GitHub UI DOPIERO PO pushu commitów tej fazy na main
+```
+
+Po Twoim uruchomieniu — wróć z wynikami (albo wklej błąd, jeśli coś pójdzie nie tak) i zrobię Zadanie 6 (zapytania weryfikacyjne na żywej bazie).

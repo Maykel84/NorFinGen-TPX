@@ -1,0 +1,30 @@
+scope,code,year,month,customer_number,customer_name,segment,detail
+client,TEMPORARY_HARDSHIP,2020,2,K07,Østfold Finans AS,Mid-market,"until=(2020, 5) multiplier=0.464"
+company,UNPROFITABLE_QUARTER,2020,4,,,,"cost_spike=46,900 NOK"
+client,ONE_OFF_LARGE_PROJECT,2020,5,K01,Bergström Industri AS,Enterprise,large S04 order
+client,ONE_OFF_LARGE_PROJECT,2020,7,K01,Bergström Industri AS,Enterprise,large S04 order
+company,UNPROFITABLE_QUARTER,2021,2,,,,"cost_spike=96,900 NOK"
+client,OFFER_EXPANSION,2022,1,K07,Østfold Finans AS,Mid-market,added=S04
+company,EQUIPMENT_INVESTMENT,2022,1,,,,"amount=231,904 NOK"
+company,UNPROFITABLE_QUARTER,2022,4,,,,"cost_spike=58,100 NOK"
+client,TEMPORARY_HARDSHIP,2022,10,K01,Bergström Industri AS,Enterprise,"until=(2022, 12) multiplier=0.513"
+client,TEMPORARY_HARDSHIP,2022,11,K09,Vestfold Handel AS,SMB,"until=(2023, 2) multiplier=0.584"
+client,ONE_OFF_LARGE_PROJECT,2023,1,K10,Kristiansen Gruppen AS,Mid-market,large S04 order
+client,ONE_OFF_LARGE_PROJECT,2023,3,K11,Rogaland Teknikk AS,Enterprise,large S04 order
+company,UNPROFITABLE_QUARTER,2023,8,,,,"cost_spike=50,900 NOK"
+client,OFFER_REDUCTION,2024,1,K34,Kristiansund Transport AS,Mid-market,removed=S02
+client,OFFER_EXPANSION,2024,2,K32,Harstad Finans AS,Mid-market,added=S04
+company,EQUIPMENT_INVESTMENT,2024,9,,,,"amount=187,486 NOK"
+client,BANKRUPTCY,2024,11,K12,Agder Maritime AS,SMB,churned
+client,OFFER_REDUCTION,2024,11,K19,Sandefjord Transport AS,Mid-market,removed=S02
+client,TEMPORARY_HARDSHIP,2024,12,K02,Halvorsen & Partnere AS,Mid-market,"until=(2025, 1) multiplier=0.582"
+client,ONE_OFF_LARGE_PROJECT,2024,12,K16,Vestland Maritime AS,Enterprise,large S04 order
+client,TEMPORARY_HARDSHIP,2025,6,K27,Grenland Energi AS,Enterprise,"until=(2025, 9) multiplier=0.548"
+client,TEMPORARY_HARDSHIP,2025,8,K16,Vestland Maritime AS,Enterprise,"until=(2025, 10) multiplier=0.450"
+company,SUPPLIER_RENEGOTIATION,2025,9,,,,supplier=L01 change=-1.8%
+client,ONE_OFF_LARGE_PROJECT,2026,2,K21,Buskerud Finans AS,Mid-market,large S04 order
+client,TEMPORARY_HARDSHIP,2026,2,K25,Halden Design AS,SMB,"until=(2026, 5) multiplier=0.509"
+client,ONE_OFF_LARGE_PROJECT,2026,3,K16,Vestland Maritime AS,Enterprise,large S04 order
+client,TEMPORARY_HARDSHIP,2026,4,K50,Jessheim Design AS,SMB,"until=(2026, 6) multiplier=0.451"
+client,OFFER_EXPANSION,2026,7,K25,Halden Design AS,SMB,added=S04
+client,ONE_OFF_LARGE_PROJECT,2026,8,K20,Nordland Havbruk AS,Enterprise,large S04 order

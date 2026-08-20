@@ -326,6 +326,54 @@ Znaczenie biznesowe: kontener godzin konsultanckich per klient — używany wył
 
 ---
 
+## Faza 7 — warstwa zdarzeń losowych (life events)
+
+Deterministycznie losowa warstwa zdarzeń biznesowych, dodana żeby dane przestały wyglądać zbyt gładko/liniowo między punktami kontrolnymi z poprzednich faz. **To nie jest ML** — to przestrzeń zdarzeń z przypisanymi prawdopodobieństwami, losowana przez `random.Random(string)` (nigdy `hash()`), więc deterministyczna: ten sam seed = ten sam wynik przy każdym powtórnym backfillu. Nie dodaje żadnej nowej kolumny/tabeli w Supabase — cała warstwa żyje w warstwie generatorów (Python), wpływa na już istniejące tabele (`orders`, `order_lines`, `supplier_invoices`, `vouchers`, `hour_entries`) dokładnie tak samo jak każdy inny mechanizm generatora.
+
+**Architektura — czysta, memoizowana funkcja stanu, nie mutowalny ledger.** Prompt Fazy 7 (Zadanie 2d) zakładał "stan w pamięci, jeden sekwencyjny przebieg backfillu wystarczy". Sprawdzone i **nietrafne** dla tego repo: backfill to w praktyce DWA osobne procesy uruchamiane po sobie (`run_backfill.py --mode monthly`, potem `--mode daily`), a `--mode daily` i żywy cron (`run_daily.py`, `.github/workflows/daily.yml`) dzielą tę samą funkcję wołaną raz per proces/dzień. Żaden mutowalny obiekt stanu przekazywany z zewnątrz nie przetrwałby między nimi. Zamiast tego: `customer_event_state_asof(customer_number, year, month)` / `company_event_state_asof(year, month)` — czyste funkcje, rekurencyjnie dokładające miesiąc po miesiącu od punktu startowego (onboarding klienta / założenie firmy 2019-01), cache'owane przez `functools.lru_cache`. Dają identyczny wynik niezależnie od tego, który proces/wywołanie o nie zapyta — mocniejsza wersja tego samego wymogu determinizmu, nie jego złamanie. Zob. `SESSION_HANDOFF.md` Faza 7 dla pełnego uzasadnienia.
+
+### Zdarzenia na poziomie klienta (`src/norfingen/generators/client_events.py`)
+
+Katalog `CLIENT_LIFE_EVENTS` (5 kodów), losowany co miesiąc per aktywny klient subskrypcyjny (wzorce A/B/C — **K06, jedyny klient wzorca D/consulting bez stałego bundla usług, jest świadomie wykluczony**, zob. plik):
+
+| Kod | Segmenty | Prawdopodobieństwo/mies. | Efekt |
+|---|---|---|---|
+| `OFFER_EXPANSION` | Mid-market, SMB | 0,4% | Trwałe dodanie usługi S04 (jedyna z `availability=ALL` — S02/S03 mają ograniczenia segmentowe, które łamałyby wycenę, zob. niżej) |
+| `OFFER_REDUCTION` | Enterprise, Mid-market | 0,3% | Trwałe usunięcie jednej usługi (nigdy S01) |
+| `TEMPORARY_HARDSHIP` | wszystkie | 0,4% | 2-4 miesiące: redukcja 40-60% wolumenu ticketów wsparcia TEGO klienta + podwyższony próg bad-debt (×5, 2%→10%) |
+| `BANKRUPTCY` | SMB | 0,08% | Trwały churn od kolejnego miesiąca; ostatnia faktura miesiąca triggera wymuszona na `WRITTEN_OFF` |
+| `ONE_OFF_LARGE_PROJECT` | Enterprise, Mid-market | 0,5% | Dodatkowe zamówienie S04, 80-200h wg stawki godzinowej (vs standardowe 20-50k NOK ryczałtu `should_generate_extra_consulting` z Fazy 2) |
+
+Klient ma co najwyżej jedno "duże" zdarzenie na raz — w trakcie aktywnego okna `TEMPORARY_HARDSHIP` nie losuje się nic nowego; `OFFER_EXPANSION`/`OFFER_REDUCTION` są trwałe (raz zastosowane, nie losują się ponownie).
+
+**Błąd znaleziony i naprawiony podczas implementacji**: pierwotna mapa ekspansji (SMB→S02, Mid-market→S03) łamała już istniejące ograniczenia `Service.availability` (S02=`ENTERPRISE_MID`, S03=`ENTERPRISE_ONLY`) — brak ceny dla SMB/Mid-market powodował `TypeError`. Oba segmenty ekspandują teraz w S04.
+
+**Zakres celowo ograniczony do backfillu miesięcznego** (jak istniejący precedens `should_generate_extra_consulting`): efekty przychodowe/kosztowe żyją w `generate_monthly_orders`/`generate_monthly_opex`. `generate_daily_orders` (żywy cron) respektuje TYLKO `event_aware_is_customer_active` (BANKRUPTCY) — inaczej cron wystawiałby faktury klientowi, który już zbankrutował w historii backfillu.
+
+### Zdarzenia na poziomie firmy (`src/norfingen/generators/company_events.py`)
+
+Katalog `COMPANY_LIFE_EVENTS` (3 kody), losowany raz na rok (`roll_company_events` — całą firmą, nie per klient):
+
+| Kod | Prawdopodobieństwo/rok | Efekt |
+|---|---|---|
+| `EQUIPMENT_INVESTMENT` | 35% | Jednorazowa faktura L05 Sandvik, 80-250k NOK (zawsze > progu kapitalizacji 30k → konto 1200), niezależna od zwykłego harmonogramu L05 (3-5x/rok) |
+| `UNPROFITABLE_QUARTER` | 25% | Realne transakcje przez cały kwartał: redukcja 0,85-0,95× wolumenu ticketów (firmowa, mnoży się z fellesferie) + jednorazowy koszt opex (konto 7790 "Annen driftskostnad", nowe, 40-120k NOK — kwota dobrana samodzielnie, zadanie podało `magnitude_range` tylko dla wolumenu) |
+| `SUPPLIER_RENEGOTIATION` | 30% | Trwała zmiana kosztu jednego z L01-L08 (wylosowanego), -15%..+10%, od wylosowanego miesiąca; kolejne renegocjacje tego samego dostawcy się mnożą |
+
+### Sezonowość norweskiego B2B (`src/norfingen/generators/seasonality.py`)
+
+Czyste mnożniki bez losowości: `fellesferie_activity_multiplier` (lipiec ×0,5 wolumenu ticketów), `q4_budget_flush_multiplier` (listopad/grudzień ×1,4 progu extra-consultingu dla Enterprise/Mid-market), `january_new_initiative_boost` — **napisany, ale świadomie niepodłączony** (brak w kodzie dyskretnego mechanizmu "nowy projekt S02" analogicznego do extra-consultingu).
+
+### Log faktycznie wylosowanych zdarzeń
+
+`scripts/log_life_events.py` — generuje `docs/faza7_life_events_log.csv` (czysto raportowy, nie dotyka bazy) z pełną listą zdarzeń klienckich i firmowych wraz ze szczegółami (kwoty, wylosowana usługa, dostawca). Uruchom ponownie po każdej zmianie kalibracji tej warstwy.
+
+### Znany błąd znaleziony i naprawiony (Zadanie 4)
+
+`test_fellesferie_reduces_july_ticket_volume` (testy regresyjne Zadania 4, uruchomione na pełnym pipeline `generate_daily_hours`, nie izolowanym wywołaniu z ręcznym wspólnym seedem) wykazał, że lipiec miał WIĘCEJ ticketów niż czerwiec — odwrotnie niż zamierzone. Przyczyna: mnożniki sezonowe skalowały wyłącznie `target_billable`, który w praktyce prawie nigdy nie jest wiążącym ograniczeniem pętli w `generate_daily_support_hours` (realnym sufitem jest `n_clients_today`, max 5 klientów × ~1h ≈ 5h, już poniżej niepomniejszonego celu 5,5-7h). Naprawione: mnożnik skaluje teraz też `n_clients_today`.
+
+---
+
 ## Dostęp read-only (BI / Power BI, Krok 2)
 
 Dwie role, warstwowo:
