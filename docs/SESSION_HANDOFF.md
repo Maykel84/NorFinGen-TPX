@@ -361,3 +361,17 @@ Nowy moduł `src/norfingen/generators/company_events.py`, ten sam wzorzec co `cl
 Testy: `tests/test_company_events.py` (nowy, 7 testów — te same zasady co `test_client_events.py`: zamrożone konkretne, deterministycznie znalezione zdarzenia jako regresja). **220/220 offline** (`pytest -q`, teraz bez potrzeby `--ignore=scripts` — zob. `ac0a601`).
 
 **Backfill na żywej bazie wciąż NIE wykonany** — czekamy na potwierdzenie końca Fazy 7 (ta sama zasada co po Zadaniach 1 i 2). Zmiany zacommitowane lokalnie, niewypchnięte.
+
+### 13e. Faza 7, Zadanie 4 — testy, i NAPRAWA prawdziwego błędu z Zadania 1, 2026-08-20
+
+Cztery testy referencyjne z zadania zaadaptowane do rzeczywistego API (`roll_client_events()` w tym repo zwraca `Optional[str]`, nie listę dictów — model "jeden aktywny event na klienta", zob. p. 13c) — `tests/test_faza7_task4_regression.py` (4 testy): determinizm, BANKRUPTCY tylko dla SMB (1000 losowych prób), redukcja wolumenu ticketów w lipcu, bilans księgowy (DR=CR) na pełnym backfillu 2019-2024 (jawna weryfikacja na zebranych Voucherach, nie tylko poleganie na `assert_voucher_valid()` przy konstrukcji).
+
+**`test_fellesferie_reduces_july_ticket_volume` złapał prawdziwy, żywy błąd z Zadania 1** — nie w teście, w kodzie produkcyjnym. Uruchomiony na pełnym pipeline (`generate_daily_hours`, nie izolowane wywołanie `generate_daily_support_hours` z jednym, wspólnym seedem rng jak testy z Zadania 1) pokazał, że **lipiec miał WIĘCEJ ticketów niż czerwiec** (704 vs 635 wpisów), odwrotnie niż zamierzone.
+
+**Przyczyna**: mnożnik `fellesferie_activity_multiplier`/`unprofitable_quarter_ticket_multiplier` (Zadania 1a/3c) skalował wyłącznie `target_billable`. W praktyce `target_billable` (5,5-7h) prawie NIGDY nie jest wiążącym ograniczeniem pętli w `generate_daily_support_hours` — realnym sufitem jest `n_clients_today` (max 5 klientów/dzień × ~1h/ticket ≈ 5h, już poniżej niepomniejszonego celu). Testy z Zadania 1 (`test_hours_generator.py::test_fellesferie_reduces_july_billable_ticket_hours`) przechodziły, bo używały **jednego, wspólnego, ręcznie dobranego seeda rng** dla obu miesięcy — sztucznie wymuszały sytuację, w której `target_billable` akurat był wiążący, maskując że w normalnym, zróżnicowanym pipeline (osobny rng per dzień) efekt był w praktyce niewidoczny lub odwracany przez inne źródła szumu (więcej dni roboczych w lipcu, rotacja portfela klientów).
+
+**Naprawa**: mnożnik teraz skaluje też `n_clients_today` (`max(1, round(n_clients_today * mnożnik))`) — czyli faktyczne, wiążące ograniczenie — `target_billable` zostaje jako dodatkowe zabezpieczenie. Zweryfikowane bezpośrednio: lipiec 2025 411 ticketów/420h vs czerwiec 2025 595/589h (~30% mniej, mimo 2 dodatkowe dni robocze w lipcu). Nie wpływa na marżę (hours_generator z definicji nie dotyka przychodu/payrollu, zob. moduł-level docstring) — pełny sanity-check marży niepotrzebny dla tej poprawki, potwierdzone niezmienionym wynikiem `test_faza6_market_calibration.py` w pełnym przebiegu testów.
+
+**224/224 testów offline** (`pytest -q`).
+
+**Backfill na żywej bazie wciąż NIE wykonany** — Zadanie 4 to testy, nie nowa funkcjonalność biznesowa, ale zasada "backfill dopiero na końcu CAŁEJ fazy" zostaje aktualna do wyraźnego potwierdzenia użytkownika.

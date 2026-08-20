@@ -200,20 +200,22 @@ def generate_daily_support_hours(
 
     entries: list[HourEntry] = []
     total_hours = 0.0
-    # Faza 7, Zadanie 1a — fellesferie: ~50% normalnego wolumenu ticketów w
-    # lipcu (uwolnione godziny trafiają do INTERNAL, zob. internal_hours
-    # niżej). Czysto realizm hour_entries — jak reszta tego modelu, nie ma
-    # wpływu na przychód/payroll (zob. docstring modułu).
-    # Faza 7, Zadanie 3c — UNPROFITABLE_QUARTER: dodatkowy, firmowy (nie
-    # per-klient jak TEMPORARY_HARDSHIP) mnożnik 0,85-0,95 przez cały
-    # kwartał — mnoży się z fellesferie, jeśli oba akurat trafią ten sam
-    # miesiąc (niezależne zdarzenia, brak przesłanki żeby się wykluczały).
-    target_billable = (
-        rng.uniform(TICKET_TARGET_BILLABLE_MIN, TICKET_TARGET_BILLABLE_MAX)
-        * fellesferie_activity_multiplier(on_date.month)
-        * unprofitable_quarter_ticket_multiplier(on_date.year, on_date.month)
-    )
+    # Faza 7, Zadania 1a/3c — fellesferie (lipiec, ~50%) i UNPROFITABLE_QUARTER
+    # (firmowy, 0,85-0,95, cały kwartał) redukują wolumen ticketów.
+    #
+    # NAPRAWA (Zadanie 4 — test_fellesferie_reduces_july_ticket_volume złapał
+    # to jako regresję): mnożnik pierwotnie (Zadanie 1) skalował WYŁĄCZNIE
+    # target_billable. To w praktyce prawie nigdy nie zmieniało wyniku —
+    # realnym ograniczeniem pętli niżej jest zwykle n_clients_today (sufit
+    # TICKET_CLIENTS_PER_DAY_MAX=5 × ~1h/ticket ≈ 5h, już poniżej
+    # niepomniejszonego target_billable 5,5-7h), więc redukcja
+    # target_billable rzadko była wiążąca. Mnożnik teraz skaluje też
+    # n_clients_today (faktyczny, wiążący sufit) — target_billable zostaje
+    # jako dodatkowe zabezpieczenie na wypadek dużych klientów/segmentów.
+    activity_multiplier = fellesferie_activity_multiplier(on_date.month) * unprofitable_quarter_ticket_multiplier(on_date.year, on_date.month)
+    target_billable = rng.uniform(TICKET_TARGET_BILLABLE_MIN, TICKET_TARGET_BILLABLE_MAX) * activity_multiplier
     n_clients_today = min(len(assigned_customers), rng.randint(TICKET_CLIENTS_PER_DAY_MIN, TICKET_CLIENTS_PER_DAY_MAX))
+    n_clients_today = max(1, round(n_clients_today * activity_multiplier))
     todays_clients = rng.sample(assigned_customers, n_clients_today)
 
     for customer in todays_clients:
