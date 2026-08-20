@@ -425,3 +425,61 @@ python scripts/fix_outgoing_transactions.py
 ```
 
 Po Twoim uruchomieniu — wróć z wynikami (albo wklej błąd, jeśli coś pójdzie nie tak) i zrobię Zadanie 6 (zapytania weryfikacyjne na żywej bazie).
+
+### 13h. Faza 7, Zadanie 6 — dokumentacja finalna (2026-08-20)
+
+**Status backfillu produkcyjnego: NIEROZPOCZĘTY.** Sekwencja z p. 13g (TRUNCATE + backfill + `daily.yml`) jeszcze nie wykonana — potwierdzone przez użytkownika. Liczby marży poniżej to **offline sanity-check** (p. 13f), nie odczyt z żywej bazy — będą zweryfikowane zapytaniem SQL na Supabase, gdy backfill faktycznie się odbędzie.
+
+**Finalna marża (offline, przed backfillem)**:
+
+| Rok | Marża |
+|---|---|
+| 2023 | 8,04% |
+| 2024 | 7,00% |
+| 2025 | 6,06% |
+| 2026 (do lipca) | 7,03% |
+
+Wszystkie w progu bezpieczeństwa 5,5-9%.
+
+**`daily.yml`: NIE dotknięty** — bo TRUNCATE jeszcze się nie odbył, workflow jest w swoim normalnym, włączonym stanie (nie było potrzeby go wyłączać). **Nie potwierdzam "włączenia z powrotem"**, bo nigdy nie został wyłączony w ramach tej fazy.
+
+**Faktycznie wylosowane zdarzenia w historii 2019 - lipiec 2026** (29, z `docs/faza7_life_events_log.csv`, deterministyczne — te same wystąpią przy backfillu na żywej bazie):
+
+*Klienckie (22):*
+| Rok-mies. | Klient | Segment | Zdarzenie | Szczegóły |
+|---|---|---|---|---|
+| 2020-02 | K07 Østfold Finans AS | Mid-market | TEMPORARY_HARDSHIP | do 2020-05, mnożnik 0,464 |
+| 2020-05 | K01 Bergström Industri AS | Enterprise | ONE_OFF_LARGE_PROJECT | |
+| 2020-07 | K01 Bergström Industri AS | Enterprise | ONE_OFF_LARGE_PROJECT | |
+| 2022-01 | K07 Østfold Finans AS | Mid-market | OFFER_EXPANSION | +S04 |
+| 2022-10 | K01 Bergström Industri AS | Enterprise | TEMPORARY_HARDSHIP | do 2022-12, mnożnik 0,513 |
+| 2022-11 | K09 Vestfold Handel AS | SMB | TEMPORARY_HARDSHIP | do 2023-02, mnożnik 0,584 |
+| 2023-01 | K10 Kristiansen Gruppen AS | Mid-market | ONE_OFF_LARGE_PROJECT | |
+| 2023-03 | K11 Rogaland Teknikk AS | Enterprise | ONE_OFF_LARGE_PROJECT | |
+| 2024-01 | K34 Kristiansund Transport AS | Mid-market | OFFER_REDUCTION | -S02 |
+| 2024-02 | K32 Harstad Finans AS | Mid-market | OFFER_EXPANSION | +S04 |
+| 2024-11 | K12 Agder Maritime AS | SMB | **BANKRUPTCY** | churn, ostatnia faktura WRITTEN_OFF |
+| 2024-11 | K19 Sandefjord Transport AS | Mid-market | OFFER_REDUCTION | -S02 |
+| 2024-12 | K02 Halvorsen & Partnere AS | Mid-market | TEMPORARY_HARDSHIP | do 2025-01, mnożnik 0,582 |
+| 2024-12 | K16 Vestland Maritime AS | Enterprise | ONE_OFF_LARGE_PROJECT | |
+| 2025-06 | K27 Grenland Energi AS | Enterprise | TEMPORARY_HARDSHIP | do 2025-09, mnożnik 0,548 |
+| 2025-08 | K16 Vestland Maritime AS | Enterprise | TEMPORARY_HARDSHIP | do 2025-10, mnożnik 0,450 |
+| 2026-02 | K21 Buskerud Finans AS | Mid-market | ONE_OFF_LARGE_PROJECT | |
+| 2026-02 | K25 Halden Design AS | SMB | TEMPORARY_HARDSHIP | do 2026-05, mnożnik 0,509 |
+| 2026-03 | K16 Vestland Maritime AS | Enterprise | ONE_OFF_LARGE_PROJECT | |
+| 2026-04 | K50 Jessheim Design AS | SMB | TEMPORARY_HARDSHIP | do 2026-06, mnożnik 0,451 |
+| 2026-07 | K25 Halden Design AS | SMB | OFFER_EXPANSION | +S04 |
+| 2026-08 | K20 Nordland Havbruk AS | Enterprise | ONE_OFF_LARGE_PROJECT | |
+
+*Firmowe (7):*
+| Rok-mies. | Zdarzenie | Szczegóły |
+|---|---|---|
+| 2020-04 | UNPROFITABLE_QUARTER | koszt jednorazowy 46 900 NOK |
+| 2021-02 | UNPROFITABLE_QUARTER | koszt jednorazowy 96 900 NOK |
+| 2022-01 | EQUIPMENT_INVESTMENT | 231 904 NOK (L05, kapitalizowane) |
+| 2022-04 | UNPROFITABLE_QUARTER | koszt jednorazowy 58 100 NOK |
+| 2023-08 | UNPROFITABLE_QUARTER | koszt jednorazowy 50 900 NOK |
+| 2024-09 | EQUIPMENT_INVESTMENT | 187 486 NOK (L05, kapitalizowane) |
+| 2025-09 | SUPPLIER_RENEGOTIATION | L01 Microsoft, -1,8% |
+
+Żadne zdarzenie BANKRUPTCY poza K12, żadna renegocjacja poza L01/2025-09 — jedna SUPPLIER_RENEGOTIATION (2026-09, dostawca L07 +2,2%) wypada POZA zasięgiem backfillu (po lipcu 2026), świadomie wykluczona z tej listy (zob. `scripts/log_life_events.py` — filtruje do cutoffu, żeby log pokazywał wyłącznie to, co faktycznie trafi do bazy).
