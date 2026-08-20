@@ -44,7 +44,16 @@ from __future__ import annotations
 import calendar
 import random
 from datetime import date
+from typing import Optional
 
+from norfingen.generators.client_events import (
+    LARGE_PROJECT_HOURS_MAX,
+    LARGE_PROJECT_HOURS_MIN,
+    HARDSHIP_BAD_DEBT_MULTIPLIER,
+    customer_event_state_asof,
+    effective_customer_services,
+    event_aware_is_customer_active,
+)
 from norfingen.generators.seasonality import q4_budget_flush_multiplier
 from norfingen.models.base import TripletexRef
 from norfingen.models.order import Order, OrderLine, OrderStatus
@@ -52,7 +61,6 @@ from norfingen.seed.roster import (
     CUSTOMER_PRICE_MULTIPLIER,
     CUSTOMERS,
     CustomerSeed,
-    get_customer_services,
     is_customer_active,
     numeric_id,
     product_by_number,
@@ -130,9 +138,9 @@ def _clamp_day(year: int, month: int, day: int) -> int:
     return min(day, last_day)
 
 
-def determine_order_status(customer_number: str, order_date: date) -> OrderStatus:
-    """Ustala los faktury sprzedaży (bad debt) — ~2% opóźnionych >90 dni, z czego
-    ~20% (0.4% wszystkich) nieściągalnych.
+def determine_order_status(customer_number: str, order_date: date, bad_debt_probability: float = BAD_DEBT_PROBABILITY) -> OrderStatus:
+    """Ustala los faktury sprzedaży (bad debt) — domyślnie ~2% opóźnionych
+    >90 dni, z czego ~20% (0.4% wszystkich) nieściągalnych.
 
     Deterministyczne per zamówienie (seed z tożsamości: klient + data), NIE
     zależne od "dzisiaj"/wall-clock w momencie generowania płatności — inaczej
@@ -140,27 +148,33 @@ def determine_order_status(customer_number: str, order_date: date) -> OrderStatu
     uruchomiono backfill (dokładnie ten błąd naprawiliśmy już raz dla starej
     heurystyki statusu supplier_invoices). Status jest więc stałą właściwością
     zamówienia od chwili utworzenia, a nie czymś ocenianym później względem
-    bieżącej daty."""
+    bieżącej daty.
+
+    Faza 7, Zadanie 2c — `bad_debt_probability` opcjonalnie nadpisywany przez
+    wywołującego (generate_monthly_orders) podczas aktywnego
+    TEMPORARY_HARDSHIP klienta (zob. client_events.HARDSHIP_BAD_DEBT_MULTIPLIER)."""
     rng = random.Random(f"bad-debt-{customer_number}-{order_date.isoformat()}")
-    if rng.random() < BAD_DEBT_PROBABILITY:
+    if rng.random() < bad_debt_probability:
         if rng.random() < WRITTEN_OFF_SHARE_OF_BAD_DEBT:
             return OrderStatus.WRITTEN_OFF
         return OrderStatus.OVERDUE
     return OrderStatus.PAID
 
 
-def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_lines: list[OrderLine]) -> Order:
+def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_lines: list[OrderLine],
+                  bad_debt_probability: float = BAD_DEBT_PROBABILITY, status_override: Optional[OrderStatus] = None) -> Order:
     order_date = date(year, month, _clamp_day(year, month, day))
     last_day = calendar.monthrange(year, month)[1]
     delivery_date = date(year, month, last_day)
     month_label = f"{MONTH_NAMES_NO[month - 1]} {year}"
+    status = status_override if status_override is not None else determine_order_status(customer.number, order_date, bad_debt_probability)
     return Order(
         customer=TripletexRef(id=numeric_id(customer.number)),
         orderDate=order_date,
         deliveryDate=delivery_date,
         invoiceDate=order_date,
         invoicesDueIn=customer.payment_terms,
-        status=determine_order_status(customer.number, order_date),
+        status=status,
         orderLines=order_lines,
         department=SALG_DEPARTMENT_REF,
         comment=f"Månedlig faktura — {month_label}",
@@ -178,10 +192,17 @@ def build_order_lines(customer: CustomerSeed, order_date: date) -> list[OrderLin
     segmentu płacą różne kwoty, tak jak przy realnych negocjacjach B2B.
     Zastępuje dawny podział wg litery wzorca (A=1/B=2/C=1 linia) —
     support_product/license_product nie sterują już liczbą/doborem linii.
-    Wzorzec D (K06 consulting) ma osobną logikę — nie jest tu obsługiwany."""
+    Wzorzec D (K06 consulting) ma osobną logikę — nie jest tu obsługiwany.
+
+    Faza 7, Zadanie 2c — lista usług przechodzi przez
+    client_events.effective_customer_services(), która dokłada/usuwa
+    usługę wg trwałych efektów OFFER_EXPANSION/OFFER_REDUCTION (no-op gdy
+    klient nigdy takiego zdarzenia nie miał — identyczny wynik jak dawne
+    roster.get_customer_services())."""
     multiplier = CUSTOMER_PRICE_MULTIPLIER[customer.number]
+    event_state = customer_event_state_asof(customer.number, order_date.year, order_date.month)
     lines: list[OrderLine] = []
-    for code in get_customer_services(customer):
+    for code in effective_customer_services(customer, event_state):
         # service_by_code_for_customer (nie service_by_code) — Faza 4,
         # rekalibracja #3: respektuje kohortę cenową klienta (LEGACY_SERVICES
         # dla K01-K12 + fuzja 2022-09, SCALE_SERVICES dla klientów 2023+),
@@ -222,10 +243,40 @@ def should_generate_extra_consulting(customer: CustomerSeed, month: int, year: i
     return rng.random() < min(threshold, 1.0)
 
 
+LARGE_PROJECT_ORDER_DAY = 26  # odrębny od EXTRA_CONSULTING_ORDER_DAY (25) i invoice_day klientów
+
+
+def _build_large_project_order(customer: CustomerSeed, year: int, month: int) -> Order:
+    """Faza 7, Zadanie 2c — ONE_OFF_LARGE_PROJECT: jedna, znacząco większa
+    linia S04 (80-200h wg stawki godzinowej usługi, zamiast standardowego
+    ryczałtu 20-50k NOK w should_generate_extra_consulting) — duży,
+    jednorazowy projekt, nie kolejny "zwykły" dodatkowy consulting."""
+    rng = random.Random(f"large-project-{customer.number}-{year}-{month}")
+    service = service_by_code_for_customer(customer, "S04")
+    base_price = service_base_price(service, customer.segment)
+    hourly_rate = round(apply_annual_inflation(base_price, year) * CUSTOMER_PRICE_MULTIPLIER[customer.number], 2)
+    hours = round(rng.uniform(LARGE_PROJECT_HOURS_MIN, LARGE_PROJECT_HOURS_MAX), 1)
+    product = product_for_service("S04")
+    line = OrderLine(
+        product=TripletexRef(id=numeric_id(product.number)),
+        count=hours,
+        unitPriceExcludingVatCurrency=hourly_rate,
+    )
+    return _build_order(customer, year, month, LARGE_PROJECT_ORDER_DAY, [line])
+
+
 def generate_monthly_orders(year: int, month: int) -> list[Order]:
     """Generuje po jednym Order per klient subskrypcyjny (A/B/C) w danym
     miesiącu — używana przez backfill (pętla historyczna). Data faktury =
-    customer.invoice_day (nie sztywno 1. dzień miesiąca)."""
+    customer.invoice_day (nie sztywno 1. dzień miesiąca).
+
+    Faza 7, Zadanie 2 — zdarzenia klienckie (client_events) wpływają tu na:
+    aktywność (event_aware_is_customer_active — BANKRUPTCY), próg bad-debt
+    (podwyższony podczas TEMPORARY_HARDSHIP), status ostatniej faktury
+    (wymuszony WRITTEN_OFF w miesiącu bankructwa) i dodatkowe zamówienie
+    (ONE_OFF_LARGE_PROJECT). Jak extra-consulting/K06 — ten sam, świadomie
+    ograniczony zakres: tylko backfill miesięczny, nie generate_daily_orders
+    (poza samą aktywnością/BANKRUPTCY, zob. niżej)."""
     orders: list[Order] = []
 
     for customer in CUSTOMERS:
@@ -233,10 +284,26 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
 
         if pattern in ("A", "B", "C"):
             order_date = date(year, month, _clamp_day(year, month, customer.invoice_day))
-            if not is_customer_active(customer, order_date):
+            if not event_aware_is_customer_active(customer, order_date):
                 continue
+
+            event_state = customer_event_state_asof(customer.number, year, month)
+            bad_debt_probability = BAD_DEBT_PROBABILITY
+            if event_state.hardship_active_until is not None:
+                bad_debt_probability = min(BAD_DEBT_PROBABILITY * HARDSHIP_BAD_DEBT_MULTIPLIER, 1.0)
+            status_override = OrderStatus.WRITTEN_OFF if event_state.triggered_this_month == "BANKRUPTCY" else None
+
             lines = build_order_lines(customer, order_date)
-            orders.append(_build_order(customer, year, month, customer.invoice_day, lines))
+            orders.append(_build_order(
+                customer, year, month, customer.invoice_day, lines,
+                bad_debt_probability=bad_debt_probability, status_override=status_override,
+            ))
+
+            if event_state.triggered_this_month == "BANKRUPTCY":
+                continue  # ostatnia faktura już wystawiona (odpisana) — klient znika od przyszłego miesiąca
+
+            if event_state.triggered_this_month == "ONE_OFF_LARGE_PROJECT":
+                orders.append(_build_large_project_order(customer, year, month))
 
             if should_generate_extra_consulting(customer, month, year):
                 rng = random.Random(f"extra-consulting-price-{customer.number}-{year}-{month}")
@@ -264,7 +331,14 @@ def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
     klientom, dla których dzisiaj wypada ich invoice_day i którzy są już
     onboardowani (order_date >= onboarding_date). K06 (consulting,
     invoice_day=None) jest tu pomijany — ma osobną logikę wyzwalania
-    (should_generate_consulting), nierozłożoną na konkretny dzień miesiąca."""
+    (should_generate_consulting), nierozłożoną na konkretny dzień miesiąca.
+
+    Faza 7, Zadanie 2 — używa event_aware_is_customer_active (nie samego
+    roster.is_customer_active), żeby żywy cron/tryb daily przestał
+    wystawiać faktury klientowi, którego BANKRUPTCY wystrzeliło podczas
+    backfillu miesięcznego — reszta efektów zdarzeń (extra order,
+    podwyższony bad-debt) zostaje świadomie tylko w generate_monthly_orders,
+    zob. tamten docstring."""
     orders: list[Order] = []
 
     for customer in CUSTOMERS:
@@ -274,7 +348,7 @@ def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
             continue
 
         order_date = date(year, month, day)
-        if not is_customer_active(customer, order_date):
+        if not event_aware_is_customer_active(customer, order_date):
             continue
 
         lines = build_order_lines(customer, order_date)

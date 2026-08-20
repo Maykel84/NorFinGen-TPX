@@ -32,6 +32,7 @@ from __future__ import annotations
 import random
 from datetime import date, timedelta
 
+from norfingen.generators.client_events import event_aware_is_customer_active, hardship_ticket_multiplier_for
 from norfingen.generators.seasonality import fellesferie_activity_multiplier
 from norfingen.models.hours import ActivityType, HourEntry
 from norfingen.seed.roster import (
@@ -214,6 +215,10 @@ def generate_daily_support_hours(
             break
         avg_hours = TICKET_AVG_HOURS[customer.segment]
         hours = round(rng.uniform(avg_hours * 0.6, avg_hours * 1.6) * 4) / 4  # zaokrąglone do 0.25h
+        # Faza 7, Zadanie 2c — TEMPORARY_HARDSHIP: redukcja 40-60% wolumenu
+        # ticketów TEGO klienta (nie całego dnia konsultanta — inni klienci
+        # w tym samym dniu nie są dotknięci).
+        hours = round(hours * hardship_ticket_multiplier_for(customer.number, on_date) * 4) / 4
         hours = min(hours, round(target_billable - total_hours, 2))
         if hours < 0.25:
             continue
@@ -263,7 +268,11 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
         return []
 
     billable_employees = [employee_by_id(eid) for eid in billable_ids]
-    customers = active_customers(d)
+    # Faza 7, Zadanie 2c — active_customers() zna tylko statyczny churn_date;
+    # dokładamy event_aware_is_customer_active, żeby klient po BANKRUPTCY
+    # (client_events) zniknął z portfela wsparcia od następnego miesiąca,
+    # tak samo jak z order_generator.
+    customers = [c for c in active_customers(d) if event_aware_is_customer_active(c, d)]
 
     leveranse_employees = [e for e in billable_employees if e.department_number == LEVERANSE_DEPARTMENT]
     teknologi_employees = [e for e in billable_employees if e.department_number == TEKNOLOGI_DEPARTMENT]

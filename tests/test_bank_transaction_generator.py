@@ -90,9 +90,18 @@ def test_generate_daily_bank_transactions_skips_written_off_order():
 
 
 def test_all_incoming_payments_balance():
+    # Faza 7, Zadanie 2 — od BANKRUPTCY (client_events) niektóre zamówienia
+    # w 2024 mogą mieć status WRITTEN_OFF (K12, 2024-11); build_incoming_payment
+    # zwraca None dla WRITTEN_OFF (bad debt sprzed Fazy 7 też mógł to robić,
+    # po prostu żaden losowy WRITTEN_OFF nie trafił wcześniej akurat w 2024)
+    # — pomijamy je tak samo jak generate_daily_bank_transactions, zob.
+    # test_generate_daily_bank_transactions_skips_written_off_order wyżej.
     for month in range(1, 13):
         orders = generate_monthly_orders(2024, month)
         for order in orders:
+            if order.status == OrderStatus.WRITTEN_OFF:
+                assert build_incoming_payment(order, payment_terms=30) is None
+                continue
             _, voucher = build_incoming_payment(order, payment_terms=30)
             assert voucher.validate_balance()
 

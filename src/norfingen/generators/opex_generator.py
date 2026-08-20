@@ -33,6 +33,11 @@ from __future__ import annotations
 import random
 from datetime import date
 
+from norfingen.generators.client_events import (
+    customer_event_state_asof,
+    effective_customer_services,
+    event_aware_is_customer_active,
+)
 from norfingen.generators.order_generator import apply_annual_inflation
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.seed.payroll import active_employees, first_working_day_of_month
@@ -176,7 +181,13 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
         canteen_cost = calc_canteen_cost(employee_count)
         vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_CANTEEN, f"Kantinetilskudd {month_label}", canteen_cost))
 
-    customers = active_customers(on_date)
+    # Faza 7, Zadanie 2c — active_customers() zna tylko statyczny churn_date;
+    # dokładamy event_aware_is_customer_active, żeby wszystkie koszty per-klient
+    # w tej funkcji (reprezentacja/transport/COGS S01/S02) przestały naliczać
+    # się klientowi po BANKRUPTCY (client_events) tak samo jak przychód w
+    # order_generator — inaczej firma płaci Microsoftowi/za narzędzia za
+    # klienta, który już nie istnieje, i sztucznie zaniża marżę.
+    customers = [c for c in active_customers(on_date) if event_aware_is_customer_active(c, on_date)]
 
     representation_base = calc_representation_cost(customers)
     if representation_base > 0:
@@ -188,7 +199,18 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
         vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_TRANSPORT, f"Kjøregodtgjørelse — kundebesøk {month_label}", transport_cost))
 
     # Faza 6 — COGS pass-through S02 (zastępuje płaski koszt Azure z Fazy 2).
-    azure_cogs_base = calc_azure_cogs_monthly(customers)
+    # Faza 7, Zadanie 2c — calc_azure_cogs_monthly liczy koszt PO SEGMENCIE
+    # (zakłada, że każdy Enterprise/Mid-market kupuje S02 — prawda w
+    # standardowym bundlu, roster.SEGMENT_SERVICE_BUNDLES), więc klient,
+    # któremu OFFER_REDUCTION zdjęło S02, musi być wykluczony z tej listy
+    # tutaj — inaczej firma płaciłaby Microsoftowi za usługę, za którą
+    # klient już nie płaci nam (dokładnie ten błąd zaniżał marżę przed
+    # naprawą, zob. SESSION_HANDOFF.md).
+    s02_customers = [
+        c for c in customers
+        if "S02" in effective_customer_services(c, customer_event_state_asof(c.number, year, month))
+    ]
+    azure_cogs_base = calc_azure_cogs_monthly(s02_customers)
     if azure_cogs_base > 0:
         azure_cogs_cost = apply_annual_inflation(azure_cogs_base, year)
         vouchers.append(_cogs_accrual_voucher(
