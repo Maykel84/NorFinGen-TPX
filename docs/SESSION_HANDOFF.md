@@ -492,4 +492,31 @@ Użytkownik wykonał pełną sekwencję (`daily.yml` disabled, `TRUNCATE`, `run_
 
 **Naprawa**: `(7790, "Annen driftskostnad", "OPERATING_EXPENSE", None)` dodane do `ACCOUNTS_SEED` (`repository.py`). Zweryfikowano na żywej bazie po crashu: **brak osieroconych rekordów** (dane 2019-01→2020-04 kompletne aż do etapu opex miesiąca kwietnia, kolejność w `generate_and_persist_month`: orders→invoices→salary→opex — salary kwietnia 2020 już zapisane, crash na pierwszym voucherze opex tego miesiąca, żaden posting/voucher nie osierocony). Ponowne uruchomienie `run_backfill.py --start 2019-01-01` jest bezpieczne bez powtórnego `TRUNCATE` — `seed_reference_data()`/`ON CONFLICT DO NOTHING` na już zapisanych miesiącach są idempotentne.
 
-**Do zrobienia w przyszłości**: rozważyć dodanie testu, który realnie weryfikuje że każde konto użyte w generatorach (`grep` po stałych `ACCOUNT_*`) istnieje w `repository.ACCOUNTS_SEED` — zapobiegłoby dokładnie tej klasie błędu bez potrzeby dotykania żywej bazy.
+**Zrobione od razu, nie odłożone**: `tests/test_accounts_seed_coverage.py` — automatycznie odkrywa każdą stałą `ACCOUNT_*` w `generators/*.py` (introspekcja modułów, nie ręczna lista) i sprawdza obecność w `ACCOUNTS_SEED`. Zapobiega dokładnie tej klasie błędu na przyszłość, bez potrzeby dotykania żywej bazy.
+
+### 13j. Backfill produkcyjny ZAKOŃCZONY i zweryfikowany (2026-08-20)
+
+Po naprawie konta 7790 (p.13i) użytkownik dokończył całą sekwencję: `run_backfill.py --start 2019-01-01` (od nowa, idempotentnie) → `run_backfill.py --mode daily --start 2019-01-01` → `scripts/fix_outgoing_transactions.py` (717 faktur PAID bez OUTGOING naprawionych) → **`daily.yml` włączony z powrotem, potwierdzone działa**.
+
+**Stan bazy po backfillu**: `orders`=1845 (90/90 miesięcy), `order_lines`=3802, `supplier_invoices`=736, `vouchers`=2762, `postings`=5791, `bank_transactions`=1380 (INCOMING 1277 / OUTGOING 820 — po migracji), `hour_entries`=53 911 (91/91 miesięcy). K12 (BANKRUPTCY, listopad 2024) ma poprawnie `WRITTEN_OFF` na ostatniej fakturze — zweryfikowane bezpośrednio.
+
+**Marża — zapytanie SQL na żywej bazie (Zadanie 6), zamiast offline symulacji**:
+
+| Rok | Przychód | Payroll | Opex | COGS | Marża |
+|---|---|---|---|---|---|
+| 2019 | 7 306 506 | 4 702 822 | 1 859 931 | 2 619 500 | -25,67% |
+| 2020 | 18 151 002 | 6 948 806 | 1 888 573 | 5 579 095 | 20,57% |
+| 2021 | 20 019 397 | 8 436 433 | 1 984 816 | 6 135 291 | 17,30% |
+| 2022 | 23 382 082 | 11 210 947 | 1 993 145 | 7 462 222 | 11,61% |
+| 2023 | 32 154 882 | 15 582 464 | 2 083 453 | 11 904 767 | **8,04%** |
+| 2024 | 38 193 105 | 16 257 989 | 2 151 424 | 17 110 709 | **7,00%** |
+| 2025 | 43 579 585 | 16 745 730 | 2 199 037 | 21 992 754 | **6,06%** |
+| 2026 (do lipca, w pełni zamknięte) | 29 693 022 | 10 197 745 | 1 310 524 | 16 096 575 | **7,03%** |
+
+**Identyczne co do grosza (2019-2025) z offline sanity-checkiem z p.13f** — potwierdza że backfill wiernie odtworzył to, co przewidziano offline. **2026 pełny rok (do 2026-08-20) daje 10,82%** — poza progiem, ale to oczekiwany, udokumentowany artefakt niedomkniętego miesiąca (sierpień jeszcze bez zaksięgowanego payrollu, zob. p.11b) — po ograniczeniu do w pełni zamkniętych miesięcy wraca do 7,03%, identycznie z offline. **Wszystkie 4 lata dojrzałe (2023-2026) w progu bezpieczeństwa 5,5-9%.**
+
+**`daily.yml`**: wyłączony przed `TRUNCATE`, pozostał wyłączony przez całą sekwencję backfillu, **włączony z powrotem po jej zakończeniu — potwierdzone przez użytkownika, działa**.
+
+Lista faktycznie wylosowanych zdarzeń — zob. p.13h (29 zdarzeń, niezmienione — deterministyczne, więc backfill odtworzył dokładnie te same).
+
+**Faza 7 — kompletna, w pełni wdrożona na produkcji.** Kod zacommitowany i wypchnięty (`v5.11-faza7-life-events` + naprawa konta 7790, commit `aac427d`, do wypchnięcia razem z tą aktualizacją dokumentacji).
