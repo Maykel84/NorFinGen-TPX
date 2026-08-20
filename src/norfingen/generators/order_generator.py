@@ -45,6 +45,7 @@ import calendar
 import random
 from datetime import date
 
+from norfingen.generators.seasonality import q4_budget_flush_multiplier
 from norfingen.models.base import TripletexRef
 from norfingen.models.order import Order, OrderLine, OrderStatus
 from norfingen.seed.roster import (
@@ -204,13 +205,21 @@ def should_generate_extra_consulting(customer: CustomerSeed, month: int, year: i
     dodatkowego consultingu (jedyny SMB z consultingiem to K06/wzorzec D,
     osobna logika). ~15% szans w Q2/Q4 dla Enterprise, ~8% dla Mid-market.
     Deterministyczne per klient+rok+miesiąc (random.Random(string), nie
-    wbudowany hash() — zob. SESSION_HANDOFF.md pkt 6)."""
+    wbudowany hash() — zob. SESSION_HANDOFF.md pkt 6).
+
+    Faza 7, Zadanie 1b — budsjettflukt Q4: próg dodatkowo mnożony przez
+    q4_budget_flush_multiplier (listopad/grudzień, Enterprise/Mid-market),
+    zamiast równoległego mechanizmu — istniejący próg EXTRA_CONSULTING_MONTHS
+    (Q2/Q4) już ogranicza miesiące, mnożnik tylko podbija częstotliwość w
+    Q4 ponad to, co jest w Q2. min(..., 1.0) — czysto obronne, przy obecnych
+    stałych (0.15/0.08 * 1.4) nigdy nie osiąga 1.0."""
     if customer.segment not in EXTRA_CONSULTING_PROBABILITY:
         return False
     if month not in EXTRA_CONSULTING_MONTHS:
         return False
     rng = random.Random(f"extra-consulting-{customer.number}-{year}-{month}")
-    return rng.random() < EXTRA_CONSULTING_PROBABILITY[customer.segment]
+    threshold = EXTRA_CONSULTING_PROBABILITY[customer.segment] * q4_budget_flush_multiplier(month, customer.segment)
+    return rng.random() < min(threshold, 1.0)
 
 
 def generate_monthly_orders(year: int, month: int) -> list[Order]:

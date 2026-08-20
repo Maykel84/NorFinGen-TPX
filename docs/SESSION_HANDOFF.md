@@ -296,3 +296,27 @@ Zgłoszenie od użytkownika: opublikowany raport (`maykel84.github.io/raport`) p
 **Rozstrzygnięte (2026-08-20, potwierdzone przez użytkownika)**: `raport-site/v1/index.html` jest celowo zachowanym archiwalnym snapshotem sprzed naprawy Kroku 2 (headcount 38, bank OUT 17,5M) — **NIE aktualizować przy przyszłych zmianach raportu**, to jest zamierzone archiwum pokazujące stan przed naprawą integralności danych.
 
 `raport-site/index.html` — poprawka zdania w sekcji "Bank activity" (cash flow vs EBITDA, zob. wyżej) **zacommitowana i wypchnięta** tego samego dnia (`0e7da2a`, `github.com/Maykel84/raport.git`).
+
+---
+
+## 13. Faza 7 — warstwa zdarzeń losowych (life events), Zadanie 1: sezonowe wzorce B2B (2026-08-20)
+
+Rozpoczęto Fazę 7 — dodaje warstwę deterministycznie losowych zdarzeń biznesowych (przestrzeń prawdopodobieństw, nie ML; `random.Random(string)`, nigdy `hash()`). **W tej sesji wykonano wyłącznie Zadanie 1** (sezonowość norweskiego B2B, poziom firmy) — reszta fazy (kolejne Zadania, offline sanity-check marży, pełny backfill) **czeka na dalszy ciąg prompta**, zgodnie z decyzją użytkownika: backfill wymagany jest dopiero na końcu CAŁEJ fazy, nie po każdym Zadaniu.
+
+### 13a. Zaimplementowane (1a, 1b)
+
+Nowy moduł `src/norfingen/generators/seasonality.py` — trzy czyste funkcje mnożnikowe, bez RNG (skalują istniejące progi w miejscu wywołania, zamiast dodawać równoległe mechanizmy losowości):
+
+- **`fellesferie_activity_multiplier(month)`** — lipiec ×0,5. Podłączone w `hours_generator.generate_daily_support_hours()` (mnoży `target_billable` przed losowaniem) — **czysto realizm `hour_entries`, nie wpływa na przychód/payroll** (jak reszta modelu godzin z Fazy 6).
+- **`q4_budget_flush_multiplier(month, segment)`** — listopad/grudzień ×1,4 dla Enterprise/Mid-market. Podłączone w `order_generator.should_generate_extra_consulting()` (mnoży próg prawdopodobieństwa) — **WPŁYWA na przychód** (więcej zamówień S04 w Q4), stąd wymaga offline sanity-checku marży przed backfillem, tak jak wszystkie poprzednie fazy dotykające przychodu.
+
+Testy: `tests/test_seasonality.py` (nowy, 3 testy funkcji czystych) + rozszerzenia `test_order_generator.py`/`test_hours_generator.py` (2 nowe testy integracyjne). **204/204 offline** (`pytest -q --ignore=scripts`).
+
+Przy okazji: `test_extra_consulting_more_frequent_in_q4_than_q2_budsjettflukt` pierwotnie failował przy próbie 100 lat (200-300 losowań) — różnica progów (0,15 vs 0,21) bywała zamaskowana szumem statystycznym. Naprawione zwiększeniem próby do 5000 lat.
+
+### 13b. Świadomie NIE wykonane w tej sesji (potwierdzone przez użytkownika)
+
+- **Onboarding K17 (Drammen Eiendom AS, `onboarding_date=2023-07-03`) NIE przesunięty**, mimo że 1a każe unikać lipcowych startów nowych klientów. `roster.CUSTOMERS` to statyczna, historyczna lista (nie generowana dynamicznie per backfill) — K17 ma już lata zbackfillowanych, przetestowanych danych w produkcyjnej bazie (orders/hour_entries/vouchers za 2023+). Reguła "unikaj lipca" traktowana jako obowiązująca **na przyszłość** (gdyby kiedyś powstał dynamiczny generator nowych klientów), nie jako nakaz retroaktywnej korekty istniejącej historii — koszt/ryzyko takiej korekty porównywalne do incydentu z p. 12.
+- **1c (`january_new_initiative_boost`) napisane w `seasonality.py`, ale świadomie NIEPODŁĄCZONE** — w kodzie nie istnieje żaden dyskretny mechanizm "nowy projekt S02" analogiczny do `should_generate_extra_consulting` (S02 sprzedawany wyłącznie jako część stałego bundla segmentowego, `roster.get_customer_services`). Zaprojektowanie takiego mechanizmu wykraczałoby poza treść Zadania 1 — czeka na jawną decyzję/kolejne zadanie, jeśli ma powstać.
+- **Offline sanity-check marży i pełny backfill NIE wykonane** — Zadanie 1 to tylko fragment Fazy 7 (prompt urwał się po 1c). Mimo że 1b wpływa na przychód, uruchamianie sanity-checku/backfillu teraz byłoby przedwczesne — trzeba by je powtórzyć po dojściu kolejnych Zadań tej fazy. Zmiany są na razie tylko commitowane lokalnie, niewypchnięte.
+- **Niezwiązany, przedistniejący błąd znaleziony przy okazji**: `pytest -q` (bez `--ignore=scripts`) wybucha na `scripts/test_powerbi_connection.py` (ERROR przy kolekcji — plik to ręczne narzędzie weryfikacyjne, nie prawdziwy test pytest, istnieje od `00c7998`/2026-08-11). Niedotknięte w tej sesji, zgłoszone osobno.

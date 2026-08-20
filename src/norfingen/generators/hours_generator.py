@@ -32,6 +32,7 @@ from __future__ import annotations
 import random
 from datetime import date, timedelta
 
+from norfingen.generators.seasonality import fellesferie_activity_multiplier
 from norfingen.models.hours import ActivityType, HourEntry
 from norfingen.seed.roster import (
     CustomerSeed,
@@ -197,7 +198,14 @@ def generate_daily_support_hours(
 
     entries: list[HourEntry] = []
     total_hours = 0.0
-    target_billable = rng.uniform(TICKET_TARGET_BILLABLE_MIN, TICKET_TARGET_BILLABLE_MAX)
+    # Faza 7, Zadanie 1a — fellesferie: ~50% normalnego wolumenu ticketów w
+    # lipcu (uwolnione godziny trafiają do INTERNAL, zob. internal_hours
+    # niżej). Czysto realizm hour_entries — jak reszta tego modelu, nie ma
+    # wpływu na przychód/payroll (zob. docstring modułu).
+    target_billable = (
+        rng.uniform(TICKET_TARGET_BILLABLE_MIN, TICKET_TARGET_BILLABLE_MAX)
+        * fellesferie_activity_multiplier(on_date.month)
+    )
     n_clients_today = min(len(assigned_customers), rng.randint(TICKET_CLIENTS_PER_DAY_MIN, TICKET_CLIENTS_PER_DAY_MAX))
     todays_clients = rng.sample(assigned_customers, n_clients_today)
 

@@ -220,6 +220,28 @@ def test_extra_consulting_orders_occasionally_appear_for_enterprise():
     assert hits > 0
 
 
+def test_extra_consulting_more_frequent_in_q4_than_q2_budsjettflukt():
+    # Faza 7, Zadanie 1b — q4_budget_flush_multiplier (1.4x) w listopadzie/
+    # grudniu powinien dać wyraźnie więcej trafień niż te same segmenty w
+    # kwietniu-czerwcu (progi: 0.15 vs 0.15*1.4=0.21 dla Enterprise). Własny
+    # RNG per klient+rok+miesiąc, więc porównujemy częstość na dużej próbie
+    # (5000 lat), nie pojedyncze wywołania — przy N~100 lat różnica progów
+    # (6pp) bywała zamaskowana szumem próby (zob. historia tego testu).
+    k01 = customer_by_number("K01")  # Enterprise
+    n_years = 5000
+    q2_hits = sum(
+        should_generate_extra_consulting(k01, month, year)
+        for year in range(2019, 2019 + n_years) for month in (4, 5, 6)
+    )
+    q4_hits = sum(
+        should_generate_extra_consulting(k01, month, year)
+        for year in range(2019, 2019 + n_years) for month in (11, 12)
+    )
+    q2_rate = q2_hits / (n_years * 3)
+    q4_rate = q4_hits / (n_years * 2)
+    assert q4_rate > q2_rate
+
+
 def test_consulting_pattern_d_only_in_allowed_months():
     # K06 (Q2 kwi-cze, Q4 paź-gru, rzadko sty/lip) — nigdy w pozostałych miesiącach.
     allowed_months = {1, 4, 5, 6, 7, 10, 11, 12}

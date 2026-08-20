@@ -1,8 +1,10 @@
+import random
 from datetime import date
 
 from norfingen.generators.hours_generator import (
     assign_customers_to_consultants,
     generate_daily_hours,
+    generate_daily_support_hours,
     is_billable_employee,
     is_working_day,
 )
@@ -123,3 +125,18 @@ def test_deterministic_across_calls():
     b = generate_daily_hours(2024, 3, 12, ALL_EMPLOYEE_IDS)
     assert [(e.employee_id, e.activity_type, e.hours, e.project_id) for e in a] == \
            [(e.employee_id, e.activity_type, e.hours, e.project_id) for e in b]
+
+
+def test_fellesferie_reduces_july_billable_ticket_hours():
+    """Faza 7, Zadanie 1a — target_billable w lipcu ma być ~połowa
+    normalnego, przy tym samym rng.uniform draw (izolujemy efekt miesiąca,
+    nie inny seed)."""
+    customers = active_customers(date(2024, 6, 15))
+    assigned = customers[:5]
+
+    def billable_total(month: int) -> float:
+        rng = random.Random("fellesferie-test-fixed-seed")
+        entries = generate_daily_support_hours(1, assigned, date(2024, month, 10), rng)
+        return sum(e.hours for e in entries if e.activity_type == ActivityType.BILLABLE)
+
+    assert billable_total(7) < billable_total(6)
