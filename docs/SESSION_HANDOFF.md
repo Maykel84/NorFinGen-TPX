@@ -556,3 +556,31 @@ Rozszerzenie Fazy 7 — nowa kategoria zdarzenia, jakościowo różna od reszty 
 Efekt na 2020 jest umiarkowany (nie ekstremalny) — spójne z charakterem "trudnego roku startowego" opisanym w zadaniu, nie tworzy niczego w rodzaju -300%. Główna dźwignia przychodowa to przesunięcie onboardingu K10 (3 miesiące mniej przychodu Mid-market w 2020) — reszta efektów (redukcja ticketów, tłumienie extra-consultingu, opóźnienia płatności) jest z definicji przychodowo-neutralna lub prawie neutralna (`hour_entries` nie dotyka P&L; OVERDUE przesuwa TERMIN wpłaty, nie kwotę zaksięgowanego przychodu).
 
 **WYNIK: PASS.** Zgodnie z procedurą — TRUNCATE + backfill na żywej bazie **NIE wykonane przeze mnie** (trwałe usuwanie danych produkcyjnych, ta sama zasada co w Fazie 7), czeka na użytkownika: wyłącz `daily.yml` → `TRUNCATE` (te same 10 tabel) → `run_backfill.py --start 2019-01-01` → `run_backfill.py --mode daily --start 2019-01-01` → `scripts/fix_outgoing_transactions.py` → włącz `daily.yml` z powrotem. **Uwaga**: ponieważ K10 zmienił `onboarding_date`, to MUSI być pełny reset (nie inkrementalny) — stary rekord K10 z kwietnia 2020 w obecnej bazie produkcyjnej stałby się niespójny z nowym kodem bez `TRUNCATE`.
+
+### Backfill produkcyjny ZAKOŃCZONY i zweryfikowany (2026-09-01)
+
+Użytkownik wykonał pełną sekwencję: `daily.yml` disabled → `TRUNCATE` (10 tabel) → `run_backfill.py --start 2019-01-01` → `run_backfill.py --mode daily --start 2019-01-01` (2001 dni roboczych) → `scripts/fix_outgoing_transactions.py` (720 faktur naprawionych, `INCOMING 1282 / OUTGOING 825`) → `daily.yml` z powrotem włączony.
+
+**Marża — zapytanie SQL na żywej bazie, identyczne co do grosza z offline sanity-checkiem:**
+
+| Rok | Marża offline | Marża żywa baza |
+|---|---|---|
+| 2019 | -25,67% | -25,67% |
+| **2020** | **19,22%** | **19,22%** |
+| 2021 | 17,30% | 17,30% |
+| 2023 | 8,04% | 8,04% |
+| 2024 | 7,00% | 7,00% |
+| 2025 | 6,06% | 6,06% |
+| 2026 (do lipca, w pełni zamknięte) | 7,03% | 7,03% |
+
+**K10 na żywej bazie**: `onboarding_date=2020-07-01`, pierwsze zamówienie `2020-07-08` (zgodne z `invoice_day=8`) — poprawnie zbackfillowane z nową datą.
+
+**Decyzja o K10 (retroaktywna zmiana danych historycznych)** — udokumentowana w pełni: K10 (Kristiansen Gruppen AS) to jeden z oryginalnych klientów K01-K12 z wieloletnią historią już w produkcyjnej bazie. Jedyny klient z onboardingiem w oknie COVID (2020-04-01). Analogiczna sytuacja do K17 w Fazie 7a Zadanie 1 (tam użytkownik zdecydował: zostaw bez zmian) — tym razem, ponieważ pełny `TRUNCATE`+backfill i tak był zaplanowany w tej samej sesji, użytkownik zdecydował: **przesuń na 2020-07-01**, zgodnie z literą Zadania 1c. Zasada na przyszłość: retroaktywne zmiany tożsamości/dat klientów zawsze wymagają jawnego potwierdzenia użytkownika — nie ma tu ustalonej reguły domyślnej, zależy od kontekstu (czy backfill i tak się odbywa).
+
+### Raport publiczny (raport-site) — zregenerowany po Fazie 7b
+
+`raport-site/index.html` nie ma własnego skryptu generującego w repo (potwierdzone — brak `.github/workflows`, brak skryptu w tamtym repo). Zregenerowany ręcznie jednorazowym skryptem (`/tmp/.../regen_report.py`, nie część żadnego repo — czysto pomocniczy) łączącym się read-only do żywej bazy: przeliczone sekcje **historyczne** (`pnl_monthly`, `annual_revenue`, `headcount_monthly`, `top_customers`, `nace`, `product_rev`, `segment_totals`/`segment_customers`, `utilization`, większość `kpi`) bezpośrednio z Supabase. Sekcja **prognozy** (`forecast_monthly`, `aug_2026_full_estimate`, `kpi.fy2026_estimate`, `kpi.fy2027_forecast_trend`) **świadomie NIE odświeżona** — metodologia (regresja liniowa na 24 miesiącach) nie jest znana w żadnym z tych repo (raport zbudowany kiedyś poza nimi), stopka raportu jawnie to teraz zaznacza: "reflects the operations database as of 20 August 2026 and has not been refreshed alongside the historical sections above".
+
+**Znaleziony i naprawiony błąd przy okazji**: pierwsza wersja przeliczenia użyła `v_headcount_monthly` (widok BI) dla `headcount_now` — dała 12 zamiast 17, bo ten widok liczy tylko pracowników billable (Leveranse/Teknologi), nie pełny headcount kadrowy (dokładnie ta pułapka opisana w `POWERBI_CONNECTION.md`). Naprawione: liczone bezpośrednio z `employments` (start_date/end_date), zgodnie z definicją używaną przez oryginalny raport.
+
+Zweryfikowane wizualnie (browser, brak błędów w konsoli) i liczbowo (marża 2020 z raportu = 19,22%, identyczna z bazą). **Nie zacommitowane/wypchnięte przeze mnie** — publikacja publicznej strony wymaga jawnej zgody, użytkownik zdecydował zrobić to sam (komendy podane w czacie).
