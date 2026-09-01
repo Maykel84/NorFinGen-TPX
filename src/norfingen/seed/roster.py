@@ -162,7 +162,13 @@ CUSTOMERS: list[CustomerSeed] = [
                  invoice_day=20, payment_terms=30, onboarding_date=date(2021, 2, 1),  # po wzroście do 10 os.
                  churn_date=date(2024, 11, 30)),  # odchodzi po 3,5 roku współpracy — realistyczny churn SMB
     CustomerSeed("K10", "Kristiansen Gruppen AS", "Mid-market", "Oslo", "C", None, "P05",
-                 invoice_day=8, payment_terms=30, onboarding_date=date(2020, 4, 1)),
+                 # Faza 7b, Zadanie 1c — MACRO_SHOCK (COVID_2020): pierwotny
+                 # onboarding 2020-04-01 wypadał w oknie lockdownu (marzec-
+                 # czerwiec) — new_client_onboarding_freeze, przesunięte
+                 # deterministycznie na pierwszy miesiąc po oknie (nie losowo,
+                 # świadoma korekta historyczna, potwierdzona przez
+                 # użytkownika mimo że wymaga pełnego re-backfillu).
+                 invoice_day=8, payment_terms=30, onboarding_date=date(2020, 7, 1)),
     CustomerSeed("K11", "Rogaland Teknikk AS", "Enterprise", "Stavanger", "B", "P01", "P04",
                  invoice_day=2, payment_terms=30, onboarding_date=date(2019, 10, 15)),  # komplet 4 Enterprise do końca 2019
     CustomerSeed("K12", "Agder Maritime AS", "SMB", "Kristiansand", "A", "P03", None,

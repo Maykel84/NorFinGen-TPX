@@ -520,3 +520,39 @@ Po naprawie konta 7790 (p.13i) użytkownik dokończył całą sekwencję: `run_b
 Lista faktycznie wylosowanych zdarzeń — zob. p.13h (29 zdarzeń, niezmienione — deterministyczne, więc backfill odtworzył dokładnie te same).
 
 **Faza 7 — kompletna, w pełni wdrożona na produkcji.** Kod zacommitowany i wypchnięty (`v5.11-faza7-life-events` + naprawa konta 7790, commit `aac427d`, do wypchnięcia razem z tą aktualizacją dokumentacji).
+
+---
+
+## Faza 7b — szok makroekonomiczny 2020 (MACRO_SHOCK), 2026-08-20
+
+Rozszerzenie Fazy 7 — nowa kategoria zdarzenia, jakościowo różna od reszty katalogu: **deterministycznie wstawiony fakt historyczny** (realny szok COVID-19 w Norwegii, marzec-czerwiec 2020), nie losowana możliwość. Zaimplementowane w nowym module `src/norfingen/generators/macro_shock.py` — świadomie oddzielonym od `client_events.py`/`company_events.py`/`seasonality.py`, bez żadnego `random.Random()` (nie ma czego losować).
+
+### Zaimplementowane efekty (Zadanie 1)
+
+- **1b — wolumen ticketów**: `apply_macro_shock_multiplier()` — ×0,65 dla WSZYSTKICH aktywnych klientów jednocześnie (szok rynkowy, nie per-klient jak `TEMPORARY_HARDSHIP`), marzec-czerwiec 2020. Podłączone w `hours_generator.generate_daily_support_hours` obok fellesferie/UNPROFITABLE_QUARTER (mnożnikowo, na `target_billable` I `n_clients_today` — ta sama naprawa co Zadanie 4 Fazy 7a, żeby mnożnik był faktycznie wiążący).
+- **1c — wstrzymanie onboardingu**: sprawdzone — **jeden klient miał onboarding w oknie** (K10 Kristiansen Gruppen AS, pierwotnie 2020-04-01). Przesunięty deterministycznie na **2020-07-01** (pierwszy miesiąc po oknie) w `roster.py`, potwierdzone przez użytkownika mimo że dotyka już zbackfillowanej historii — bezpieczne, bo pełny reset+backfill jest zaplanowany w tej samej sesji (Zadanie 3).
+- **1d — tłumienie extra-consultingu**: `extra_consulting_shock_multiplier()` — próg `should_generate_extra_consulting` × 0,3 w oknie. W praktyce marzec jest i tak poza `EXTRA_CONSULTING_MONTHS` (Q2/Q4), więc realny efekt dotyczy tylko kwietnia-czerwca.
+- **1e — opóźnienia płatności, nie fala bankructw**: `payment_delay_adjusted_bad_debt()` — podnosi P(OVERDUE) ×1,8, ale przelicza `written_off_share` tak, żeby **absolutne** P(WRITTEN_OFF) zostało DOKŁADNIE na poziomie sprzed korekty (matematyka w docstringu funkcji). Nowy parametr `written_off_share` w `determine_order_status`/`_build_order`, składa się poprawnie z istniejącym `HARDSHIP_BAD_DEBT_MULTIPLIER` (Faza 7, Zadanie 2) jeśli oba akurat się nałożą.
+
+### Testy (Zadanie 2)
+
+`tests/test_faza7b_macro_shock.py` (4 testy z prompta, zaadaptowane do rzeczywistego API — `CUSTOMERS` to `CustomerSeed` dataclasses, nie dicty):
+- Redukcja wolumenu ticketów — porównanie WEWNĄTRZ 2020 (miesiące COVID vs pozostałe), nie cross-rok (2019→2020→2021 baza klientów rośnie 2→8→10, co samo w sobie zmienia surowe liczby niezależnie od COVID — cross-rok byłby mylący)
+- Marża 2023-2026 niezmieniona — pełny `run_backfill()` w pamięci, ten sam próg co `test_faza6_market_calibration.py`
+- Brak onboardingu w oknie COVID — po korekcie K10 przechodzi
+- WRITTEN_OFF rate 2020 < 2% (wyraźnie poniżej podniesionego OVERDUE, blisko bazowych ~0,4%)
+
+**229/229 testów offline** (`pytest -q`).
+
+### Offline sanity-check (Zadanie 3)
+
+| Rok | Marża przed Fazą 7b | Marża po Fazie 7b | Uwaga |
+|---|---|---|---|
+| 2019 | -25,67% | -25,67% | bez zmian (MACRO_SHOCK dotyczy tylko 2020) |
+| **2020** | 20,57% (Faza 7a) | **19,22%** | spadek ~1,4pp — miękka wytyczna spełniona (nie poniżej -50%, nie powyżej poprzedniego poziomu) |
+| 2021 | 17,30% | 17,30% | bez zmian |
+| 2023-2026 | 8,04% / 7,00% / 6,06% / 7,03% | **identyczne** | twardy próg 5,5-9% nienaruszony, zweryfikowane bezpośrednio |
+
+Efekt na 2020 jest umiarkowany (nie ekstremalny) — spójne z charakterem "trudnego roku startowego" opisanym w zadaniu, nie tworzy niczego w rodzaju -300%. Główna dźwignia przychodowa to przesunięcie onboardingu K10 (3 miesiące mniej przychodu Mid-market w 2020) — reszta efektów (redukcja ticketów, tłumienie extra-consultingu, opóźnienia płatności) jest z definicji przychodowo-neutralna lub prawie neutralna (`hour_entries` nie dotyka P&L; OVERDUE przesuwa TERMIN wpłaty, nie kwotę zaksięgowanego przychodu).
+
+**WYNIK: PASS.** Zgodnie z procedurą — TRUNCATE + backfill na żywej bazie **NIE wykonane przeze mnie** (trwałe usuwanie danych produkcyjnych, ta sama zasada co w Fazie 7), czeka na użytkownika: wyłącz `daily.yml` → `TRUNCATE` (te same 10 tabel) → `run_backfill.py --start 2019-01-01` → `run_backfill.py --mode daily --start 2019-01-01` → `scripts/fix_outgoing_transactions.py` → włącz `daily.yml` z powrotem. **Uwaga**: ponieważ K10 zmienił `onboarding_date`, to MUSI być pełny reset (nie inkrementalny) — stary rekord K10 z kwietnia 2020 w obecnej bazie produkcyjnej stałby się niespójny z nowym kodem bez `TRUNCATE`.

@@ -54,6 +54,7 @@ from norfingen.generators.client_events import (
     effective_customer_services,
     event_aware_is_customer_active,
 )
+from norfingen.generators.macro_shock import extra_consulting_shock_multiplier, payment_delay_adjusted_bad_debt
 from norfingen.generators.seasonality import q4_budget_flush_multiplier
 from norfingen.models.base import TripletexRef
 from norfingen.models.order import Order, OrderLine, OrderStatus
@@ -138,7 +139,8 @@ def _clamp_day(year: int, month: int, day: int) -> int:
     return min(day, last_day)
 
 
-def determine_order_status(customer_number: str, order_date: date, bad_debt_probability: float = BAD_DEBT_PROBABILITY) -> OrderStatus:
+def determine_order_status(customer_number: str, order_date: date, bad_debt_probability: float = BAD_DEBT_PROBABILITY,
+                            written_off_share: float = WRITTEN_OFF_SHARE_OF_BAD_DEBT) -> OrderStatus:
     """Ustala los faktury sprzedaży (bad debt) — domyślnie ~2% opóźnionych
     >90 dni, z czego ~20% (0.4% wszystkich) nieściągalnych.
 
@@ -152,22 +154,29 @@ def determine_order_status(customer_number: str, order_date: date, bad_debt_prob
 
     Faza 7, Zadanie 2c — `bad_debt_probability` opcjonalnie nadpisywany przez
     wywołującego (generate_monthly_orders) podczas aktywnego
-    TEMPORARY_HARDSHIP klienta (zob. client_events.HARDSHIP_BAD_DEBT_MULTIPLIER)."""
+    TEMPORARY_HARDSHIP klienta (zob. client_events.HARDSHIP_BAD_DEBT_MULTIPLIER).
+
+    Faza 7b, Zadanie 1e — `written_off_share` opcjonalnie nadpisywany podczas
+    MACRO_SHOCK (COVID_2020): oba parametry razem pochodzą z
+    macro_shock.payment_delay_adjusted_bad_debt(), które podnosi P(OVERDUE)
+    zachowując P(WRITTEN_OFF) DOKŁADNIE na normalnym poziomie — opóźnienie
+    płatności ≠ fala bankructw."""
     rng = random.Random(f"bad-debt-{customer_number}-{order_date.isoformat()}")
     if rng.random() < bad_debt_probability:
-        if rng.random() < WRITTEN_OFF_SHARE_OF_BAD_DEBT:
+        if rng.random() < written_off_share:
             return OrderStatus.WRITTEN_OFF
         return OrderStatus.OVERDUE
     return OrderStatus.PAID
 
 
 def _build_order(customer: CustomerSeed, year: int, month: int, day: int, order_lines: list[OrderLine],
-                  bad_debt_probability: float = BAD_DEBT_PROBABILITY, status_override: Optional[OrderStatus] = None) -> Order:
+                  bad_debt_probability: float = BAD_DEBT_PROBABILITY, written_off_share: float = WRITTEN_OFF_SHARE_OF_BAD_DEBT,
+                  status_override: Optional[OrderStatus] = None) -> Order:
     order_date = date(year, month, _clamp_day(year, month, day))
     last_day = calendar.monthrange(year, month)[1]
     delivery_date = date(year, month, last_day)
     month_label = f"{MONTH_NAMES_NO[month - 1]} {year}"
-    status = status_override if status_override is not None else determine_order_status(customer.number, order_date, bad_debt_probability)
+    status = status_override if status_override is not None else determine_order_status(customer.number, order_date, bad_debt_probability, written_off_share)
     return Order(
         customer=TripletexRef(id=numeric_id(customer.number)),
         orderDate=order_date,
@@ -232,14 +241,23 @@ def should_generate_extra_consulting(customer: CustomerSeed, month: int, year: i
     q4_budget_flush_multiplier (listopad/grudzień, Enterprise/Mid-market),
     zamiast równoległego mechanizmu — istniejący próg EXTRA_CONSULTING_MONTHS
     (Q2/Q4) już ogranicza miesiące, mnożnik tylko podbija częstotliwość w
-    Q4 ponad to, co jest w Q2. min(..., 1.0) — czysto obronne, przy obecnych
-    stałych (0.15/0.08 * 1.4) nigdy nie osiąga 1.0."""
+    Q4 ponad to, co jest w Q2.
+
+    Faza 7b, Zadanie 1d — MACRO_SHOCK (COVID_2020): próg dodatkowo × 0,3
+    w marcu-czerwcu 2020 (extra_consulting_shock_multiplier) — klienci nie
+    zamawiają dodatkowych projektów digitalizacyjnych w środku lockdownu.
+    min(..., 1.0) — czysto obronne, przy obecnych stałych nigdy nie
+    osiąga 1.0."""
     if customer.segment not in EXTRA_CONSULTING_PROBABILITY:
         return False
     if month not in EXTRA_CONSULTING_MONTHS:
         return False
     rng = random.Random(f"extra-consulting-{customer.number}-{year}-{month}")
-    threshold = EXTRA_CONSULTING_PROBABILITY[customer.segment] * q4_budget_flush_multiplier(month, customer.segment)
+    threshold = (
+        EXTRA_CONSULTING_PROBABILITY[customer.segment]
+        * q4_budget_flush_multiplier(month, customer.segment)
+        * extra_consulting_shock_multiplier(year, month)
+    )
     return rng.random() < min(threshold, 1.0)
 
 
@@ -291,12 +309,19 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
             bad_debt_probability = BAD_DEBT_PROBABILITY
             if event_state.hardship_active_until is not None:
                 bad_debt_probability = min(BAD_DEBT_PROBABILITY * HARDSHIP_BAD_DEBT_MULTIPLIER, 1.0)
+            # Faza 7b, Zadanie 1e — MACRO_SHOCK (COVID_2020): podnosi OVERDUE,
+            # zachowuje WRITTEN_OFF na poziomie sprzed tej korekty (czy to
+            # normalnym, czy już podniesionym przez TEMPORARY_HARDSHIP powyżej).
+            bad_debt_probability, written_off_share = payment_delay_adjusted_bad_debt(
+                bad_debt_probability, WRITTEN_OFF_SHARE_OF_BAD_DEBT, year, month,
+            )
             status_override = OrderStatus.WRITTEN_OFF if event_state.triggered_this_month == "BANKRUPTCY" else None
 
             lines = build_order_lines(customer, order_date)
             orders.append(_build_order(
                 customer, year, month, customer.invoice_day, lines,
-                bad_debt_probability=bad_debt_probability, status_override=status_override,
+                bad_debt_probability=bad_debt_probability, written_off_share=written_off_share,
+                status_override=status_override,
             ))
 
             if event_state.triggered_this_month == "BANKRUPTCY":

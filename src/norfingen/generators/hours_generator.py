@@ -34,6 +34,7 @@ from datetime import date, timedelta
 
 from norfingen.generators.client_events import event_aware_is_customer_active, hardship_ticket_multiplier_for
 from norfingen.generators.company_events import unprofitable_quarter_ticket_multiplier
+from norfingen.generators.macro_shock import apply_macro_shock_multiplier
 from norfingen.generators.seasonality import fellesferie_activity_multiplier
 from norfingen.models.hours import ActivityType, HourEntry
 from norfingen.seed.roster import (
@@ -212,7 +213,14 @@ def generate_daily_support_hours(
     # target_billable rzadko była wiążąca. Mnożnik teraz skaluje też
     # n_clients_today (faktyczny, wiążący sufit) — target_billable zostaje
     # jako dodatkowe zabezpieczenie na wypadek dużych klientów/segmentów.
+    #
+    # Faza 7b, Zadanie 1b — MACRO_SHOCK (COVID_2020, marzec-czerwiec 2020):
+    # nakłada się na powyższe mnożnikowo (apply_macro_shock_multiplier),
+    # dotyczy WSZYSTKICH aktywnych klientów jednocześnie (szok rynkowy),
+    # nie losowany jak TEMPORARY_HARDSHIP — deterministycznie wstawiony
+    # fakt historyczny na 2020, zob. macro_shock.py.
     activity_multiplier = fellesferie_activity_multiplier(on_date.month) * unprofitable_quarter_ticket_multiplier(on_date.year, on_date.month)
+    activity_multiplier = apply_macro_shock_multiplier(on_date.year, on_date.month, activity_multiplier)
     target_billable = rng.uniform(TICKET_TARGET_BILLABLE_MIN, TICKET_TARGET_BILLABLE_MAX) * activity_multiplier
     n_clients_today = min(len(assigned_customers), rng.randint(TICKET_CLIENTS_PER_DAY_MIN, TICKET_CLIENTS_PER_DAY_MAX))
     n_clients_today = max(1, round(n_clients_today * activity_multiplier))
