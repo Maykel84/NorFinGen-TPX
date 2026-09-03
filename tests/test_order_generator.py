@@ -34,7 +34,9 @@ def test_monthly_orders_use_customer_invoice_day():
 
 
 def test_monthly_orders_use_customer_payment_terms():
-    orders = generate_monthly_orders(2024, 1)
+    # 2022-01, nie 2024-01 — Faza 7c: K03 churnuje 2023-04-01
+    # (MAJOR_INCIDENT_2023), więc test przesunięty na datę sprzed odejścia.
+    orders = generate_monthly_orders(2022, 1)
     k02 = next(o for o in orders if o.customer.id == 2)  # payment_terms=14
     k03 = next(o for o in orders if o.customer.id == 3)  # payment_terms=45
     assert k02.invoicesDueIn == 14
@@ -295,19 +297,18 @@ def test_customer_churn_no_daily_orders_after_churn_date():
     assert not any(o.customer.id == 9 for o in orders_after_churn)
 
 
-def test_only_smb_customers_have_churn_date():
-    # Faza 4 (Zadanie 4, opcjonalne): +1 churn SMB (K15) obok istniejącego K09
-    # -> 2 klientów z churn_date, oboje SMB.
+def test_static_churn_dates_match_known_roster():
+    # Faza 4: K09/K15 (SMB, realistyczny churn). Faza 7c, Zadanie 1: K03
+    # (Enterprise, MAJOR_INCIDENT_2023 — utrata kontraktu na rzecz
+    # konkurencji) — świadomy, jednorazowy wyjątek od wcześniejszej reguły
+    # "Enterprise nie ma churnu" (zob. SESSION_HANDOFF.md, Faza 7c: próg
+    # 5,5-9% wraca bez wyjątków po tej fazie, to nie jest nowa, luźniejsza
+    # reguła). Zadanie 2 (echo Mid-market 2025) świadomie WYCOFANE — jeden
+    # incydent bez wymuszonej kompensacji już dał wystarczająco realistyczny,
+    # wieloletni efekt (zob. SESSION_HANDOFF.md).
     from norfingen.seed.roster import CUSTOMERS
-    churned = [c for c in CUSTOMERS if c.churn_date is not None]
-    assert len(churned) == 2
-    assert {c.number for c in churned} == {"K09", "K15"}
-    for c in churned:
-        assert c.segment == "SMB"
-    # Enterprise nie mają churnu (długoterminowe kontrakty).
-    for c in CUSTOMERS:
-        if c.segment == "Enterprise":
-            assert c.churn_date is None
+    churned = {c.number: c.segment for c in CUSTOMERS if c.churn_date is not None}
+    assert churned == {"K09": "SMB", "K15": "SMB", "K03": "Enterprise"}
 
 
 def test_no_orders_before_any_customer_onboarding():
@@ -322,12 +323,13 @@ def test_customer_count_grows_with_onboarding_schedule():
     assert {o.customer.id for o in orders_march_2019} == {1}
 
     # Sierpień 2023: poza wszystkimi progami K06 (Q2/Q4/sty/lip) -> gwarantowane
-    # 0% szans na jego udział, więc dokładnie 11 oryginalnych A/B/C (K01-K12
-    # minus K06) + kohorta fuzji 2022-09 (4) + nowi klienci onboardowani do
-    # sierpnia 2023 (Faza 4: K13-K18, zob. roster._NEW_CUSTOMER_SEED_DATA) = 21,
+    # 0% szans na jego udział, więc 11 oryginalnych A/B/C (K01-K12 minus K06)
+    # + kohorta fuzji 2022-09 (4) + nowi klienci onboardowani do sierpnia 2023
+    # (Faza 4: K13-K18) = 21, MINUS K03 (Faza 7c, MAJOR_INCIDENT_2023 —
+    # churn_date=2023-04-01, więc już nieaktywny w sierpniu) = 20,
     # bez zależności od losowego wyniku RNG.
     orders_2023 = generate_monthly_orders(2023, 8)
-    assert len({o.customer.id for o in orders_2023}) == 21
+    assert len({o.customer.id for o in orders_2023}) == 20
 
 
 def test_customer_not_onboarded_yet_generates_no_order():

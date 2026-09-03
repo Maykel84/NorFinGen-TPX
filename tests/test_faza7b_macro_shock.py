@@ -11,16 +11,11 @@ wewnątrzroczne izoluje efekt szoku przy tej samej bazie klientów/pracowników.
 
 from datetime import date, timedelta
 
-from norfingen.generators.backfill import DEFAULT_START_DATE, run_backfill
 from norfingen.generators.hours_generator import generate_daily_hours, is_working_day
 from norfingen.generators.order_generator import generate_monthly_orders
-from norfingen.generators.voucher import Voucher
 from norfingen.models.hours import ActivityType
-from norfingen.models.order import Order, OrderStatus
+from norfingen.models.order import OrderStatus
 from norfingen.seed.roster import CUSTOMERS
-
-MARGIN_SAFETY_LOW = 0.055
-MARGIN_SAFETY_HIGH = 0.09
 
 
 def _monthly_ticket_count(year: int, month: int) -> int:
@@ -46,41 +41,28 @@ def test_macro_shock_reduces_2020_covid_window_ticket_volume():
 
 
 def test_macro_shock_does_not_affect_2023_2026():
-    """Próg bezpieczeństwa marży 5,5-9% dla lat dojrzałych pozostaje
-    nienaruszony — MACRO_SHOCK jest ograniczony do 2020, nie dotyka
-    późniejszych lat w żaden sposób (ani przez stan, ani przez efekt
-    uboczny)."""
-    revenue: dict[int, float] = {}
-    payroll: dict[int, float] = {}
-    opex: dict[int, float] = {}
-    cogs: dict[int, float] = {}
+    """MACRO_SHOCK (COVID_2020) samo w sobie nie dotyka lat dojrzałych w
+    żaden sposób — wszystkie trzy mnożniki wracają do 1.0 (no-op) poza
+    oknem marzec-czerwiec 2020.
 
-    def collect(obj):
-        if isinstance(obj, Order):
-            year = obj.orderDate.year
-            revenue[year] = revenue.get(year, 0.0) + sum(
-                line.count * line.unitPriceExcludingVatCurrency for line in obj.orderLines
-            )
-        elif isinstance(obj, Voucher):
-            year = obj.date.year
-            for p in obj.postings:
-                if p.amount <= 0:
-                    continue
-                n = p.account.number
-                if 5000 <= n <= 5999:
-                    payroll[year] = payroll.get(year, 0.0) + p.amount
-                elif 6000 <= n <= 7999:
-                    opex[year] = opex.get(year, 0.0) + p.amount
-                elif 4000 <= n <= 4999:
-                    cogs[year] = cogs.get(year, 0.0) + p.amount
-
-    run_backfill(start_date=DEFAULT_START_DATE, end_date=date(2026, 7, 31), persist_fn=collect)
+    NAPRAWA (Faza 7c): pierwotnie ten test uruchamiał pełny backfill i
+    sprawdzał margin 2023-2026 w paśmie 5,5-9% — ale to pasmo NIE jest już
+    aktualne dla tych lat po Fazie 7c (MAJOR_INCIDENT_2023, świadomy,
+    udokumentowany wieloletni wyjątek, zob. SESSION_HANDOFF.md i
+    test_faza6_market_calibration.py). Test przez to fałszywie sugerowałby
+    regresję MACRO_SHOCK, mimo że przyczyna leży całkowicie gdzie indziej
+    (późniejsza, niezwiązana faza). Bezpośrednia weryfikacja funkcji
+    mnożników jest właściwym, odpornym na takie sprzężenia sposobem
+    sprawdzenia TEGO konkretnego twierdzenia."""
+    from norfingen.generators.macro_shock import (
+        apply_macro_shock_multiplier,
+        extra_consulting_shock_multiplier,
+    )
 
     for year in (2023, 2024, 2025, 2026):
-        r = revenue[year]
-        total_cost = payroll.get(year, 0.0) + opex.get(year, 0.0) + cogs.get(year, 0.0)
-        margin = (r - total_cost) / r
-        assert MARGIN_SAFETY_LOW <= margin <= MARGIN_SAFETY_HIGH, f"{year}: margin={margin:.4f} poza progiem"
+        for month in range(1, 13):
+            assert apply_macro_shock_multiplier(year, month, 1.0) == 1.0
+            assert extra_consulting_shock_multiplier(year, month) == 1.0
 
 
 def test_no_onboarding_during_covid_window():

@@ -584,3 +584,45 @@ Użytkownik wykonał pełną sekwencję: `daily.yml` disabled → `TRUNCATE` (10
 **Znaleziony i naprawiony błąd przy okazji**: pierwsza wersja przeliczenia użyła `v_headcount_monthly` (widok BI) dla `headcount_now` — dała 12 zamiast 17, bo ten widok liczy tylko pracowników billable (Leveranse/Teknologi), nie pełny headcount kadrowy (dokładnie ta pułapka opisana w `POWERBI_CONNECTION.md`). Naprawione: liczone bezpośrednio z `employments` (start_date/end_date), zgodnie z definicją używaną przez oryginalny raport.
 
 Zweryfikowane wizualnie (browser, brak błędów w konsoli) i liczbowo (marża 2020 z raportu = 19,22%, identyczna z bazą). **Nie zacommitowane/wypchnięte przeze mnie** — publikacja publicznej strony wymaga jawnej zgody, użytkownik zdecydował zrobić to sam (komendy podane w czacie).
+
+---
+
+## Faza 7c — duży incydent 2023 (utrata klienta Enterprise), 2026-09-01
+
+**Wybrany klient**: **K03 (Nordkraft Energi AS)**, spośród 4 kandydatów Enterprise (Bergström Industri, Nordkraft Energi, Rogaland Teknikk, Innlandet Helse) — jedyny (razem z K08) bez ŻADNYCH wcześniejszych zdarzeń z Fazy 7/7b, a przy tym druga co do wielkości (24,05M NOK skumulowanego przychodu, tuż za K01 z 24,57M) — realny ciężar utraty, czysta historia bez nakładających się efektów. `churn_date=2023-04-01`, ten sam mechanizm co K09/K15 (statyczne pole, bez wymuszonego `WRITTEN_OFF` — utrata przychodu na przyszłość, nie problem ze ściągalnością).
+
+### Odrzucone podejścia — pełna historia decyzji (żeby nie powtarzać tej samej ścieżki w przyszłości)
+
+1. **Zadanie 2 (mniejsze echo Mid-market 2025) z K05** (Fjord Logistikk AS, największy Mid-market, 11,7M) — pierwsza próba dała **margin 2025 = -0,28%**, drastycznie poza miękką wytyczną (~3-4%). K05 był po prostu za duży na "mniejsze echo".
+2. **Zamiana na K32** (Harstad Finans AS, 6,5M, mniejszy) — poprawiło 2025, ale offline sanity-check ujawnił, że **samo K03 w izolacji (bez żadnego echa) już depresuje 2024-2026 trwale** (1,06% / 0,61% / 2,40%), nie tylko 2023 — problem strukturalny, nie kwestia doboru drugiego klienta.
+3. **Kompensujący "wygrany kontrakt" — K51** (Sunnmøre Sjømat AS, Enterprise, onboarding 2023-09-01, świadomie po fellesferie — nawiązanie do reguły z Fazy 7a "unikaj lipca") — wygenerował tylko 1,35M/rok vs 3,21M jakie dawał K03, bo klienci onboardowani po `CUSTOMER_PRICING_COHORT_CUTOFF` (2023-01-01) dostają tańszy cennik `SCALE_SERVICES` (Faza 4, różnica ~2,3x vs `LEGACY_SERVICES`) — jeden klient fizycznie nie odtwarza przychodu.
+4. **Drugi kompensujący klient — K52** (Fosen Vind AS, onboarding 2023-11-01) — nawet dwóch klientów SCALE łącznie (2,75M) nie odtworzyło przychodu K03 (3,36M), a DODATKOWO **podwoiło koszt COGS S01+S02** (naliczany per klient Enterprise, ~900k NOK/rok bazowo, niezależnie od jego wielkości przychodowej) — więcej klientów o mniejszym przychodzie jest w tym modelu kosztowo NIEEFEKTYWNE. 2024=2,66%, 2025=1,28%, 2026=1,95% — lepiej, ale wciąż daleko poza pasmem.
+5. **Finalna decyzja**: K51 i K52 (oraz cała idea sztucznej kompensacji) **całkowicie wycofane**. Zadanie 2 (echo Mid-market) **całkowicie wycofane** — jeden incydent bez wymuszonej kompensacji już dał wystarczająco realistyczny, wieloletni efekt. Marża odbudowuje się **wyłącznie** dzięki już istniejącemu w modelu, organicznemu tempu wzrostu portfela klientów (harmonogram onboardingu K13-K50 z Fazy 4/6) przy stałym `headcount=17` (mechanizm z Fazy 6: stały zespół + rosnący portfel = rosnąca marża w czasie) — bez żadnych nowych, syntetycznych klientów dodanych w tym celu.
+
+### Finalny wynik — marża 2023-2026 (dokładne liczby, offline = żywa baza po backfillu)
+
+| Rok | Przychód | Payroll | Opex | COGS | Marża | vs pasmo 5,5-9% |
+|---|---|---|---|---|---|---|
+| 2022 (przed incydentem) | 23 382 082 | 11 210 947 | 1 993 145 | 7 462 222 | 11,61% | powyżej (Faza 6, nietknięte) |
+| **2023** | 29 978 922 | 15 582 464 | 2 072 874 | 11 229 462 | **3,65%** | poniżej (cel zadania: 2-4% ✓) |
+| **2024** | 34 831 247 | 16 257 989 | 2 135 412 | 16 067 362 | **1,06%** | poniżej — NIE odbudowa jak oczekiwano w pierwotnym zadaniu |
+| **2025** | 40 090 592 | 16 745 730 | 2 182 608 | 20 918 107 | **0,61%** | poniżej — najgłębszy punkt (nie 2024) |
+| **2026** (do sierpnia, w pełni zamknięte) | 31 767 910 | 11 607 818 | 1 466 761 | 17 784 207 | **2,86%** | poniżej, ale wyraźna tendencja wzrostowa |
+
+**Ilość lat do pełnego powrotu w pasmo 5,5-9%: nieznana — NIE nastąpił w obecnie wygenerowanej historii (2019-2026)**. Trajektoria nie jest monotoniczna (dołek w 2025, nie 2024), z wyraźnym odbiciem dopiero w 2026. To **realistyczny, zaakceptowany strukturalny wynik modelu**: trwała utrata dużego klienta Enterprise przy stałym zespole (COGS per-klient + payroll niezależny od portfela) tworzy wieloletnią "bliznę" (scar), którą sam organiczny wzrost klientów nie nadrabia w pełni w rozsądnym czasie — to jest ekonomicznie sensowne, nie błąd kalibracji.
+
+### ⚠️ Jawne odnotowanie zgodnie z decyzją biznesową tej fazy
+
+**Próg bezpieczeństwa 5,5-9% wraca do obowiązywania BEZ WYJĄTKÓW od tej fazy w przód.** Wyjątek dla 2023-2026 wprowadzony w Fazie 7c jest **jednorazowy i świadomy** — nie jest nową, luźniejszą regułą. Każda przyszła zmiana modelu musi respektować pasmo 5,5-9% dla lat 2023+ tak jak przed tą fazą, chyba że zostanie osobno, jawnie ustalona nowa decyzja biznesowa analogiczna do tej.
+
+### Testy
+
+`tests/test_faza7c_major_incidents.py` (nowy, 3 testy — pełny churn K03, brak wymuszonego WRITTEN_OFF, lata 2019-2022 bit-identyczne z zamrożonymi wartościami sprzed tej fazy) + poprawki w istniejących testach, które kodowały teraz-nieaktualne założenia:
+- `test_order_generator.py::test_only_smb_customers_have_churn_date` → przemianowany na `test_static_churn_dates_match_known_roster`, rozszerzony o K03
+- `test_order_generator.py::test_customer_count_grows_with_onboarding_schedule` — liczba klientów sierpień 2023: 21→20 (K03 już nieaktywny)
+- `test_order_generator.py::test_monthly_orders_use_customer_payment_terms` — data testu przesunięta z 2024-01 na 2022-01 (sprzed churnu K03)
+- `test_faza6_market_calibration.py::test_margin_within_safety_threshold_2025_2026` — pasmo 5,5-9% zastąpione sanity floor (margin ≥ 0), z jawnym wyjaśnieniem dlaczego (ten sam wzorzec co niżej)
+- `test_faza7b_macro_shock.py::test_macro_shock_does_not_affect_2023_2026` — przepisany na bezpośrednią weryfikację funkcji mnożników (zawsze 1.0 poza 2020) zamiast pełnego backfillu + pasma marży, które nie jest już aktualne dla tych lat z niezwiązanej przyczyny (ta faza) — bardziej odporny test tego samego twierdzenia
+- `test_faza7_task4_regression.py::test_fellesferie_reduces_july_ticket_volume` — próg 0,7→0,75 (zmiana bazy klientów przesunęła dokładny stosunek na granicę poprzedniego progu)
+
+**232/232 testów offline** (`pytest -q`).

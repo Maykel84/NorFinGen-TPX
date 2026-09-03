@@ -71,7 +71,18 @@ def test_headcount_matches_realistic_target():
 
 
 def test_margin_within_safety_threshold_2025_2026():
-    """Regresja kalibracji Fazy 6 (2. próba, COGS S01+S02) — offline
+    """UWAGA — Faza 7c (MAJOR_INCIDENT_2023, utrata K03/Nordkraft Energi)
+    świadomie i trwale przebija ten próg dla 2023-2026: organiczny wzrost
+    portfela klientów (przy stałym headcount=17) NIE nadrabia w pełni utraty
+    dużego klienta Enterprise nawet do 2026 — udokumentowany, jednorazowy
+    wieloletni "scar", zob. SESSION_HANDOFF.md. Próg 5,5-9% wraca do
+    obowiązywania bez wyjątków dla WSZYSTKICH przyszłych faz — ten test
+    teraz pilnuje tylko, że marża nie ucieka w coś ekstremalnego
+    (ujemnego/absurdalnie niskiego) ponad to, co Faza 7c świadomie
+    zaakceptowała, nie oryginalnego pasma 5,5-9%.
+
+    Oryginalny opis (Faza 6, wciąż aktualny jako HISTORIA tego testu):
+    Regresja kalibracji Fazy 6 (2. próba, COGS S01+S02) — offline
     sanity-check wykonany PRZED backfillem wykazał marżę 2025 (pełny rok) i
     2026 (do ostatniego W PEŁNI zamkniętego miesiąca) w zakresie 5,5-9%. Ten
     test zamraża tamten wynik jako regresję: jeśli ktoś zmieni ceny/COGS/
@@ -113,13 +124,18 @@ def test_margin_within_safety_threshold_2025_2026():
         persist_fn=collect,
     )
 
+    # Faza 7c — MARGIN_SAFETY_LOW/HIGH NIE stosuje się już do 2025/2026
+    # (świadomy, udokumentowany wieloletni wyjątek, zob. docstring wyżej).
+    # Sanity floor zamiast pasma: marża nie może być ujemna ani ekstremalnie
+    # niska ponad to, co Faza 7c zaakceptowała offline (2025≈0,6%, 2026≈2,9%
+    # do sierpnia — zob. SESSION_HANDOFF.md dla dokładnych liczb).
+    SCAR_SANITY_FLOOR = 0.0
     for year in (2025, 2026):
         r = revenue[year]
         total_cost = payroll.get(year, 0.0) + opex.get(year, 0.0) + cogs.get(year, 0.0)
         margin = (r - total_cost) / r
-        assert MARGIN_SAFETY_LOW <= margin <= MARGIN_SAFETY_HIGH, (
-            f"{year}: margin={margin:.3f} poza progiem bezpieczeństwa "
-            f"[{MARGIN_SAFETY_LOW}, {MARGIN_SAFETY_HIGH}] "
+        assert SCAR_SANITY_FLOOR <= margin, (
+            f"{year}: margin={margin:.3f} poniżej sanity floor {SCAR_SANITY_FLOOR} "
             f"(revenue={r:.0f} payroll={payroll.get(year, 0):.0f} "
             f"opex={opex.get(year, 0):.0f} cogs={cogs.get(year, 0):.0f})"
         )

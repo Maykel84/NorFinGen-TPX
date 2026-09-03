@@ -147,7 +147,20 @@ CUSTOMERS: list[CustomerSeed] = [
     CustomerSeed("K02", "Halvorsen & Partnere AS", "Mid-market", "Oslo", "A", "P02", None,
                  invoice_day=7, payment_terms=14, onboarding_date=date(2019, 6, 1)),  # szybki płatnik
     CustomerSeed("K03", "Nordkraft Energi AS", "Enterprise", "Tromsø", "B", "P01", "P04",
-                 invoice_day=1, payment_terms=45, onboarding_date=date(2019, 4, 15)),  # duży klient, dłuższy termin
+                 invoice_day=1, payment_terms=45, onboarding_date=date(2019, 4, 15),  # duży klient, dłuższy termin
+                 # Faza 7c, Zadanie 1 — MAJOR_INCIDENT_2023 (ENTERPRISE_CONTRACT_LOSS):
+                 # utrata kontraktu na rzecz konkurencji przy odnowieniu, nie
+                 # BANKRUPTCY (to jest zarezerwowane dla SMB) — firma klienta
+                 # nadal istnieje, po prostu przestaje być klientem. Wybrana
+                 # spośród 4 największych Enterprise (Bergström Industri,
+                 # Nordkraft Energi, Rogaland Teknikk, Innlandet Helse) jako
+                 # jedyna (razem z K08) bez żadnych wcześniejszych zdarzeń z
+                 # Fazy 7/7b — druga co do wielkości (24,0M NOK), więc realny
+                 # ciężar utraty. Ten sam mechanizm co K09/K15 (statyczne
+                 # churn_date) — brak wymuszonego WRITTEN_OFF (w
+                 # przeciwieństwie do BANKRUPTCY): to utrata przychodu na
+                 # przyszłość, nie problem ze ściągalnością należności.
+                 churn_date=date(2023, 4, 1)),
     CustomerSeed("K04", "Solberg Bygg AS", "SMB", "Stavanger", "A", "P03", None,
                  invoice_day=10, payment_terms=30, onboarding_date=date(2020, 8, 1)),  # po ustabilizowaniu zespołu
     CustomerSeed("K05", "Fjord Logistikk AS", "Mid-market", "Bergen", "A", "P02", None,
