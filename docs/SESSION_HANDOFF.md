@@ -626,3 +626,35 @@ Zweryfikowane wizualnie (browser, brak błędów w konsoli) i liczbowo (marża 2
 - `test_faza7_task4_regression.py::test_fellesferie_reduces_july_ticket_volume` — próg 0,7→0,75 (zmiana bazy klientów przesunęła dokładny stosunek na granicę poprzedniego progu)
 
 **232/232 testów offline** (`pytest -q`).
+
+---
+
+## Audyt dostawców względem Brønnøysundregistrene (2026-09)
+
+Prompt referencjonował "poprzednią sesję" z `scripts/audit_name_collisions.py` (audyt klientów) — **sprawdzone, nie istnieje w tym repo, brak śladu w git ani w tym dokumencie**. Potraktowane jako punkt startowy od zera, udokumentowane wprost (nie milczane) w `docs/DATA_SAFETY.md`. Klienci pozostają nieaudytowani względem Brreg — poza zakresem tej sesji (Zadanie 1/2 promptu dotyczyły wyłącznie dostawców).
+
+**Zadanie 2 (nazwa własnej symulowanej firmy)**: sprawdzone — firma nigdzie w projekcie nie ma nadanej nazwy (ani `roster.py`, ani `DATA_DICTIONARY.md`, ani `raport-site` — wszędzie generyczne "the company"). Nic do zrobienia, czysty wynik.
+
+**Zadanie 1 (audyt 8 dostawców, `scripts/audit_supplier_names.py` → data.brreg.no)**:
+
+| # | Dostawca | Wynik | Decyzja |
+|---|---|---|---|
+| L01-L04 | Microsoft Norge AS, Telenor Norge AS, Reitan Convenience AS, Statsbygg | Dokładne dopasowania, org.nr potwierdzone | Bez zmian |
+| L05 | Sandvik IT Solutions AS | Tylko mała, niezwiązana firma "SANDVIK IT" (Fister) — nie globalny koncern | **Zostaje fikcyjna** (decyzja użytkownika) |
+| L06 | ~~Advokatfirma Thommessen~~ | Literówka (brak "et") — realna, znana kancelaria | **Poprawione** na "Advokatfirmaet Thommessen AS", org.nr 957423248 |
+| L07 | Avis Norge AS | Niejednoznaczne — API Brreg zwraca tysiące wyników na wieloznaczne słowo "avis" (norw. "gazeta") | **Zostaje bez zmian** (decyzja użytkownika — marka i tak rozpoznawalna) |
+| L08 | ~~Nordic Insurance Partners AS~~ | W pełni fikcyjny | **Zastąpione** realną marką "Gjensidige Forsikring ASA", org.nr 995568217 (decyzja użytkownika) |
+
+**Implementacja**: nowe pole `SupplierSeed.real_org_number` (Python, informacyjne) mapowane na **istniejącą** kolumnę `suppliers.organization_number` (standardowe pole schematu Tripletex — nie dodano nowej kolumny, wbrew sugestii promptu, bo już istniała i była niewykorzystana). Przy okazji naprawiony błąd: `seed_reference_data()` dla dostawców używał `ON CONFLICT (id) DO NOTHING` (w przeciwieństwie do `customers`, które ma `DO UPDATE`) — zmiana nazwy w `roster.py` nigdy by się nie propagowała do już istniejących rekordów w bazie. Zmienione na `DO UPDATE SET name, organization_number`, zgodnie ze wzorcem `customers`.
+
+**Zaktualizowano Supabase**: `seed_reference_data()` uruchomiony ręcznie (idempotentny UPSERT metadanych — bezpieczny, nie wymaga `TRUNCATE`/backfillu, bo to nie są dane transakcyjne). Zweryfikowano na żywej bazie: `suppliers.name`/`organization_number` poprawne dla wszystkich 8.
+
+**Znaleziony i naprawiony efekt uboczny**: 121 już istniejących `vouchers.description` zawierało stare nazwy tekstowo (`description` budowany raz przy generowaniu, nie odświeża się przy zmianie referencji — FK do `suppliers.id` był cały czas poprawny, to czysto kosmetyczny rozjazd tekstu). Naprawione jednorazowym skryptem `scripts/fix_stale_supplier_names_in_vouchers.py` (`UPDATE ... REPLACE()` na samym tekście opisu — **zero zmian kwot/kont/dat**, zweryfikowane przed i po). `postings.description` sprawdzone — zawsze `NULL`, nie wymagało naprawy.
+
+**raport-site**: sprawdzone — żadna ze zmienionych nazw (Thommessen, Gjensidige) nigdzie nie występuje w opublikowanym raporcie (widoczna tabela top-dostawców pokazuje tylko Avis/Microsoft/Sandvik/Telenor, bez zmian). **Regeneracja raportu niepotrzebna** dla tego zadania.
+
+**Zadanie 3**: `docs/DATA_SAFETY.md` utworzony (nie istniał) — pełny opis odwrotnej logiki klienci/dostawcy, tabela wyników audytu, znane ograniczenie (brak audytu klientów).
+
+Nowy test regresyjny: `tests/test_seed_roster_payroll.py::test_supplier_names_match_brreg_audit` — zamraża nazwy/`real_org_number` jako regresję, potwierdza że kwoty/konta L08 nietknięte. **233/233 testów offline.**
+
+Kod zacommitowany lokalnie (`98e9c24`) — git odzyskał dostęp (wcześniejszy problem macOS TCC na folderze Desktop ustąpił sam). Niewypchnięty jeszcze na GitHub.

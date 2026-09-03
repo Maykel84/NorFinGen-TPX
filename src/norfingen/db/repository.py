@@ -278,9 +278,13 @@ def seed_reference_data() -> None:
 
         for supplier in SUPPLIERS:
             cur.execute(
-                "INSERT INTO suppliers (id, name, supplier_number, country_id, currency_id) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                (numeric_id(supplier.number), supplier.name, supplier.number, NORWAY_COUNTRY_ID, NOK_CURRENCY_ID),
+                """INSERT INTO suppliers (id, name, supplier_number, country_id, currency_id, organization_number)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                       name = EXCLUDED.name,
+                       organization_number = EXCLUDED.organization_number""",
+                (numeric_id(supplier.number), supplier.name, supplier.number, NORWAY_COUNTRY_ID, NOK_CURRENCY_ID,
+                 supplier.real_org_number),
             )
 
     conn.commit()

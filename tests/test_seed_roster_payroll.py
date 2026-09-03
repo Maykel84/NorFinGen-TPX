@@ -228,3 +228,34 @@ def test_last_working_day_rolls_back_from_weekend():
 def test_is_june():
     assert is_june(6) is True
     assert is_june(5) is False
+
+
+def test_supplier_names_match_brreg_audit():
+    """Audyt dostawców względem Brønnøysundregistrene (2026-09,
+    scripts/audit_supplier_names.py) — zamraża wynik jako regresję: nazwy i
+    real_org_number nie powinny się cicho rozjechać z tym, co faktycznie
+    zweryfikowano w rejestrze. Zob. docs/DATA_SAFETY.md."""
+    by_number = {s.number: s for s in SUPPLIERS}
+
+    # Dokładne dopasowania — potwierdzony realny numer organizacyjny.
+    confirmed_real = {
+        "L01": "957485030",  # Microsoft Norge AS
+        "L02": "976967631",  # Telenor Norge AS
+        "L03": "983415652",  # Reitan Convenience AS
+        "L04": "971278374",  # Statsbygg
+        "L06": "957423248",  # Advokatfirmaet Thommessen AS
+        "L08": "995568217",  # Gjensidige Forsikring ASA
+    }
+    for number, org_number in confirmed_real.items():
+        assert by_number[number].real_org_number == org_number
+
+    # Świadomie fikcyjne / niepotwierdzone — brak real_org_number.
+    assert by_number["L05"].real_org_number is None  # Sandvik IT Solutions AS
+    assert by_number["L07"].real_org_number is None  # Avis Norge AS ("avis" niejednoznaczne w Brreg)
+
+    assert by_number["L06"].name == "Advokatfirmaet Thommessen AS"
+    assert by_number["L08"].name == "Gjensidige Forsikring ASA"
+
+    # Zadanie 1c — audyt dotyczy WYŁĄCZNIE nazw, nie kwot/kont.
+    assert by_number["L08"].amount_min == 38_000 and by_number["L08"].amount_max == 38_000
+    assert by_number["L08"].gl_account == 7500

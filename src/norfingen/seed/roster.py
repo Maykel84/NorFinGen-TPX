@@ -61,6 +61,14 @@ class SupplierSeed:
     amount_max: float
     capitalization_threshold: Optional[float] = None  # L05: >= 30 000 -> kapitalizacja
     capitalization_account: Optional[int] = None  # L05: 1200 Maskiner og anlegg
+    # Audyt dostawców względem Brønnøysundregistrene (data.brreg.no) — czysto
+    # informacyjne, nie wpływa na żadną logikę finansową. Wypełnione tylko dla
+    # dostawców z DOKŁADNYM dopasowaniem do realnej firmy (zob.
+    # scripts/audit_supplier_names.py, docs/DATA_SAFETY.md). None = dostawca
+    # świadomie fikcyjny (L05, L08 przed poprawką) albo niepotwierdzony przez
+    # samo API (L07 — ograniczenie wyszukiwarki Brreg na wieloznacznym słowie
+    # "avis").
+    real_org_number: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -443,10 +451,14 @@ def customer_postal_code(customer: CustomerSeed) -> str:
 
 
 SUPPLIERS: list[SupplierSeed] = [
-    SupplierSeed("L01", "Microsoft Norge AS", "Licencje software", 6410, "monthly_day_1", 85_000, 85_000),
-    SupplierSeed("L02", "Telenor Norge AS", "Telekomunikacja", 6900, "monthly_day_5", 17_100, 18_900),
-    SupplierSeed("L03", "Reitan Convenience AS", "Kontor / catering", 6800, "monthly_day_15", 8_000, 14_000),
-    SupplierSeed("L04", "Statsbygg", "Wynajem biura", 6300, "monthly_day_1", 45_000, 45_000),
+    SupplierSeed("L01", "Microsoft Norge AS", "Licencje software", 6410, "monthly_day_1", 85_000, 85_000,
+                 real_org_number="957485030"),
+    SupplierSeed("L02", "Telenor Norge AS", "Telekomunikacja", 6900, "monthly_day_5", 17_100, 18_900,
+                 real_org_number="976967631"),
+    SupplierSeed("L03", "Reitan Convenience AS", "Kontor / catering", 6800, "monthly_day_15", 8_000, 14_000,
+                 real_org_number="983415652"),
+    SupplierSeed("L04", "Statsbygg", "Wynajem biura", 6300, "monthly_day_1", 45_000, 45_000,
+                 real_org_number="971278374"),
     SupplierSeed(
         "L05",
         "Sandvik IT Solutions AS",
@@ -457,10 +469,24 @@ SUPPLIERS: list[SupplierSeed] = [
         80_000,
         capitalization_threshold=30_000,
         capitalization_account=1200,
+        # Świadomie fikcyjna — audyt Brreg (2026-09) znalazł tylko małą,
+        # niezwiązaną firmę "SANDVIK IT" (Fister, org.nr 933277437), nie
+        # globalny koncern Sandvik AB. Dopasowanie nie zwiększyłoby realizmu.
     ),
-    SupplierSeed("L06", "Advokatfirma Thommessen", "Usługi prawne", 6700, "quarterly_mar_jun_sep_dec", 25_000, 60_000),
+    # Poprawka literówki (audyt Brreg, 2026-09) — brakowało "et":
+    # prawdziwa, znana kancelaria to "Advokatfirmaet Thommessen AS".
+    SupplierSeed("L06", "Advokatfirmaet Thommessen AS", "Usługi prawne", 6700, "quarterly_mar_jun_sep_dec", 25_000, 60_000,
+                 real_org_number="957423248"),
+    # Świadomie pozostawione bez potwierdzenia (audyt Brreg, 2026-09) —
+    # wyszukiwarka Brreg zwraca tysiące trafień na wieloznaczne słowo "avis"
+    # (norw. "gazeta"), więc nie da się tą metodą jednoznacznie potwierdzić
+    # ani wykluczyć dokładnej nazwy prawnej Avisa w Norwegii. "Avis" jako
+    # marka jest i tak rozpoznawalna niezależnie od dokładnej formy prawnej.
     SupplierSeed("L07", "Avis Norge AS", "Wynajem samochodów", 7000, "monthly_day_20", 12_000, 28_000),
-    SupplierSeed("L08", "Nordic Insurance Partners AS", "Ubezpieczenia", 7500, "quarterly_jan_apr_jul_oct", 38_000, 38_000),
+    # Zastąpione realną marką ubezpieczeniową (audyt Brreg, 2026-09) —
+    # pierwotne "Nordic Insurance Partners AS" było w pełni fikcyjne.
+    SupplierSeed("L08", "Gjensidige Forsikring ASA", "Ubezpieczenia", 7500, "quarterly_jan_apr_jul_oct", 38_000, 38_000,
+                 real_org_number="995568217"),
 ]
 
 
