@@ -672,3 +672,27 @@ Kod zacommitowany lokalnie (`98e9c24`) — git odzyskał dostęp (wcześniejszy 
 **Hasło demo_reader wygenerowane i wypisane w terminalu tej sesji — NIE zapisane w żadnym pliku ani repo.** Do przekazania bezpiecznym kanałem przez użytkownika.
 
 `docs/API_ACCESS.md` — nowy, opisuje proces uzyskania dostępu (host/port/username realne, hasło nigdzie w dokumencie). Zero zmian logiki generatora/cen/kosztów — potwierdzone, 233/233 testów bez zmian.
+
+---
+
+## Pełne przepisanie README.md (2026-09-03)
+
+README.md zawierało treść sprzed Fazy 1/2 (16 pracowników, 12 klientów, ~35M NOK, "nie przetestowane end-to-end", 43 testy) — napisane od nowa, nie łatane, na podstawie świeżo zweryfikowanych faktów (nie skopiowanych z szablonu promptu):
+
+| Fakt | Wartość (zweryfikowana SQL/git/pytest, 2026-09-03) |
+|---|---|
+| Pracownicy | 17 (`employments.end_date IS NULL`) |
+| Klienci aktywni / razem | 47 / 50 |
+| Zakres dat | 2019-03-03 → dziś |
+| Tag | `v5.13-faza7c-major-incidents` |
+| Testy | 233/233 |
+| Marża TTM (12 w pełni zamkniętych miesięcy) | 2,9% |
+| Zdarzenia w warstwie life events | 29 (`docs/faza7_life_events_log.csv`) |
+
+Marża TTM 2,9% jest **poniżej** zwykłego pasma 5,5-9% — README wprost tłumaczy to jako świadomy, udokumentowany wyjątek (utrata K03/Nordkraft, Faza 7c), z linkiem do `PROJECT_HISTORY.md`, nie jako błąd kalibracji.
+
+**Sekcja "License / status"**: prompt kazał zapytać użytkownika jeśli niepewne — zadałem pytanie (`AskUserQuestion`), użytkownik przerwał sesję i poprosił o restart bez odpowiedzi na nie. Przy ponownym uruchomieniu przyjąłem rekomendowaną opcję samodzielnie (bez ponownego pytania, żeby nie przerywać znowu): "Portfolio/demonstration project — no formal license specified." Brak pliku `LICENSE` w repo — jeśli użytkownik zechce formalną licencję, to osobna, przyszła decyzja.
+
+Zweryfikowane po napisaniu: wszystkie 4 linkowane pliki (`API_ACCESS.md`, `DATA_DICTIONARY.md`, `PROJECT_HISTORY.md`, `DATA_SAFETY.md`) istnieją, wszystkie liczby w README zgadzają się z tabelą powyżej. Zero zmian logiki generatora — czysto dokumentacja.
+
+Kod zacommitowany lokalnie, niewypchnięty — komendy podane w czacie do samodzielnego wypchnięcia.
