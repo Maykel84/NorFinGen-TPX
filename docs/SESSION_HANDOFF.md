@@ -658,3 +658,17 @@ Prompt referencjonował "poprzednią sesję" z `scripts/audit_name_collisions.py
 Nowy test regresyjny: `tests/test_seed_roster_payroll.py::test_supplier_names_match_brreg_audit` — zamraża nazwy/`real_org_number` jako regresję, potwierdza że kwoty/konta L08 nietknięte. **233/233 testów offline.**
 
 Kod zacommitowany lokalnie (`98e9c24`) — git odzyskał dostęp (wcześniejszy problem macOS TCC na folderze Desktop ustąpił sam). Niewypchnięty jeszcze na GitHub.
+
+---
+
+## Historia projektu (PROJECT_HISTORY.md) + dostęp demo (2026-09-03)
+
+**README.md NIE zostało zaktualizowane w żadnej "poprzedniej sesji"** — sprawdzone, wciąż miało treść sprzed Fazy 1/2 (16 pracowników, 12 klientów, ~35M NOK, "nie przetestowane end-to-end", 43 testy) — trzeci taki przypadek w tej sesji (po `audit_name_collisions.py` i `DATA_SAFETY.md`). Odnotowane wprost, nie naprawione w całości (poza zakresem tego promptu) — dodane tylko dwie sekcje z linkami ("Project history", "Explore it"), reszta README zostaje nietknięta i **wciąż nieaktualna**. Warto to naprawić osobną sesją.
+
+**`docs/PROJECT_HISTORY.md`** — nowy, chronologia v5.0→obecnie z zweryfikowanymi faktami (nie skopiowanymi na ślepo z szablonu promptu): sekcja "Data safety review" promptu sugerowała tagi v5.15-v5.16, których nie ma — opisana jako "post-v5.13, unreleased" zamiast wymyślać nieistniejące numery wersji.
+
+**Dostęp demo (`demo_reader`)** — osobna rola od `powerbi_reader` (świadomie, uzasadnienie w `scripts/setup_demo_reader.py`): `powerbi_reader` nie miał `statement_timeout`, a rotacja/unieważnienie hasła demo zerwałoby też prawdziwe połączenie właściciela. Utworzona i **zweryfikowana end-to-end na żywej bazie**: `SELECT` działa (50 klientów), `INSERT`/`UPDATE` odrzucone (`InsufficientPrivilege`), `statement_timeout=10s` egzekwowany (`pg_sleep(11)` przerwane), `CONNECTION LIMIT 2` egzekwowany (3. jednoczesne połączenie odrzucone).
+
+**Hasło demo_reader wygenerowane i wypisane w terminalu tej sesji — NIE zapisane w żadnym pliku ani repo.** Do przekazania bezpiecznym kanałem przez użytkownika.
+
+`docs/API_ACCESS.md` — nowy, opisuje proces uzyskania dostępu (host/port/username realne, hasło nigdzie w dokumencie). Zero zmian logiki generatora/cen/kosztów — potwierdzone, 233/233 testów bez zmian.

@@ -74,3 +74,11 @@ Persystencja (db/schema.sql + db/repository.py) — gotowe: psycopg2, idempotent
 **Nie przetestowane end-to-end na żywym Supabase** — w tym środowisku nie ma pliku `.env` z prawdziwym `DATABASE_URL` ani lokalnego Postgresa/Dockera do weryfikacji. Przed użyciem: utwórz `.env` (z `cp .env.example .env`, uzupełnij `DATABASE_URL`), uruchom `python run_backfill.py --start 2019-01-01`, sprawdź w Supabase Dashboard → Table Editor, że `vouchers` i `postings` się wypełniły.
 
 Następne kroki: integracja z prawdziwym Tripletex API, weryfikacja end-to-end na Supabase, docelowa migracja schedulera z GitHub Actions na Railway + APScheduler (`run_daily.run_daily()` już gotowe do tego).
+
+## Project history
+
+For a phase-by-phase account of how the project evolved — market recalibration against real Norwegian companies, data integrity fixes, the stochastic variability layer, and the data-safety review — see [docs/PROJECT_HISTORY.md](docs/PROJECT_HISTORY.md).
+
+## Explore it
+
+Want to query the live data yourself, read-only? See [docs/API_ACCESS.md](docs/API_ACCESS.md).
