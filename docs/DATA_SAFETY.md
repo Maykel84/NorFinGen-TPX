@@ -1,6 +1,15 @@
 # NorFinGen — Data Safety
 
-Ten dokument opisuje decyzje dotyczące realizmu vs bezpieczeństwa nazw firm użytych w generatorze — dwie różne, celowo ODWROTNE logiki dla klientów i dostawców.
+Ten dokument opisuje decyzje dotyczące realizmu vs bezpieczeństwa nazw firm użytych w generatorze — dwie różne, celowo ODWROTNE logiki dla klientów i dostawców, wynikające z jednej, nadrzędnej zasady poniżej.
+
+## Core rule: direction of the simulated relationship determines what can be real
+
+- **The simulated company itself (sender)** — always fictional, never a real registered entity
+- **Suppliers (money flows FROM the simulated company TO them)** — MAY be real, named, registered companies (e.g. Microsoft Norge AS, Telenor Norge AS). Being one vendor among many customers is a neutral, public fact and does not misattribute financial results to that company.
+- **Customers/clients (money flows FROM them TO the simulated company)** — MUST always be fictional. A named, real, identifiable company must never be shown "generating" specific fictional revenue, margin, or payment history — that constitutes attributing invented financial results to a real legal entity.
+- **Location and industry metadata (city, postal code, NACE code) for customers** — MAY reflect real, plausible Norwegian geography/industry data, since this describes a place or sector, not a named entity's finances.
+
+This rule applies to every future extension of the project (new industries, new templates, external API access) without needing to be re-decided each time.
 
 ## Customer authenticity
 
