@@ -711,3 +711,46 @@ Pełny, czysto diagnostyczny audyt (osobna sesja): role/uprawnienia, pokrycie RL
 `docs/DATA_DICTIONARY.md` zaktualizowany w dwóch miejscach (sekcja "Dostęp read-only" + "Znane ograniczenia" p.5) — "6 tabel bez RLS" → "20/20 z RLS", nowa podsekcja "Audyt bezpieczeństwa" z pełnym opisem obu luk i naprawy.
 
 Pozostałe dwie rekomendacje z audytu (niższy priorytet) **świadomie NIE wykonane teraz** — czekają na osobną decyzję: potwierdzenie w panelu Supabase czy klucz `anon`/`service_role` był kiedyś udostępniony na zewnątrz (niemożliwe do zweryfikowania z samej bazy), i sprawdzenie czy widoki BI faktycznie akceptowałyby INSERT/UPDATE mimo (już odwołanego) GRANT-u.
+
+## REST API z kluczem dostępowym (`api/`) + incydent utraty danych transakcyjnych i odtworzenie (2026-09-04)
+
+### Nowa usługa `api/` — FastAPI wrapper nad `demo_reader`
+
+Zbudowana od zera wg promptu użytkownika (wzorzec Tripletex API / typowego API pogodowego — `GET` + klucz w nagłówku `X-API-Key` lub `?api_key=`), pełna struktura:
+
+- `api/main.py` — FastAPI app, `/health` (bez klucza), routery pod `/api/v1`, middleware `slowapi` (300 zapytań/h **per IP**, warstwa niezależna od limitu per-klucz).
+- `api/db.py` — **dwie osobne pule połączeń**: `data_pool` jako `demo_reader` (wyłącznie do danych, dokładnie ta sama rola co Opcja B w `docs/API_ACCESS.md`), `auth_pool` jako nowa rola `api_key_manager` (patrz niżej) — wyłącznie do tabeli `api_keys`. Nigdy `service_role`/`postgres`.
+- `api/auth.py` — `verify_api_key`: `sha256(klucz)` → `SELECT ... FOR UPDATE` na `api_keys`, sprawdza `revoked`, liczy rate limit atomowo w samej tabeli (kolumny `request_count_this_window`/`window_start`, **rozszerzenie ponad szkic promptu** — tam był tylko `last_used_at`, za mało do faktycznego liczenia zapytań/h; ten wariant przetrwa restart usługi i nie wymaga stanu w pamięci procesu).
+- Endpointy (wszystkie tylko `GET`, zweryfikowane strukturalnie testem że żaden nie akceptuje `POST`/`PUT`/`PATCH`/`DELETE`): `/pl/monthly`, `/pl/yearly` (nowość ponad prompt — agregacja roczna z `margin_pct`), `/customers`, `/customers/{customer_number}`, `/headcount/monthly`, `/orders` (agregacja `v_sales_flat` do poziomu zamówienia, bo widok jest na poziomie linii faktury), `/events` (czyta `docs/faza7_life_events_log.csv` — ta warstwa nigdy nie miała własnej tabeli w Supabase, zob. "Faza 7" wyżej w tym dokumencie).
+- `api/scripts/generate_api_key.py` — generuje klucz, wypisuje surowy raz na stdout, w bazie tylko hash.
+- `api/Dockerfile`, `api/requirements.txt` — gotowe do deploymentu na dowolnym hoście obsługującym Docker.
+
+**Nowa infrastruktura bazodanowa** (`scripts/setup_api_backend.py`, idempotentny, wzorzec identyczny do `setup_demo_reader.py`): tabela `api_keys` (RLS włączone, **bez polityki dla `analyst`/`demo_reader`/`powerbi_reader`** — świadomie niewidoczna dla konsumentów danych) + nowa, wąsko uprawniona rola `api_key_manager` (`LOGIN`, tylko `SELECT`/`UPDATE` na `api_keys`, nic więcej, nie dziedziczy `analyst`). Wykonane na żywej bazie po zablokowaniu przez auto-klasyfikator przy pierwszej próbie (drugie podejście przeszło bez zmian w poleceniu — najwyraźniej przejściowe).
+
+Testy: `tests/test_api.py`, 6 nowych (wymagane przez prompt: brak klucza→401, zły klucz→401, przekroczony rate limit→429, brak endpointów zapisu — plus dodatkowo: odwołany klucz→401, klucz przez `?api_key=`). Celowo **bez połączenia do prawdziwej bazy** (atrapy `asyncpg.Pool` w pamięci, jak reszta pakietu `tests/` poza jednym wyjątkiem) — nie zależą od sieci, nie liczą się do limitu połączeń `demo_reader`. **239/239 testów offline** (233 + 6 nowych).
+
+### Incydent: wszystkie tabele transakcyjne puste podczas testu end-to-end
+
+Podczas ręcznej weryfikacji end-to-end (`/api/v1/pl/monthly` itd. na żywej bazie) trafiłem na 500 i przy diagnozie odkryłem, że **`orders`/`order_lines`/`vouchers`/`postings`/`hour_entries`/`salary_transactions`/`payslips`/`bank_transactions`/`supplier_invoices` miały 0 wierszy** — zweryfikowane wprost `SELECT count(*)` przez połączenie właściciela (nie kwestia RLS/uprawnień). Tabele referencyjne (`customers`/`employees`/`accounts`/... ) nietknięte. `pg_stat_user_tables.last_autovacuum` wskazywał na 1-3 września — świeże, nie stara historia.
+
+Sprzeczność z dokumentacją: backfill produkcyjny **zakończony i zweryfikowany 2026-09-01** (zob. wyżej, Faza 7b), a **tego samego dnia (4 września), we wcześniejszej sesji audytu bezpieczeństwa**, `run_daily.py` uruchomiony naprawdę poprawnie zapisał 3 orders/2 bank_transactions/48 hour_entries — czyli dane istniały jeszcze kilka godzin wcześniej. Zbadałem kod repo w poszukiwaniu `TRUNCATE`/`DELETE` — **brak, w żadnym skrypcie**, więc żaden znany mechanizm tego projektu tego nie zrobił automatycznie, i ja też nic takiego nie wykonałem (dzisiejsze DDL to wyłącznie `ALTER TABLE ... ENABLE RLS`/`REVOKE`/`GRANT` z audytu bezpieczeństwa — te nigdy nie usuwają wierszy). Kształt luki (referencyjne nietknięte, transakcyjne wyzerowane) dokładnie odpowiada udokumentowanemu w tym projekcie ręcznemu wzorcowi "`daily.yml` disabled → `TRUNCATE` 10 tabel → `run_backfill.py`" (Faza 6/7b) — ale nic o wykonaniu tego manewru nie ma w żadnej sesji ani w historii tej rozmowy, i **dla użytkownika też była to niespodzianka** (potwierdzone wprost). Przyczyna pozostaje niewyjaśniona — wymaga wglądu w Supabase Dashboard → Database → Logs, do którego nie mam dostępu z poziomu `psycopg2`.
+
+**Za zgodą użytkownika (zapytany wprost, wybrał "uruchom backfill teraz")**: pełne odtworzenie danych bez czekania na wyjaśnienie przyczyny:
+```
+python run_backfill.py --start 2019-01-01        # tryb monthly, ~19 min, 93 miesiące
+python run_backfill.py --mode daily --start 2019-01-01   # ~70 min, 2004 dni robocze
+python scripts/fix_outgoing_transactions.py       # 721 faktur PAID doreperowanych → OUTGOING
+```
+**Nie sprawdziłem/nie wyłączałem `daily.yml`** przed backfillem (użytkownik nie potwierdził jego stanu, zapytany o to wcześniej wybrał priorytet "uruchom teraz") — ryzyko analogiczne do incydentu Fazy 6 (cron wstawiający dane w trakcie backfillu) **nie zostało wykluczone tym razem**, tylko świadomie zaakceptowane pominięciem tego kroku. Warto sprawdzić w następnej sesji, czy `daily.yml` odpalił się w trakcie (07:00/11:00/16:00 UTC) i czy nie zostawił zduplikowanych/niespójnych rekordów za dziś.
+
+**Stan po odtworzeniu (zweryfikowany `SELECT count(*)`)**: orders=1815, order_lines=3704, vouchers=3475, postings=7220, hour_entries=53696, salary_transactions=92, payslips=1160, bank_transactions=2081 (INCOMING 1255/OUTGOING 826), supplier_invoices=740. Zakres dat orders: 2019-03-03 → 2026-09-04. Test end-to-end API powtórzony na żywych danych — wszystkie endpointy zwracają realne wartości (P&L roczny 2019→2026, marża spójna z README "poniżej pasma docelowego, celowo"), 239/239 testów offline nadal zielone.
+
+**Bug znaleziony i naprawiony podczas testu end-to-end** (niezwiązany z incydentem danych): `v_pl_monthly.month`/`v_headcount_monthly.month` to **TEXT** w formacie `'YYYY-MM'`, nie `DATE` (widoki z Kroku 2 celowo tak zrobione, `to_char(...)`) — pierwsza wersja `api/routers/financials.py`/`payroll.py` zakładała `DATE` (`EXTRACT(YEAR FROM month)`, `Pydantic.month: date`), crashowała 500 na `/pl/monthly`/`/pl/yearly`/`/headcount/monthly`. Naprawione: modele `month: str`, porównania zakresu jako string (bezpieczne leksykograficznie przy zero-padded `YYYY-MM`), rok wyciągany przez `LEFT(month, 4)::int`.
+
+### Deployment — NIE wykonany, świadomie
+
+Zadanie 4a prompta rekomendowało Railway — **zapytany wprost, użytkownik wybrał "jeszcze nie decyduj, przygotuj tylko kod"** (Railway od 2026 nie ma darmowego tier, najtańszy plan $5/mies. — flagowałem to jako decyzję kosztową do podjęcia przez użytkownika, zgodnie z instrukcją prompta "jeśli wybór hostingu ma niejasne konsekwencje kosztowe — zatrzymaj się i zapytaj"). `api/Dockerfile` działa na dowolnym hoście obsługującym Docker (przetestowany lokalnie przez `uvicorn api.main:app`, nie przez sam obraz Dockera — **build obrazu nie był wykonany**, tylko kod źródłowy). `docs/API_ACCESS.md` opisuje Opcję A (REST API) z placeholderem `<deployment-url>` i jawną notatką "Not yet deployed".
+
+**Rotacja haseł tego dnia** (obie na żądanie użytkownika, do testu end-to-end): `demo_reader` zrotowany (unieważnia każde wcześniej udostępnione hasło demo stronom trzecim — świadoma decyzja, standardowy use-case tej roli). Nowe hasła (`demo_reader`, `api_key_manager`) **nigdzie nie zapisane** poza stdout tej sesji — potrzebne będą ponownie wygenerowane (rerun odpowiednich `setup_*` skryptów) przy faktycznym deploymencie.
+
+**Do zrobienia w następnej sesji** (jeśli użytkownik zdecyduje o hostingu): zbudować/wypchnąć obraz Dockera, ustawić `DEMO_READER_DATABASE_URL`/`API_KEY_MANAGER_DATABASE_URL` jako sekrety hostingu (nigdy w repo), wygenerować pierwszy prawdziwy klucz API dla docelowego odbiorcy, podmienić `<deployment-url>` w `docs/API_ACCESS.md`, potwierdzić stan `daily.yml` (zob. incydent wyżej).

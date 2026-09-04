@@ -380,7 +380,8 @@ Dwie role, warstwowo:
 
 - **`analyst`** (`NOLOGIN`) — czysto techniczna, definiuje docelowy zestaw uprawnień: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**20/20 tabel z aktywną polityką RLS `USING (true)`** — zob. "Audyt bezpieczeństwa" niżej, wcześniej 6 tabel referencyjnych nie miało RLS w ogóle) + `ALTER DEFAULT PRIVILEGES` (przyszłe tabele automatycznie czytelne, bez ręcznego GRANT-a przy każdej migracji).
 - **`powerbi_reader`** (`LOGIN`, `CONNECTION LIMIT 3`) — realna rola do faktycznego logowania z Power BI (lub dowolnego innego narzędzia BI). Dziedziczy komplet uprawnień/polityk `analyst` przez `GRANT analyst TO powerbi_reader` — nic nie jest duplikowane. Utworzona/rotowana przez `scripts/setup_powerbi_reader.py` (hasło generowane losowo za każdym uruchomieniem, wypisywane TYLKO na stdout, nigdy nie trafia do repo/`.env`).
-- **`demo_reader`** (`LOGIN`, `CONNECTION LIMIT 2`, `statement_timeout=10s`) — publicznie udostępniany dostęp testowy (`docs/API_ACCESS.md`). Osobna rola od `powerbi_reader` (niezależna rotacja/odwołanie), ale ten sam mechanizm dziedziczenia `analyst`.
+- **`demo_reader`** (`LOGIN`, `CONNECTION LIMIT 2`, `statement_timeout=10s`) — publicznie udostępniany dostęp testowy (`docs/API_ACCESS.md`). Osobna rola od `powerbi_reader` (niezależna rotacja/odwołanie), ale ten sam mechanizm dziedziczenia `analyst`. **Od 2026-09-04 to również rola, jako którą łączy się usługa REST API (`api/`)** — jedyna rola używana przez `api/db.py` do zapytań danych, nigdy `service_role`/`postgres`.
+- **`api_key_manager`** (`LOGIN`, `CONNECTION LIMIT 5`, `statement_timeout=10s`, 2026-09-04) — NIE dziedziczy `analyst`, nie ma dostępu do żadnej tabeli poza `api_keys` (`GRANT SELECT, UPDATE`). Używana wyłącznie przez `api/auth.py` do walidacji kluczy API i rate limitingu. Zob. `scripts/setup_api_backend.py`.
 
 **Connection string dla Power BI Desktop** (Get Data → PostgreSQL database): host/port/dbname z `DATABASE_URL`, ale **username musi być w formacie poolera Supabase** `powerbi_reader.<project_ref>` (nie sam `powerbi_reader`) — `scripts/setup_powerbi_reader.py` wypisuje gotowy, poprawny username. Wymagane `Encrypt connection` (SSL).
 
@@ -412,6 +413,20 @@ Wszystkie trzy: `GRANT SELECT ... TO analyst` (dziedziczone przez `powerbi_reade
 2. `v_sales_flat.amount_including_vat_currency` to alias, nie fizyczny rename `order_lines.amount_currency` — "Koszyk 1" (rename kolumny na zgodną z realnym Tripletex API) był tylko **proponowany**, nigdy jawnie zaakceptowany ani wykonany w generatorach/testach. Widok daje poprawną nazwę w BI już teraz bez ryzykownej zmiany fizycznego schematu.
 
 **`security_invoker = true`** na wszystkich trzech — bez tego widok domyślnie czyta tabele źródłowe z uprawnieniami *właściciela widoku* (`postgres`, który omija RLS), nie roli faktycznie odpytującej. Dziś polityki są `USING (true)` więc nie zmienia to widocznych danych, ale zapobiega cichemu ominięciu RLS przez widok, gdyby ktoś kiedyś dodał faktycznie filtrującą politykę.
+
+### `api_keys` (2026-09-04, infrastruktura usługi REST API)
+
+| Kolumna | Typ | Opis |
+|---|---|---|
+| id | SERIAL (PK) | |
+| key_hash | TEXT (UNIQUE) | `sha256(surowy_klucz)` — surowy klucz nigdy nie trafia do bazy, tylko na stdout raz przy generowaniu (`api/scripts/generate_api_key.py`) |
+| owner_label | TEXT | Opis/właściciel klucza (np. "demo-curl-test") |
+| rate_limit_per_hour | INT | Limit zapytań/godzinę, domyślnie 100, per-klucz konfigurowalny |
+| revoked | BOOLEAN | Odwołanie klucza bez usuwania wiersza (audyt) |
+| request_count_this_window / window_start | INT / TIMESTAMPTZ | Licznik rate-limitu, atomowo aktualizowany w `api/auth.py` (`SELECT ... FOR UPDATE`) — rozszerzenie ponad szkic z promptu (tam było tylko `last_used_at`), żeby limit przetrwał restart usługi bez trzymania stanu w pamięci procesu |
+| last_used_at | TIMESTAMPTZ | Ostatnie użycie klucza |
+
+RLS włączone, **bez polityki dla `analyst`/`demo_reader`/`powerbi_reader`** — świadomie niewidoczna dla konsumentów danych read-only, tylko `api_key_manager` (polityka `api_key_manager_access FOR ALL USING (true)`) i `postgres` (bypass RLS, jedyna rola z prawem `INSERT` nowych kluczy — `api/scripts/generate_api_key.py` łączy się jako właściciel, nie jako `api_key_manager`). Nie jest częścią żadnej z 20 tabel domenowych liczonych gdzie indziej w tym dokumencie.
 
 ## Znane ograniczenia całościowe
 
