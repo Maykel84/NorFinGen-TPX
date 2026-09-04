@@ -696,3 +696,18 @@ Marża TTM 2,9% jest **poniżej** zwykłego pasma 5,5-9% — README wprost tłum
 Zweryfikowane po napisaniu: wszystkie 4 linkowane pliki (`API_ACCESS.md`, `DATA_DICTIONARY.md`, `PROJECT_HISTORY.md`, `DATA_SAFETY.md`) istnieją, wszystkie liczby w README zgadzają się z tabelą powyżej. Zero zmian logiki generatora — czysto dokumentacja.
 
 Kod zacommitowany lokalnie, niewypchnięty — komendy podane w czacie do samodzielnego wypchnięcia.
+
+---
+
+## Audyt bezpieczeństwa Supabase + naprawa (2026-09-04)
+
+Pełny, czysto diagnostyczny audyt (osobna sesja): role/uprawnienia, pokrycie RLS, widoki, klucze API. **Dwie realne luki znalezione**, obie naprawione od razu w kolejnej sesji na wyraźne polecenie użytkownika (nie odłożone do "przyszłej sesji" jak rekomendowałem — użytkownik zdecydował wykonać od razu):
+
+1. **6/20 tabel referencyjnych bez RLS w ogóle** (`accounts`, `departments`, `employments`, `products`, `salary_specifications`, `vat_types`) — świadoma decyzja Kroku 2, ale ryzykowna w połączeniu z #2. Naprawione: RLS włączone, polityka `analyst_read_only` identyczna jak pozostałych 14. **20/20 tabel ma teraz RLS.**
+2. **`anon`/`authenticated` (domyślne role Supabase) miały pełne CRUD** (nie tylko SELECT) na wszystkich tabelach — automatyczny grant Supabase, nigdy świadomie odwołany, nigdzie wcześniej niezdiagnozowany. Dla 6 tabel z p.1 był to realny, otwarty wektor zapisu dla każdego posiadacza publicznego klucza `anon` (PostgREST jest zawsze wystawiony przez Supabase, niezależnie czy kod go używa — a ten projekt nigdy go nie używał). Naprawione: `REVOKE ALL` + `ALTER DEFAULT PRIVILEGES REVOKE` na tabelach/sekwencjach/funkcjach.
+
+**Zweryfikowane po naprawie** (nie tylko wykonanie DDL): `run_daily.py` uruchomiony naprawdę, zapisał poprawnie (3 orders, 2 bank_transactions, 48 hour_entries) — `postgres` ma `rolbypassrls=true`, RLS go nie dotyczy. `demo_reader` połączony na żywo — SELECT na wszystkich tabelach (w tym nowo-RLS-owanych) działa, INSERT dalej odrzucony. `anon`/`authenticated` przetestowane przez `SET ROLE` (obie `NOLOGIN`, dostępne tylko przez PostgREST) — `permission denied` na SELECT i INSERT, na dowolnej tabeli. 233/233 testów offline bez zmian.
+
+`docs/DATA_DICTIONARY.md` zaktualizowany w dwóch miejscach (sekcja "Dostęp read-only" + "Znane ograniczenia" p.5) — "6 tabel bez RLS" → "20/20 z RLS", nowa podsekcja "Audyt bezpieczeństwa" z pełnym opisem obu luk i naprawy.
+
+Pozostałe dwie rekomendacje z audytu (niższy priorytet) **świadomie NIE wykonane teraz** — czekają na osobną decyzję: potwierdzenie w panelu Supabase czy klucz `anon`/`service_role` był kiedyś udostępniony na zewnątrz (niemożliwe do zweryfikowania z samej bazy), i sprawdzenie czy widoki BI faktycznie akceptowałyby INSERT/UPDATE mimo (już odwołanego) GRANT-u.
