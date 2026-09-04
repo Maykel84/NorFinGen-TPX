@@ -213,6 +213,32 @@ def test_save_hour_entries(fake_repository):
     assert fake_conn.committed
 
 
+def test_save_hour_entries_conflict_target_has_no_column_list(fake_repository):
+    """Regresja incydentu 2026-09-04 (zob. docs/SESSION_HANDOFF.md): `ON CONFLICT
+    (date, employee_id, project_id, activity_type) DO NOTHING` NIE chroni wpisów
+    INTERNAL/SICK (project_id zawsze NULL - Postgres traktuje NULL <> NULL, więc
+    dwa identyczne takie wiersze nie naruszają tego UNIQUE). Dwa niezależne
+    uruchomienia run_daily() dla tego samego dnia (backfill + prawdopodobnie
+    daily.yml) naprawdę zduplikowały 12 wpisów INTERNAL/SICK na żywej bazie.
+    Naprawa: `ON CONFLICT DO NOTHING` bez listy kolumn - łapie naruszenie
+    KTÓREGOKOLWIEK z dwóch unikalnych indeksów (pełny UNIQUE + częściowy
+    `hour_entries_unique_null_project` z schema.sql, project_id IS NULL).
+    Ten test pilnuje, żeby nikt przypadkiem nie przywrócił nazwanego conflict
+    targetu - żaden mock cursora nie wykryje tego samemu (FakeCursor nie
+    symuluje realnych unikalnych indeksów), stąd asercja wprost na tekst SQL."""
+    repository, fake_conn = fake_repository
+    entries = generate_daily_hours(2024, 1, 8, list(range(1, 17)))
+    assert entries
+
+    repository.save_hour_entries(entries)
+
+    sql_texts = [sql for sql, _ in fake_conn.cursor_obj.executed if "INSERT INTO hour_entries" in sql]
+    assert sql_texts
+    for sql in sql_texts:
+        assert "ON CONFLICT DO NOTHING" in sql
+        assert "ON CONFLICT (" not in sql
+
+
 def test_get_orders_for_payment_window_reconstructs_order_with_lines(fake_repository):
     repository, fake_conn = fake_repository
     order_row = (10, 1, date(2024, 1, 3), date(2024, 1, 31), date(2024, 1, 3), 30, 1, "Test", "PAID")

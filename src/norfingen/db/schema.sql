@@ -267,6 +267,17 @@ CREATE TABLE IF NOT EXISTS hour_entries (
     UNIQUE(date, employee_id, project_id, activity_type)
 );
 
+-- Naprawa incydentu 2026-09-04 (zob. docs/SESSION_HANDOFF.md): UNIQUE powyżej
+-- NIE chroni wpisów INTERNAL/SICK (project_id zawsze NULL, zob. opis kolumny
+-- wyżej) — Postgres traktuje NULL <> NULL, więc dwa identyczne wiersze z
+-- project_id=NULL nie naruszają tego UNIQUE i `ON CONFLICT (date,
+-- employee_id, project_id, activity_type) DO NOTHING` (repository.py,
+-- _save_hour_entry) nigdy dla nich nie zadziała. Częściowy indeks unikalny
+-- tylko dla project_id IS NULL domyka tę lukę.
+CREATE UNIQUE INDEX IF NOT EXISTS hour_entries_unique_null_project
+    ON hour_entries (date, employee_id, activity_type)
+    WHERE project_id IS NULL;
+
 -- ─────────────────────────────────────────────────── Faza 1 — katalog usług, metadane
 
 CREATE TABLE IF NOT EXISTS services (

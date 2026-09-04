@@ -604,10 +604,19 @@ def save_bank_transactions(transactions: list[tuple[BankTransaction, Voucher]]) 
 
 
 def _save_hour_entry(cur, entry: HourEntry) -> None:
+    # ON CONFLICT bez listy kolumn (nie "ON CONFLICT (date, employee_id,
+    # project_id, activity_type)") celowo — łapie naruszenie KTÓREGOKOLWIEK
+    # z dwóch unikalnych indeksów na tej tabeli: pełnego UNIQUE (project_id
+    # NOT NULL, BILLABLE) i częściowego hour_entries_unique_null_project
+    # (project_id IS NULL, INTERNAL/SICK). Named conflict target łapałby
+    # tylko pierwszy z nich — dokładnie ten brak spowodował incydent
+    # 2026-09-04 (duplikaty INTERNAL/SICK przy dwóch niezależnych
+    # uruchomieniach run_daily() dla tego samego dnia, zob. schema.sql
+    # i docs/SESSION_HANDOFF.md).
     cur.execute(
         """INSERT INTO hour_entries (date, employee_id, project_id, activity_type, hours, description)
            VALUES (%s, %s, %s, %s, %s, %s)
-           ON CONFLICT (date, employee_id, project_id, activity_type) DO NOTHING""",
+           ON CONFLICT DO NOTHING""",
         (entry.date, entry.employee_id, entry.project_id, entry.activity_type.value, entry.hours, entry.description),
     )
 
