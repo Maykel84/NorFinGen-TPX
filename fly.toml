@@ -1,0 +1,35 @@
+# Fly.io deployment config dla api/ (REST API z kluczem dostępowym).
+# Build context = katalog repo (root) - api/Dockerfile kopiuje zarówno api/
+# jak i docs/faza7_life_events_log.csv (potrzebne przez /api/v1/events),
+# więc "dockerfile" wskazuje na api/Dockerfile, ale kontekst zostaje root.
+#
+# Sekrety (DEMO_READER_DATABASE_URL, API_KEY_MANAGER_DATABASE_URL) NIE tutaj -
+# ustawiane przez `fly secrets set`, nigdy w repo.
+
+app = "norfingen-api"
+primary_region = "arn"  # Stockholm - najbliżej Supabase eu-central-1
+
+[build]
+  dockerfile = "api/Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

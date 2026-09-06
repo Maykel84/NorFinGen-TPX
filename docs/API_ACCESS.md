@@ -13,7 +13,7 @@ required.
 
 ```bash
 curl -H "X-API-Key: nfg_xxxxx" \
-  "https://<deployment-url>/api/v1/pl/monthly?from=2025-01&to=2025-12"
+  "https://norfingen-api.fly.dev/api/v1/pl/monthly?from=2025-01&to=2025-12"
 ```
 
 The key also works as a query parameter (`?api_key=nfg_xxxxx`) for quick
@@ -36,13 +36,15 @@ exist on this service):
 List endpoints are paginated (`limit`/`offset`, default 100, max 1000).
 Rate limit: 100 requests/hour per key by default (adjustable per key),
 plus a 300/hour per-IP limit at the infrastructure layer. Full interactive
-documentation (OpenAPI/Swagger, no key required): `https://<deployment-url>/docs`.
+documentation (OpenAPI/Swagger, no key required): [norfingen-api.fly.dev/docs](https://norfingen-api.fly.dev/docs).
+Health check (no key required): [norfingen-api.fly.dev/health](https://norfingen-api.fly.dev/health).
 
 The service connects to the database exclusively as `demo_reader` (the
 same read-only role as Option B below) — it cannot write, and it never
-uses `service_role`/`postgres`. Implementation in `api/` (FastAPI). **Not
-yet deployed** — the code and Dockerfile are ready, hosting is pending a
-decision (see `docs/SESSION_HANDOFF.md`).
+uses `service_role`/`postgres`. Implementation in `api/` (FastAPI), deployed
+on Fly.io (Stockholm region, `arn`) — end-to-end verified live 2026-09-04.
+Machines auto-stop when idle and auto-start on the next request (a few
+seconds' cold-start delay is normal after a period of no traffic).
 
 ## Option B — Direct SQL / BI tool connection
 
