@@ -4,110 +4,211 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NorFinGen — self-service portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #ffffff;
-    --fg: #1a1a1a;
-    --muted: #6b6b6b;
-    --border: #d9d9d9;
-    --accent: #1c5fbf;
-    --accent-fg: #ffffff;
-    --card: #f7f7f8;
-    --code-bg: #f0f0f0;
-    --warn-bg: #fff6e0;
-    --warn-border: #e0b800;
-    --error: #b3261e;
+    /* pastel palette — warm cream base, soft coral/mint/lavender/peach accents */
+    --bg: #fdf7f2;
+    --fg: #4a3f44;
+    --muted: #8d7d84;
+    --border: #f0e2da;
+    --card: #ffffff;
+    --card-tint: #fff9f4;
+    --accent: #ff9c8a;
+    --accent-dark: #f07a63;
+    --accent-fg: #4a2a22;
+    --accent2: #8fcfc9;
+    --accent2-dark: #63b0a9;
+    --blob-1: #ffd6c9;
+    --blob-2: #c9e9df;
+    --blob-3: #e3d3f4;
+    --blob-4: #ffe9b3;
+    --code-bg: #fbeee7;
+    --warn-bg: #fff3d6;
+    --warn-border: #f2c869;
+    --error: #e0685a;
+    --shadow: 0 12px 28px -14px rgba(120, 80, 70, 0.28);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16171a;
-      --fg: #eaeaea;
-      --muted: #a0a0a0;
-      --border: #33353a;
-      --accent: #5b9dff;
-      --accent-fg: #0b1220;
-      --card: #202226;
-      --code-bg: #26282c;
-      --warn-bg: #3a2f0e;
-      --warn-border: #8a6d00;
-      --error: #ff6b60;
+      --bg: #241f22;
+      --fg: #f3e9e6;
+      --muted: #bba79f;
+      --border: #3c3236;
+      --card: #2d2529;
+      --card-tint: #322930;
+      --accent: #ff9c8a;
+      --accent-dark: #ffb4a5;
+      --accent-fg: #2c1712;
+      --accent2: #7fc2bb;
+      --accent2-dark: #a2d9d2;
+      --blob-1: #5a3a34;
+      --blob-2: #2f4744;
+      --blob-3: #3d3348;
+      --blob-4: #4d3f28;
+      --code-bg: #382c30;
+      --warn-bg: #3d331a;
+      --warn-border: #a5822f;
+      --error: #ff9585;
+      --shadow: 0 12px 28px -14px rgba(0, 0, 0, 0.5);
     }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    padding: 32px 16px 64px;
+    padding: 48px 16px 72px;
     background: var(--bg);
     color: var(--fg);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    line-height: 1.5;
+    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+    position: relative;
+    overflow-x: hidden;
   }
-  main { max-width: 720px; margin: 0 auto; }
-  h1 { font-size: 1.6rem; margin-bottom: 4px; }
-  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 32px; }
+  /* organic blurred blobs, purely decorative */
+  .blob {
+    position: fixed;
+    border-radius: 42% 58% 65% 35% / 45% 40% 60% 55%;
+    filter: blur(2px);
+    opacity: 0.55;
+    z-index: -1;
+    pointer-events: none;
+  }
+  .blob-a { top: -140px; left: -120px; width: 380px; height: 380px; background: var(--blob-1); }
+  .blob-b { top: 220px; right: -160px; width: 420px; height: 420px; background: var(--blob-2); border-radius: 60% 40% 35% 65% / 55% 60% 40% 45%; }
+  .blob-c { bottom: -160px; left: 10%; width: 360px; height: 360px; background: var(--blob-3); }
+  .blob-d { bottom: 10%; right: -100px; width: 260px; height: 260px; background: var(--blob-4); border-radius: 65% 35% 55% 45% / 40% 55% 45% 60%; }
+
+  main { max-width: 720px; margin: 0 auto; position: relative; }
+  h1 {
+    font-family: "Quicksand", "Nunito", sans-serif;
+    font-weight: 700;
+    font-size: 2.1rem;
+    margin-bottom: 6px;
+    letter-spacing: -0.02em;
+  }
+  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 36px; max-width: 52ch; }
   section {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px 24px;
-    margin-bottom: 20px;
+    border-radius: 28px;
+    padding: 26px 28px;
+    margin-bottom: 24px;
+    box-shadow: var(--shadow);
+    position: relative;
   }
-  h2 { font-size: 1.1rem; margin-top: 0; }
+  section::before {
+    content: "";
+    position: absolute;
+    top: -14px;
+    left: 28px;
+    width: 30px;
+    height: 30px;
+    background: var(--accent2);
+    border-radius: 60% 40% 45% 55% / 55% 45% 55% 45%;
+    opacity: 0.85;
+  }
+  section:nth-of-type(2)::before { background: var(--accent); }
+  section:nth-of-type(3)::before { background: var(--blob-3); }
+  h2 {
+    font-family: "Quicksand", "Nunito", sans-serif;
+    font-weight: 600;
+    font-size: 1.2rem;
+    margin-top: 0;
+  }
   label { display: block; font-size: 0.9rem; margin-bottom: 6px; color: var(--muted); }
-  input[type="text"], input[type="date"] {
+  input[type="text"], input[type="date"], input[type="month"] {
     width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
+    padding: 11px 15px;
+    border: 1.5px solid var(--border);
+    border-radius: 16px;
+    background: var(--card-tint);
     color: var(--fg);
+    font-family: inherit;
     font-size: 0.95rem;
+    transition: border-color 0.15s ease;
+  }
+  input[type="text"]:focus, input[type="date"]:focus, input[type="month"]:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   button {
     background: var(--accent);
     color: var(--accent-fg);
     border: none;
-    border-radius: 6px;
-    padding: 9px 16px;
+    border-radius: 999px;
+    padding: 11px 22px;
+    font-family: "Quicksand", "Nunito", sans-serif;
+    font-weight: 600;
     font-size: 0.95rem;
     cursor: pointer;
-    margin-top: 12px;
+    margin-top: 14px;
+    box-shadow: 0 6px 16px -6px rgba(240, 122, 99, 0.55);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.15s ease;
   }
-  button:disabled { opacity: 0.6; cursor: default; }
-  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  button:hover:not(:disabled) { transform: translateY(-1px); background: var(--accent-dark); }
+  button:disabled { opacity: 0.55; cursor: default; box-shadow: none; }
+  button.secondary {
+    background: transparent;
+    color: var(--accent2-dark);
+    border: 1.5px solid var(--accent2);
+    box-shadow: none;
+  }
+  button.secondary:hover:not(:disabled) { background: var(--accent2); color: var(--accent-fg); }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
   .row > div { flex: 1; min-width: 140px; }
-  .radio-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .radio-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .radio-row input[type="radio"] { accent-color: var(--accent-dark); width: 17px; height: 17px; }
   .radio-row label { margin: 0; color: var(--fg); font-size: 0.95rem; }
-  .custom-range { margin-left: 26px; margin-bottom: 10px; }
+  .custom-range { margin-left: 27px; margin-bottom: 10px; }
   .custom-range[hidden] { display: none; }
   code {
     background: var(--code-bg);
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 3px 8px;
+    border-radius: 8px;
     font-size: 0.9em;
     word-break: break-all;
   }
   .key-box {
-    margin-top: 14px;
-    padding: 12px 14px;
+    margin-top: 16px;
+    padding: 16px 18px;
     background: var(--warn-bg);
-    border: 1px solid var(--warn-border);
-    border-radius: 8px;
+    border: 1.5px dashed var(--warn-border);
+    border-radius: 20px;
     font-size: 0.9rem;
   }
-  .key-box code { display: block; margin: 8px 0; padding: 8px; }
-  .status { font-size: 0.9rem; color: var(--muted); margin-top: 10px; }
+  .key-box code { display: block; margin: 10px 0; padding: 10px 12px; border-radius: 12px; }
+  .status { font-size: 0.9rem; color: var(--muted); margin-top: 12px; }
   .status.error { color: var(--error); }
-  ul.links { padding-left: 20px; }
-  ul.links li { margin-bottom: 6px; }
-  a { color: var(--accent); }
+  ul.links { list-style: none; padding-left: 0; margin: 0; }
+  ul.links li {
+    margin-bottom: 10px;
+    padding-left: 26px;
+    position: relative;
+  }
+  ul.links li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 7px;
+    width: 9px;
+    height: 9px;
+    background: var(--accent2);
+    border-radius: 60% 40% 50% 50% / 50% 60% 40% 50%;
+  }
+  a { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
+  a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
+<div class="blob blob-a" aria-hidden="true"></div>
+<div class="blob blob-b" aria-hidden="true"></div>
+<div class="blob blob-c" aria-hidden="true"></div>
+<div class="blob blob-d" aria-hidden="true"></div>
 <main>
-  <h1>NorFinGen</h1>
+  <h1>📊 NorFinGen</h1>
   <p class="subtitle">Synthetic financial data for a fictional Norwegian IT services company — grab an API key or download the numbers, no sign-up required.</p>
 
   <section>
