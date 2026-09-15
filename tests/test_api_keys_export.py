@@ -116,6 +116,30 @@ def fake_data_pool(monkeypatch):
 # --- Zadanie 1 — samoobsługowe klucze ---------------------------------
 
 
+def test_get_client_ip_prefers_fly_client_ip_header(client, fake_auth_pool):
+    """Fly.io stawia realny adres klienta w `Fly-Client-IP` -
+    `request.client.host` na Fly to zawsze wewnętrzny adres proxy (odkryte
+    tej sesji: 3 klucze testowe z tego samego 172.16.x.x), więc limit per-IP
+    musiałby dzielić pulę między wszystkich odwiedzających bez tej poprawki."""
+    resp = client.post(
+        "/api/v1/keys/request",
+        json={"label": "fly-header-test"},
+        headers={"Fly-Client-IP": "203.0.113.5"},
+    )
+    assert resp.status_code == 200
+    assert fake_auth_pool.api_keys[0]["created_from_ip"] == "203.0.113.5"
+
+
+def test_get_client_ip_falls_back_to_x_forwarded_for(client, fake_auth_pool):
+    resp = client.post(
+        "/api/v1/keys/request",
+        json={"label": "xff-test"},
+        headers={"X-Forwarded-For": "198.51.100.7, 10.0.0.1"},
+    )
+    assert resp.status_code == 200
+    assert fake_auth_pool.api_keys[0]["created_from_ip"] == "198.51.100.7"
+
+
 def test_ip_signup_limit_enforced(client, fake_auth_pool):
     """4. próba klucza z tego samego IP w ciągu doby zwraca 429."""
     for i in range(3):

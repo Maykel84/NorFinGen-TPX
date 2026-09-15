@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from api.db import auth_pool
 from api.models import KeyRequest, KeyResponse
-from api.rate_limit import limiter
+from api.rate_limit import get_client_ip, limiter
 
 router = APIRouter(prefix="/keys", tags=["keys"])
 
@@ -66,7 +66,7 @@ async def request_key(body: KeyRequest, request: Request) -> KeyResponse:
     """Generuje nowy klucz self-service. Klucz surowy istnieje tylko w tej
     odpowiedzi - baza trzyma wyłącznie jego SHA-256 (ten sam wzorzec co
     `api/scripts/generate_api_key.py`)."""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     await enforce_ip_signup_limit(client_ip)
 
     raw_key = f"nfg_edu_{secrets.token_urlsafe(24)}"

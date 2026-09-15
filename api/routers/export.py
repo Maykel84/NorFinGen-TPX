@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 
 from api.db import auth_pool
 from api.export_data import generate_csv_export_bytes, generate_excel_export_bytes
+from api.rate_limit import get_client_ip
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -93,7 +94,7 @@ async def download_export(
     if month_from > month_to:
         raise HTTPException(status_code=400, detail="'from' musi być <= 'to'.")
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     await enforce_export_rate_limit(client_ip)
 
     date_from, date_to = _month_bounds(month_from, month_to)
