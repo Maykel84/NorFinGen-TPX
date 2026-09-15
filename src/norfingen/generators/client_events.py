@@ -1,25 +1,25 @@
-"""Faza 7, Zadanie 2 — zdarzenia losowe na poziomie klienta (life events).
+"""Phase 7, Task 2 — random client-level events (life events).
 
-ŚWIADOMA ZMIANA ARCHITEKTURY względem Zadania 2d: prompt zakładał "stan w
-pamięci podczas backfillu, jeden sekwencyjny przebieg wystarczy — sprawdź
-czy backfill faktycznie działa sekwencyjnie po miesiącach". Sprawdzone —
-NIE do końca: backfill w tym repo to w praktyce DWA OSOBNE przebiegi
-procesu uruchamiane ręcznie jeden po drugim (`run_backfill.py --mode
-monthly`, potem `--mode daily`, zob. SESSION_HANDOFF.md p. 5), a
-`--mode daily` i żywy cron (`run_daily.py`, `.github/workflows/daily.yml`)
-w ogóle dzielą tę samą funkcję `run_daily()` wołaną raz per proces/dzień
-— żaden mutowalny obiekt stanu przekazywany "z zewnątrz" nie przetrwałby
-między tymi przebiegami.
+A DELIBERATE ARCHITECTURE CHANGE relative to Task 2d: the prompt assumed
+"in-memory state during the backfill, a single sequential run is enough —
+check whether the backfill actually runs sequentially month by month."
+Checked — NOT quite: the backfill in this repo is in practice TWO SEPARATE
+process runs invoked manually one after the other (`run_backfill.py --mode
+monthly`, then `--mode daily`, see SESSION_HANDOFF.md section 5), and
+`--mode daily` and the live cron (`run_daily.py`,
+`.github/workflows/daily.yml`) share the very same `run_daily()` function,
+called once per process/day — no mutable state object passed in "from
+outside" would survive between these runs.
 
-Rozwiązanie: `customer_event_state_asof()` to CZYSTA, memoizowana funkcja
-(customer, year, month) -> stan skumulowany — rekurencyjnie dokłada
-miesiąc po miesiącu od onboardingu, cache'owana przez functools.lru_cache
-(każda para (klient, rok, miesiąc) liczona raz w całym czasie życia
-procesu, niezależnie od tego, kto i kiedy o nią zapyta). Dzięki temu
-działa poprawnie i identycznie w każdym z trzech miejsc wywołania (pętla
-monthly, pętla daily, żywy cron) bez żadnego jawnego przekazywania stanu
-między nimi i bez nowej kolumny/tabeli w Supabase (Zadanie 2d) —
-mocniejsza wersja tego samego wymogu determinizmu, nie jego złamanie."""
+Solution: `customer_event_state_asof()` is a PURE, memoized function
+(customer, year, month) -> cumulative state — it recursively advances month
+by month from onboarding, cached via functools.lru_cache (each
+(customer, year, month) triple is computed once for the entire lifetime of
+the process, regardless of who asks for it and when). This makes it work
+correctly and identically in all three call sites (the monthly loop, the
+daily loop, the live cron) with no explicit state hand-off between them and
+no new column/table in Supabase (Task 2d) — a stronger version of the same
+determinism requirement, not a violation of it."""
 
 from __future__ import annotations
 
@@ -63,38 +63,40 @@ CLIENT_LIFE_EVENTS: dict[str, dict] = {
     },
 }
 
-# OFFER_EXPANSION — usługa "o poziom wyżej" niż standardowy bundel segmentu
-# (roster.SEGMENT_SERVICE_BUNDLES). Enterprise ma już pełny pakiet S01+S02+S03
-# — celowo nieobecny tu, spójne z eligible_segments powyżej.
+# OFFER_EXPANSION — a service "one tier up" from the standard segment bundle
+# (roster.SEGMENT_SERVICE_BUNDLES). Enterprise already has the full
+# S01+S02+S03 package — deliberately absent here, consistent with
+# eligible_segments above.
 #
-# ŚWIADOMA KOREKTA względem naiwnego "kolejny poziom w górę" (SMB->S02,
-# Mid-market->S03): S02 ma roster.Service.availability=ENTERPRISE_MID (brak
-# base_price_smb — crash przy próbie wyceny dla SMB), S03 ma
-# availability=ENTERPRISE_ONLY (brak base_price_mid) — obie łamią już
-# istniejące ograniczenia katalogu usług. S04 (Konsulting i digitalizacja)
-# ma availability=ALL i wycenę dla każdego segmentu — jedyna usługa, którą
-# oba segmenty mogą faktycznie legalnie "dokupić" jako trwałą, dodatkową
-# linię subskrypcyjną, niezależnie od okazjonalnych zamówień
-# should_generate_extra_consulting/ONE_OFF_LARGE_PROJECT.
+# A DELIBERATE CORRECTION relative to the naive "next tier up" (SMB->S02,
+# Mid-market->S03): S02 has roster.Service.availability=ENTERPRISE_MID (no
+# base_price_smb — would crash when pricing for SMB), S03 has
+# availability=ENTERPRISE_ONLY (no base_price_mid) — both would violate
+# existing service-catalog constraints. S04 (Consulting and digitalization)
+# has availability=ALL and pricing for every segment — the only service
+# both segments can actually legally "buy up" as a permanent, additional
+# subscription line, independent of the occasional
+# should_generate_extra_consulting/ONE_OFF_LARGE_PROJECT orders.
 EXPANSION_SERVICE_BY_SEGMENT: dict[str, str] = {
     "SMB": "S04",
     "Mid-market": "S04",
 }
 
-# OFFER_REDUCTION — usługi możliwe do usunięcia, nigdy S01 (Zadanie 2c).
-# Mid-market ma tylko jedną sensowną opcję (S02); Enterprise wybiera
-# deterministycznie między S02/S03 osobnym rng (zob. _advance_one_month).
+# OFFER_REDUCTION — services eligible for removal, never S01 (Task 2c).
+# Mid-market has only one sensible option (S02); Enterprise picks
+# deterministically between S02/S03 with a separate rng (see
+# _advance_one_month).
 REDUCIBLE_SERVICES_BY_SEGMENT: dict[str, tuple[str, ...]] = {
     "Mid-market": ("S02",),
     "Enterprise": ("S02", "S03"),
 }
 
-HARDSHIP_TICKET_REDUCTION_MIN = 0.40  # "redukcja wolumenu o 40-60%" — mnożnik zostających godzin: 1-0.6=0.40 .. 1-0.4=0.60
+HARDSHIP_TICKET_REDUCTION_MIN = 0.40  # "reduce volume by 40-60%" — multiplier on remaining hours: 1-0.6=0.40 .. 1-0.4=0.60
 HARDSHIP_TICKET_REDUCTION_MAX = 0.60
 
-# Elevated bad-debt/OVERDUE próg podczas aktywnego kryzysu klienta —
-# zadanie nie podało konkretnej wartości ("podnieś próg"), skalibrowano
-# na wyraźnie podwyższony, ale nie absurdalny poziom: x5 normalnego
+# Elevated bad-debt/OVERDUE threshold during an active customer crisis — the
+# task didn't give a concrete value ("raise the threshold"), calibrated to a
+# clearly elevated but not absurd level: 5x the normal
 # order_generator.BAD_DEBT_PROBABILITY (0.02 -> 0.10).
 HARDSHIP_BAD_DEBT_MULTIPLIER = 5.0
 
@@ -104,18 +106,18 @@ LARGE_PROJECT_HOURS_MAX = 200.0
 
 @dataclass(frozen=True)
 class CustomerEventState:
-    """Stan skumulowany klienta na koniec danego (roku, miesiąca) — zob.
-    customer_event_state_asof(). Frozen — _advance_one_month zwraca zawsze
-    NOWĄ instancję zamiast mutować, żeby wynik cache'owany przez lru_cache
-    nigdy nie mógł zostać przypadkiem zmodyfikowany przez wywołującego."""
+    """A customer's cumulative state at the end of a given (year, month) —
+    see customer_event_state_asof(). Frozen — _advance_one_month always
+    returns a NEW instance instead of mutating, so the result cached by
+    lru_cache can never accidentally be modified by the caller."""
 
     added_service: Optional[str] = None
     removed_service: Optional[str] = None
-    hardship_active_until: Optional[tuple[int, int]] = None  # (year, month) — ostatni miesiąc kryzysu włącznie
-    hardship_ticket_multiplier: Optional[float] = None  # 0.40-0.60, wylosowany raz na start okna, stały przez cały czas trwania
+    hardship_active_until: Optional[tuple[int, int]] = None  # (year, month) — the last month of the crisis, inclusive
+    hardship_ticket_multiplier: Optional[float] = None  # 0.40-0.60, rolled once at the start of the window, fixed for its whole duration
     churned: bool = False
     churn_year_month: Optional[tuple[int, int]] = None
-    triggered_this_month: Optional[str] = None  # kod zdarzenia, jeśli coś wystrzeliło DOKŁADNIE w (year, month) tego stanu
+    triggered_this_month: Optional[str] = None  # the event code, if something fired EXACTLY in the (year, month) of this state
 
 
 _EMPTY_STATE = CustomerEventState()
@@ -131,18 +133,18 @@ def _add_months(year: int, month: int, n: int) -> tuple[int, int]:
 
 
 def roll_client_events(customer: CustomerSeed, year: int, month: int, prev_state: CustomerEventState) -> Optional[str]:
-    """Deterministyczne losowanie — jeden rng seedowany
-    customer_number+rok+miesiąc, iterowany w kolejności katalogu (jak w
-    Zadaniu 2b). Świadome odstępstwo od danego pseudokodu: zamiast
-    sprawdzać `active_event == event_code` (pojedyncze pole String, które
-    nie oddaje "trwałych" zmian OFFER_EXPANSION/REDUCTION współistniejących
-    z późniejszym kryzysem), efekty trwałe (bez duration_months) są
-    odhaczane raz na zawsze przez sam stan (added_service/removed_service
-    już ustawiony -> nieeligible na kolejne miesiące), a jedyny naprawdę
-    "aktywny, blokujący nowe losowania" stan to TEMPORARY_HARDSHIP (jedyny
-    z określonym duration_months) — sprawdzane PRZED wywołaniem tej
-    funkcji, zob. _advance_one_month. Pierwsze trafienie w kolejności
-    katalogu wygrywa (klient przechodzi jedno zdarzenie na miesiąc)."""
+    """Deterministic roll — a single rng seeded with
+    customer_number+year+month, iterated in catalog order (as in Task 2b).
+    A deliberate deviation from the given pseudocode: instead of checking
+    `active_event == event_code` (a single String field that doesn't capture
+    "permanent" OFFER_EXPANSION/REDUCTION changes coexisting with a later
+    crisis), permanent effects (with no duration_months) are ruled out once
+    and for all by the state itself (added_service/removed_service already
+    set -> ineligible for future months), and the only truly "active,
+    blocking-new-rolls" state is TEMPORARY_HARDSHIP (the only one with a
+    defined duration_months) — checked BEFORE calling this function, see
+    _advance_one_month. The first hit in catalog order wins (a customer goes
+    through one event per month)."""
     rng = random.Random(f"{customer.number}-{year}-{month}-events")
     for event_code, event_def in CLIENT_LIFE_EVENTS.items():
         if customer.segment not in event_def["eligible_segments"]:
@@ -165,11 +167,11 @@ def _advance_one_month(customer: CustomerSeed, year: int, month: int, prev_state
 
     hardship_until = prev_state.hardship_active_until
     if hardship_until is not None and (year, month) > hardship_until:
-        hardship_until = None  # kryzys wygasł przed tym miesiącem
+        hardship_until = None  # the crisis expired before this month
 
     if hardship_until is not None:
-        # klient w trakcie aktywnego kryzysu — nie losujemy nowych zdarzeń
-        # (2d: jeden "aktywny" stan na raz)
+        # customer in the middle of an active crisis — don't roll new events
+        # (2d: one "active" state at a time)
         return CustomerEventState(
             added_service=prev_state.added_service, removed_service=prev_state.removed_service,
             hardship_active_until=hardship_until, hardship_ticket_multiplier=prev_state.hardship_ticket_multiplier,
@@ -211,25 +213,24 @@ def _advance_one_month(customer: CustomerSeed, year: int, month: int, prev_state
     if code == "ONE_OFF_LARGE_PROJECT":
         return CustomerEventState(added_service=prev_state.added_service, removed_service=prev_state.removed_service, triggered_this_month=code)
 
-    raise AssertionError(f"Nieobsłużony kod zdarzenia: {code!r}")  # pragma: no cover
+    raise AssertionError(f"Unhandled event code: {code!r}")  # pragma: no cover
 
 
 @lru_cache(maxsize=None)
 def customer_event_state_asof(customer_number: str, year: int, month: int) -> CustomerEventState:
-    """Skumulowany stan zdarzeń klienckich klienta na koniec (year, month) —
-    czysta funkcja, cache'owana (zob. docstring modułu). Przyjmuje
-    customer_number (str), nie CustomerSeed — dataclass jest frozen, ale
-    lru_cache i tak wymaga hashowalnych argumentów, a numer jest naturalnym
-    kluczem.
+    """A customer's cumulative event state at the end of (year, month) — a
+    pure function, cached (see the module docstring). Takes customer_number
+    (str), not CustomerSeed — the dataclass is frozen, but lru_cache still
+    requires hashable arguments, and the number is the natural key.
 
-    Faza 7, Zadanie 2 — świadomie wykluczony wzorzec D (K06, jedyny klient
-    consultingowy bez stałego bundla usług, zob. roster.py/order_generator.py
-    "osobna logika"): OFFER_EXPANSION/REDUCTION nie mają się do czego
-    zastosować (K06 nie przechodzi przez build_order_lines wcale), a
-    BANKRUPTCY byłby martwy (branch pattern=="D" w generate_monthly_orders
-    nie sprawdza event_aware_is_customer_active) — podłączenie tego
-    wymagałoby przeprojektowania osobnej logiki K06, poza zakresem tego
-    zadania. K06 nigdy nie rolluje żadnego zdarzenia."""
+    Phase 7, Task 2 — pattern D (K06, the only consulting customer without a
+    fixed service bundle, see roster.py/order_generator.py "separate
+    logic") is deliberately excluded: OFFER_EXPANSION/REDUCTION have nothing
+    to apply to (K06 never goes through build_order_lines at all), and
+    BANKRUPTCY would be dead code (the pattern=="D" branch in
+    generate_monthly_orders doesn't check event_aware_is_customer_active) —
+    wiring this up would require redesigning K06's separate logic, out of
+    scope for this task. K06 never rolls any event."""
     customer = customer_by_number(customer_number)
     if customer.order_pattern not in ("A", "B", "C"):
         return _EMPTY_STATE
@@ -247,8 +248,8 @@ def customer_event_state_asof(customer_number: str, year: int, month: int) -> Cu
 
 
 def effective_customer_services(customer: CustomerSeed, state: CustomerEventState) -> list[str]:
-    """get_customer_services(), ale z trwałymi efektami OFFER_EXPANSION/
-    OFFER_REDUCTION zastosowanymi (Zadanie 2c)."""
+    """get_customer_services(), but with the permanent effects of
+    OFFER_EXPANSION/OFFER_REDUCTION applied (Task 2c)."""
     services = list(get_customer_services(customer))
     if state.added_service and state.added_service not in services:
         services.append(state.added_service)
@@ -258,11 +259,11 @@ def effective_customer_services(customer: CustomerSeed, state: CustomerEventStat
 
 
 def event_aware_is_customer_active(customer: CustomerSeed, on_date) -> bool:
-    """roster.is_customer_active(), rozszerzone o BANKRUPTCY — klient
-    przestaje być aktywny od miesiąca PO tym, w którym zdarzenie
-    wystrzeliło (miesiąc triggera generuje jeszcze swoją ostatnią,
-    odpisaną fakturę, zob. order_generator)."""
-    from norfingen.seed.roster import is_customer_active  # import lokalny — unika cyklu na poziomie modułu
+    """roster.is_customer_active(), extended with BANKRUPTCY — a customer
+    stops being active starting the month AFTER the one in which the event
+    fired (the trigger month still generates its final, written-off
+    invoice, see order_generator)."""
+    from norfingen.seed.roster import is_customer_active  # local import — avoids a module-level cycle
 
     if not is_customer_active(customer, on_date):
         return False
@@ -273,9 +274,9 @@ def event_aware_is_customer_active(customer: CustomerSeed, on_date) -> bool:
 
 
 def hardship_ticket_multiplier_for(customer_number: str, on_date) -> float:
-    """Faza 7, Zadanie 2c — mnożnik wolumenu ticketów wsparcia (hours_generator)
-    dla klienta w aktywnym oknie TEMPORARY_HARDSHIP na daną datę; 1.0 (brak
-    redukcji) poza oknem kryzysu."""
+    """Phase 7, Task 2c — the support-ticket-volume multiplier
+    (hours_generator) for a customer in an active TEMPORARY_HARDSHIP window
+    on a given date; 1.0 (no reduction) outside the crisis window."""
     state = customer_event_state_asof(customer_number, on_date.year, on_date.month)
     if state.hardship_active_until is None:
         return 1.0

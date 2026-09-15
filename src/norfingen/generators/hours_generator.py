@@ -1,31 +1,32 @@
-"""HourEntry — dzienny generator timesheet (Warstwa 2/3, Etap 4).
+"""HourEntry — daily timesheet generator (Layer 2/3, Tier 4).
 
-Loguje godziny tylko dla pracowników działów Leveranse/Teknologi (billable —
-zob. is_billable_employee), z wyjątkiem E05 (System Architect — rola
-techniczno-architektoniczna, nigdy billable, ustalone przed Fazą 4).
+Logs hours only for employees in the Leveranse/Teknologi departments
+(billable — see is_billable_employee), except E05 (System Architect — a
+technical/architectural role, never billable, set before Phase 4).
 
-Faza 6, Zadania 3/4 — zastępuje wzorzec "jeden klient dziennie" (Faza 4)
-dwoma modelami zależnymi od działu, bo w małym (17-osobowym) zespole
-obsługującym 48 aktywnych klientów jeden konsultant fizycznie MUSI serwisować
-wielu klientów dziennie:
-  - Leveranse (support, wszyscy klienci) — model ticketowy
-    (generate_daily_support_hours): kilku klientów dziennie, krótkie bloki
-    godzin proporcjonalne do segmentu (TICKET_AVG_HOURS).
-  - Teknologi (projekty/wdrożenia) — model cyklu życia klienta
-    (client_lifecycle_phase): pełny dzień u klienta w fazie ONBOARDING
-    (pierwsze tygodnie po onboarding_date), rozproszona konserwacja u kilku
-    klientów w fazie MAINTENANCE poza tym.
+Phase 6, Tasks 3/4 — replaces the "one customer per day" pattern (Phase 4)
+with two department-dependent models, because in a small (17-person) team
+serving 48 active customers, one consultant physically MUST service
+multiple customers per day:
+  - Leveranse (support, all customers) — a ticketing model
+    (generate_daily_support_hours): several customers per day, short hour
+    blocks proportional to segment (TICKET_AVG_HOURS).
+  - Teknologi (projects/implementations) — a customer lifecycle model
+    (client_lifecycle_phase): a full day at the customer during the
+    ONBOARDING phase (the first weeks after onboarding_date), otherwise
+    dispersed maintenance across several customers in the MAINTENANCE phase.
 
-Ta zmiana dotyczy WYŁĄCZNIE realizmu hour_entries — nie ma wpływu na przychód
-(order_generator) ani payroll (salary_generator, niezależny od godzin), więc
-nie zmienia wyniku offline sanity-checku marży (zob. SESSION_HANDOFF.md,
-Faza 6).
+This change is PURELY about hour_entries realism — it has no effect on
+revenue (order_generator) or payroll (salary_generator, independent of
+hours), so it does not change the result of the offline margin sanity-check
+(see SESSION_HANDOFF.md, Phase 6).
 
-Portfolio klient-konsultant nadal przydzielane przez
-assign_customers_to_consultants(), z rotacją co ~15 miesięcy (zob.
-_rotation_id) — teraz wywoływane osobno dla puli Leveranse (wszyscy klienci)
-i puli Teknologi (tylko klienci w fazie MAINTENANCE, klienci w ONBOARDING
-mają dedykowany zespół, zob. select_active_onboarding_clients)."""
+The customer-consultant portfolio is still assigned by
+assign_customers_to_consultants(), rotating every ~15 months (see
+_rotation_id) — now called separately for the Leveranse pool (all
+customers) and the Teknologi pool (only customers in the MAINTENANCE phase,
+customers in ONBOARDING have a dedicated team, see
+select_active_onboarding_clients)."""
 
 from __future__ import annotations
 
@@ -49,7 +50,7 @@ from norfingen.seed.roster import (
 )
 
 BILLABLE_DEPARTMENTS = {2, 3}  # Leveranse, Teknologi
-NON_BILLABLE_OVERRIDES = {5}  # E05 System Architect — nigdy billable (ustalone przed Fazą 4)
+NON_BILLABLE_OVERRIDES = {5}  # E05 System Architect — never billable (set before Phase 4)
 LEVERANSE_DEPARTMENT = 2
 TEKNOLOGI_DEPARTMENT = 3
 
@@ -57,13 +58,13 @@ FULL_WORKDAY_HOURS = 7.5
 SICK_PROBABILITY = 0.05
 
 BASE_YEAR = 2019
-ROTATION_PERIOD_QUARTERS = 5  # ~15 miesięcy (widełki 12-18 z zadania)
+ROTATION_PERIOD_QUARTERS = 5  # ~15 months (the 12-18 range from the task)
 
 MAX_CONSULTANT_CAPACITY_HOURS = HOURS_PER_YEAR_PER_CONSULTANT / 12 * UTILIZATION_TARGET
 
-# Faza 6, Zadanie 3 — model ticketowy Leveranse: konsultant obsługuje kilku
-# klientów dziennie zamiast jednego. Średni czas ticketu rośnie z segmentem
-# (Enterprise: bardziej złożone incydenty/infrastruktura).
+# Phase 6, Task 3 — Leveranse ticketing model: a consultant serves several
+# customers per day instead of one. Average ticket duration increases with
+# segment (Enterprise: more complex incidents/infrastructure).
 TICKET_AVG_HOURS: dict[str, float] = {
     "Enterprise": 1.2,
     "Mid-market": 0.9,
@@ -74,10 +75,11 @@ TICKET_TARGET_BILLABLE_MAX = 7.0
 TICKET_CLIENTS_PER_DAY_MIN = 2
 TICKET_CLIENTS_PER_DAY_MAX = 5
 
-# Faza 6, Zadanie 4 — cykl życia klienta dla Teknologi: pełny dzień u klienta
-# podczas wdrożenia (ONBOARDING), potem rozproszona konserwacja (MAINTENANCE).
-# CONCURRENT_ONBOARDING_CAPACITY=1 — mały (2-osobowy) zespół Teknologi
-# prowadzi jeden aktywny projekt wdrożeniowy naraz, nie równolegle wiele.
+# Phase 6, Task 4 — customer lifecycle for Teknologi: a full day at the
+# customer during implementation (ONBOARDING), then dispersed maintenance
+# (MAINTENANCE). CONCURRENT_ONBOARDING_CAPACITY=1 — the small (2-person)
+# Teknologi team runs one active implementation project at a time, not
+# several in parallel.
 ONBOARDING_DURATION_WEEKS: dict[str, int] = {
     "Enterprise": 6,
     "Mid-market": 4,
@@ -92,15 +94,16 @@ CONCURRENT_ONBOARDING_CAPACITY = 1
 
 
 def is_working_day(d: date) -> bool:
-    """Pon-Pt, bez norweskich świąt (uproszczone)."""
+    """Mon-Fri, without Norwegian holidays (simplified)."""
     return d.weekday() < 5
 
 
 def is_billable_employee(employee_id: int) -> bool:
-    """Pracownik loguje billable godziny — dział Leveranse/Teknologi, poza
-    jawnymi wyjątkami (NON_BILLABLE_OVERRIDES). Zastępuje statyczną listę
-    BILLABLE_EMPLOYEES sprzed Fazy 4 — teraz działa dla dowolnej liczby
-    pracowników (E17+ automatycznie billable, bo są w tych działach)."""
+    """Whether an employee logs billable hours — Leveranse/Teknologi
+    department, minus explicit exceptions (NON_BILLABLE_OVERRIDES). Replaces
+    the static BILLABLE_EMPLOYEES list from before Phase 4 — now works for
+    any number of employees (E17+ is automatically billable, since they're
+    in these departments)."""
     if employee_id in NON_BILLABLE_OVERRIDES:
         return False
     employee = employee_by_id(employee_id)
@@ -108,13 +111,13 @@ def is_billable_employee(employee_id: int) -> bool:
 
 
 def _rotation_id(year: int, month: int) -> int:
-    """Identyfikator okresu rotacji portfela klient-konsultant (~15 mies.,
-    zob. moduł-level docstring, Zadanie 5c) — zmienia się co
-    ROTATION_PERIOD_QUARTERS kwartałów, NIE co miesiąc. Świadome odstępstwo od
-    pseudokodu zadania (który seedował rng świeżo KAŻDY miesiąc —
-    sprzeczne z wymogiem "rotacja co 12-18 miesięcy", bo dawałoby całkowicie
-    nowe przypisanie co miesiąc zamiast stabilnego portfela z okresową
-    rotacją)."""
+    """Identifier of the customer-consultant portfolio rotation period
+    (~15 months, see the module-level docstring, Task 5c) — changes every
+    ROTATION_PERIOD_QUARTERS quarters, NOT every month. A deliberate
+    deviation from the task's pseudocode (which reseeded the rng fresh EVERY
+    month — contradicting the "rotate every 12-18 months" requirement, since
+    that would give a completely new assignment every month instead of a
+    stable portfolio with periodic rotation)."""
     quarter_index = (year - BASE_YEAR) * 4 + (month - 1) // 3
     return quarter_index // ROTATION_PERIOD_QUARTERS
 
@@ -125,11 +128,12 @@ def assign_customers_to_consultants(
     year: int,
     month: int,
 ) -> dict[int, list[CustomerSeed]]:
-    """Przydziela klientów do konsultantów tak, żeby suma godzin per
-    konsultant nie przekraczała dostępnej pojemności (roster.SEGMENT_HOURS_PER_MONTH,
-    MAX_CONSULTANT_CAPACITY_HOURS). Deterministyczne — seed z okresu rotacji
-    (zob. _rotation_id), nie z dokładnego (rok, miesiąc), żeby portfolio było
-    stabilne przez ~15 miesięcy, a nie zmieniało się co miesiąc (Zadanie 5c)."""
+    """Assigns customers to consultants so that the sum of hours per
+    consultant doesn't exceed available capacity
+    (roster.SEGMENT_HOURS_PER_MONTH, MAX_CONSULTANT_CAPACITY_HOURS).
+    Deterministic — seeded from the rotation period (see _rotation_id), not
+    from the exact (year, month), so the portfolio stays stable for ~15
+    months instead of changing every month (Task 5c)."""
     rng = random.Random(f"consultant-assignment-{_rotation_id(year, month)}")
     sorted_customers = sorted(customers, key=lambda c: SEGMENT_HOURS_PER_MONTH[c.segment], reverse=True)
     shuffled_employees = list(billable_employees)
@@ -145,7 +149,7 @@ def assign_customers_to_consultants(
             if employee_load[int(e.number[1:])] + hours_needed <= MAX_CONSULTANT_CAPACITY_HOURS
         ]
         if not available:
-            continue  # brak wolnej zdolności — klient nieobsłużony ten miesiąc (nie powinno się zdarzać, zob. roster.can_onboard_new_customer)
+            continue  # no free capacity — customer unserved this month (shouldn't happen, see roster.can_onboard_new_customer)
         chosen = min(available, key=lambda e: employee_load[int(e.number[1:])])
         chosen_id = int(chosen.number[1:])
         assignment[chosen_id].append(customer)
@@ -155,12 +159,12 @@ def assign_customers_to_consultants(
 
 
 def client_lifecycle_phase(customer: CustomerSeed, on_date: date) -> str:
-    """Faza 6, Zadanie 4 — faza cyklu życia klienta z perspektywy Teknologi:
-    "ONBOARDING" przez ONBOARDING_DURATION_WEEKS[segment] tygodni od
-    onboarding_date (pełny dzień u klienta), potem "MAINTENANCE"
-    (rozproszona konserwacja). Nie modeluje osobnej fazy STABILIZATION —
-    uproszczenie świadome, bo zadanie nie podaje jej konkretnego czasu
-    trwania (w przeciwieństwie do ONBOARDING)."""
+    """Phase 6, Task 4 — the customer's lifecycle phase from Teknologi's
+    perspective: "ONBOARDING" for ONBOARDING_DURATION_WEEKS[segment] weeks
+    from onboarding_date (a full day at the customer), then "MAINTENANCE"
+    (dispersed maintenance). Does not model a separate STABILIZATION phase —
+    a deliberate simplification, since the task doesn't give it a concrete
+    duration (unlike ONBOARDING)."""
     onboarding_end = customer.onboarding_date + timedelta(weeks=ONBOARDING_DURATION_WEEKS[customer.segment])
     if customer.onboarding_date <= on_date < onboarding_end:
         return "ONBOARDING"
@@ -168,11 +172,11 @@ def client_lifecycle_phase(customer: CustomerSeed, on_date: date) -> str:
 
 
 def select_active_onboarding_clients(customers: list[CustomerSeed], on_date: date) -> list[CustomerSeed]:
-    """Klienci aktualnie we wdrożeniu, ograniczeni do CONCURRENT_ONBOARDING_CAPACITY
-    (najwcześniej onboardowani mają pierwszeństwo — deterministyczne, bez
-    losowości) — mały zespół Teknologi prowadzi jeden projekt wdrożeniowy
-    naraz, nawet jeśli kalendarzowo kilku klientów jest w swoim oknie
-    onboardingu jednocześnie."""
+    """Customers currently in implementation, capped at
+    CONCURRENT_ONBOARDING_CAPACITY (the earliest onboarded take priority —
+    deterministic, no randomness) — the small Teknologi team runs one
+    implementation project at a time, even if several customers happen to be
+    in their onboarding window simultaneously by the calendar."""
     onboarding_now = [c for c in customers if client_lifecycle_phase(c, on_date) == "ONBOARDING"]
     onboarding_now.sort(key=lambda c: c.onboarding_date)
     return onboarding_now[:CONCURRENT_ONBOARDING_CAPACITY]
@@ -184,41 +188,41 @@ def generate_daily_support_hours(
     on_date: date,
     rng: random.Random,
 ) -> list[HourEntry]:
-    """Faza 6, Zadanie 3 — model ticketowy: konsultant obsługuje kilku
-    (TICKET_CLIENTS_PER_DAY_MIN..MAX) klientów ze swojego portfela dziennie,
-    zamiast jednego bloku 6-7.5h u jednego klienta (Faza 4). Suma billable
-    dąży do losowego celu (5.5-7.0h), reszta do 7.5h loguje się jako
-    INTERNAL. Używane zarówno dla Leveranse (support wszystkich klientów),
-    jak i Teknologi w fazie MAINTENANCE (konserwacja rozproszona) —
-    zob. moduł-level docstring."""
+    """Phase 6, Task 3 — the ticketing model: a consultant serves several
+    (TICKET_CLIENTS_PER_DAY_MIN..MAX) customers from their portfolio per day,
+    instead of one 6-7.5h block at a single customer (Phase 4). The billable
+    total aims for a random target (5.5-7.0h), the remainder up to 7.5h is
+    logged as INTERNAL. Used both for Leveranse (support for all customers)
+    and for Teknologi in the MAINTENANCE phase (dispersed maintenance) —
+    see the module-level docstring."""
     if not assigned_customers:
         return [HourEntry(
             date=on_date, employee_id=employee_id,
             activity_type=ActivityType.INTERNAL,
             hours=FULL_WORKDAY_HOURS,
-            description="Interne møter / administrasjon (brak przydzielonego klienta)",
+            description="Interne møter / administrasjon (no assigned customer)",
         )]
 
     entries: list[HourEntry] = []
     total_hours = 0.0
-    # Faza 7, Zadania 1a/3c — fellesferie (lipiec, ~50%) i UNPROFITABLE_QUARTER
-    # (firmowy, 0,85-0,95, cały kwartał) redukują wolumen ticketów.
+    # Phase 7, Tasks 1a/3c — fellesferie (July, ~50%) and UNPROFITABLE_QUARTER
+    # (company-wide, 0.85-0.95, whole quarter) reduce ticket volume.
     #
-    # NAPRAWA (Zadanie 4 — test_fellesferie_reduces_july_ticket_volume złapał
-    # to jako regresję): mnożnik pierwotnie (Zadanie 1) skalował WYŁĄCZNIE
-    # target_billable. To w praktyce prawie nigdy nie zmieniało wyniku —
-    # realnym ograniczeniem pętli niżej jest zwykle n_clients_today (sufit
-    # TICKET_CLIENTS_PER_DAY_MAX=5 × ~1h/ticket ≈ 5h, już poniżej
-    # niepomniejszonego target_billable 5,5-7h), więc redukcja
-    # target_billable rzadko była wiążąca. Mnożnik teraz skaluje też
-    # n_clients_today (faktyczny, wiążący sufit) — target_billable zostaje
-    # jako dodatkowe zabezpieczenie na wypadek dużych klientów/segmentów.
+    # FIX (Task 4 — test_fellesferie_reduces_july_ticket_volume caught this
+    # as a regression): the multiplier originally (Task 1) scaled ONLY
+    # target_billable. In practice that almost never changed the outcome —
+    # the loop below is usually actually bound by n_clients_today (a ceiling
+    # of TICKET_CLIENTS_PER_DAY_MAX=5 x ~1h/ticket ≈ 5h, already below the
+    # unreduced target_billable of 5.5-7h), so reducing target_billable
+    # rarely mattered. The multiplier now also scales n_clients_today (the
+    # actual, binding ceiling) — target_billable remains as an extra
+    # safeguard in case of large customers/segments.
     #
-    # Faza 7b, Zadanie 1b — MACRO_SHOCK (COVID_2020, marzec-czerwiec 2020):
-    # nakłada się na powyższe mnożnikowo (apply_macro_shock_multiplier),
-    # dotyczy WSZYSTKICH aktywnych klientów jednocześnie (szok rynkowy),
-    # nie losowany jak TEMPORARY_HARDSHIP — deterministycznie wstawiony
-    # fakt historyczny na 2020, zob. macro_shock.py.
+    # Phase 7b, Task 1b — MACRO_SHOCK (COVID_2020, March-June 2020): stacks
+    # multiplicatively on top of the above (apply_macro_shock_multiplier),
+    # applies to ALL active customers simultaneously (a market-wide shock),
+    # not randomly rolled like TEMPORARY_HARDSHIP — a deterministically
+    # inserted historical fact for 2020, see macro_shock.py.
     activity_multiplier = fellesferie_activity_multiplier(on_date.month) * unprofitable_quarter_ticket_multiplier(on_date.year, on_date.month)
     activity_multiplier = apply_macro_shock_multiplier(on_date.year, on_date.month, activity_multiplier)
     target_billable = rng.uniform(TICKET_TARGET_BILLABLE_MIN, TICKET_TARGET_BILLABLE_MAX) * activity_multiplier
@@ -230,10 +234,10 @@ def generate_daily_support_hours(
         if total_hours >= target_billable:
             break
         avg_hours = TICKET_AVG_HOURS[customer.segment]
-        hours = round(rng.uniform(avg_hours * 0.6, avg_hours * 1.6) * 4) / 4  # zaokrąglone do 0.25h
-        # Faza 7, Zadanie 2c — TEMPORARY_HARDSHIP: redukcja 40-60% wolumenu
-        # ticketów TEGO klienta (nie całego dnia konsultanta — inni klienci
-        # w tym samym dniu nie są dotknięci).
+        hours = round(rng.uniform(avg_hours * 0.6, avg_hours * 1.6) * 4) / 4  # rounded to 0.25h
+        # Phase 7, Task 2c — TEMPORARY_HARDSHIP: reduces THIS customer's
+        # ticket volume by 40-60% (not the consultant's whole day — other
+        # customers on the same day are unaffected).
         hours = round(hours * hardship_ticket_multiplier_for(customer.number, on_date) * 4) / 4
         hours = min(hours, round(target_billable - total_hours, 2))
         if hours < 0.25:
@@ -261,17 +265,19 @@ def generate_daily_support_hours(
 
 
 def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: list[int]) -> list[HourEntry]:
-    """Generuje wpisy godzin dla konkretnego dnia roboczego.
+    """Generates hour entries for a specific working day.
 
-    Logika (Faza 6, Zadania 3/4):
-    - Każdy aktywny billable pracownik: ~5% szans na chorobowe (0h billable, wpis SICK).
-    - Leveranse: model ticketowy (generate_daily_support_hours) na portfelu
-      obejmującym wszystkich aktywnych klientów.
-    - Teknologi: pełny dzień (7.5h billable) u klienta w aktywnym onboardingu
-      (zob. select_active_onboarding_clients, DEVELOPERS_PER_ONBOARDING
-      określa którzy konsultanci są przydzieleni), inaczej model ticketowy na
-      portfelu klientów w fazie MAINTENANCE.
-    - Deterministyczne per rok+miesiąc+dzień (lokalny random.Random)."""
+    Logic (Phase 6, Tasks 3/4):
+    - Every active billable employee: ~5% chance of sick leave (0h billable,
+      a SICK entry).
+    - Leveranse: the ticketing model (generate_daily_support_hours) over a
+      portfolio covering all active customers.
+    - Teknologi: a full day (7.5h billable) at a customer in active
+      onboarding (see select_active_onboarding_clients,
+      DEVELOPERS_PER_ONBOARDING determines which consultants are assigned),
+      otherwise the ticketing model over the portfolio of customers in the
+      MAINTENANCE phase.
+    - Deterministic per year+month+day (a local random.Random)."""
     d = date(year, month, day)
     if not is_working_day(d):
         return []
@@ -284,10 +290,10 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
         return []
 
     billable_employees = [employee_by_id(eid) for eid in billable_ids]
-    # Faza 7, Zadanie 2c — active_customers() zna tylko statyczny churn_date;
-    # dokładamy event_aware_is_customer_active, żeby klient po BANKRUPTCY
-    # (client_events) zniknął z portfela wsparcia od następnego miesiąca,
-    # tak samo jak z order_generator.
+    # Phase 7, Task 2c — active_customers() only knows the static churn_date;
+    # we additionally apply event_aware_is_customer_active, so a customer
+    # that went through BANKRUPTCY (client_events) disappears from the
+    # support portfolio starting next month, same as with order_generator.
     customers = [c for c in active_customers(d) if event_aware_is_customer_active(c, d)]
 
     leveranse_employees = [e for e in billable_employees if e.department_number == LEVERANSE_DEPARTMENT]
