@@ -937,3 +937,78 @@ Nowy plik, treść zgodna ze szkicem z promptu + dodatkowa tabela porównawcza t
 ### Sekrety Fly.io dodane w tej sesji
 
 `PORTAL_DB_HOST`, `PORTAL_READER_USERNAME`, `PORTAL_READER_PASSWORD` (`fly secrets set`, nigdy w repo) — obok istniejących `DEMO_READER_DATABASE_URL`/`API_KEY_MANAGER_DATABASE_URL`. Wszystkie istniejące role (`analyst`, `demo_reader`, `powerbi_reader`, `api_key_manager`) **bez zmian** poza rozszerzeniem `api_key_manager` o `db_access_requests` (ten sam wzorzec co `export_requests` z poprzedniej sesji).
+
+## Rotacja haseł + archiwizacja + tłumaczenie komentarzy na angielski (2026-09-15, porządkowanie repo cz. 2)
+
+Kontynuacja porządkowania po audycie diagnostycznym (sekcja wyżej) — trzy niezależne zadania.
+
+### Zadanie 1 — rotacja czterech ról
+
+`demo_reader`, `powerbi_reader`, `portal_reader`, `api_key_manager` zrotowane (`scripts/setup_*.py`), nowe hasła wypisane tylko w terminalu, nigdzie zapisane. Fly secrety (`DEMO_READER_DATABASE_URL`, `API_KEY_MANAGER_DATABASE_URL`, `PORTAL_READER_PASSWORD`) zaktualizowane w jednej paczce + jeden `fly deploy`, żeby uniknąć powtórki wcześniejszego incydentu z rozjazdem hasła. Zweryfikowane end-to-end: `/health`, `/keys/request`, `/db-access/request` (limit dobowy nadal aktywny z wcześniejszych testów — sam w sobie dowód że endpoint poprawnie czyta bazę nowym hasłem), bezpośrednie połączenie `psycopg2` jako `portal_reader` (SELECT działa, DELETE nadal `permission denied`).
+
+**`powerbi_reader` nie ma odpowiednika w Fly secrets** (nie jest używana przez usługę `api/`, wyłącznie przez osobiste połączenie Power BI Desktop użytkownika) — jego rotacja nie wymagała żadnego redeployu, tylko ręcznej aktualizacji connection stringa w Power BI przez użytkownika.
+
+Brak commitów dla tego zadania — hasła nigdy nie dotykają plików repo, zgodnie z instrukcją.
+
+### Zadanie 2 — archiwizacja jednorazowych migracji
+
+`fix_missing_payroll_transactions.py`, `fix_future_dated_records.py`, `fix_stale_supplier_names_in_vouchers.py`, `update_paid_status.py` → `scripts/archive/` (`git mv`, historia zachowana). README dodane. Odwołania w `docs/DATA_DICTIONARY.md`, `bank_transaction_generator.py` zaktualizowane na nową ścieżkę.
+
+### Zadanie 3 — kolizja pytest z `test_powerbi_connection.py`
+
+**Już naprawione wcześniej** — commit `ac0a601` (2026-08-20, ten sam dzień co pierwotne zgłoszenie) dodał `testpaths = ["tests"]` do `pyproject.toml`. Zweryfikowane ponownie: `pytest -v` bez żadnych flag, 257/257 zielone. Żaden rename/zmiana kodu niepotrzebna — tylko doprecyzowana stara notatka w tym dokumencie.
+
+### Zadanie 4 (kondensacja SESSION_HANDOFF.md) — pominięte na decyzję użytkownika
+
+Plik nie zawierał sekcji "Faza 1-4" do skondensowania (zaczyna się już od Fazy 6, Fazy 1-5 już skrócone do jednego akapitu w sekcji 8). Rozmiar bez zmian.
+
+---
+
+## Tłumaczenie komentarzy/docstringów kodu na angielski (2026-09-15, kontynuacja tej samej sesji)
+
+Osobny prompt, wykonany od razu po porządkowaniu repo powyżej. Audyt (`grep -rlP '[ąćęłńóśźż]'`) wykrył **93 pliki / 2591 linii** z polskimi znakami diakrytycznymi w całym repo — znacznie więcej niż "resztki po wcześniejszych sesjach" zakładane w prompcie: to praktycznie cały oryginalny język projektu, w tym **3 z 4 dopasowanych plików `docs/` były całymi dokumentami po polsku** (`DATA_DICTIONARY.md`, `DATA_SAFETY.md`, `POWERBI_CONNECTION.md`), nie pojedynczymi zdaniami — sprzeczne z premisą promptu, że dokumentacja główna jest już w pełni angielska.
+
+### Ustalony zakres (po dwóch rundach pytań do użytkownika)
+
+Ze względu na skalę, użytkownik zdecydował o zawężeniu: **`src/` (30 plików) + 3 dokumenty referencyjne (`DATA_DICTIONARY.md`/`DATA_SAFETY.md`/`POWERBI_CONNECTION.md`)** — **33 pliki łącznie**, dokładnie tyle ile faktycznie zmieniono (`git diff --stat` między pierwszym a ostatnim commitem tłumaczenia: **33 pliki, 1870 wstawień / 1795 usunięć**). `SESSION_HANDOFF.md` (żywy log sesji, pisany po polsku przez całą współpracę), `api/`, `scripts/`, `tests/` i pliki w katalogu głównym (`fly.toml`, `run_daily.py` itd.) **świadomie poza zakresem tej sesji** — zostają po polsku, do ewentualnej osobnej sesji.
+
+### Metoda — plik po pliku, z weryfikacją testami
+
+8 commitów, każdy po grupie plików + pełny `pytest -q` (257/257 bez zmian po każdej grupie, poza jednym testem który trzeba było zaktualizować razem z tłumaczeniem — zob. niżej):
+1. **models** (`src/norfingen/models/*.py` + `db/connection.py` + `config.py`, 14 plików)
+2. **seed** (`payroll.py`, `roster.py` — największy pojedynczy plik, 289 linii polskich komentarzy)
+3. **order_generator.py**
+4. **hours_generator.py + client_events.py**
+5. **opex_generator.py + bank_transaction_generator.py**
+6. **voucher.py + seasonality.py + macro_shock.py + salary_generator.py + company_events.py**
+7. **supplier_invoice_generator.py + backfill.py + db/repository.py + db/schema.sql** — domyka `src/` w całości
+8. **docs/DATA_DICTIONARY.md + DATA_SAFETY.md + POWERBI_CONNECTION.md**
+
+### Zachowanie precyzji merytorycznej (najbardziej newralgiczne fragmenty)
+
+Tłumaczone dosłownie, bez upraszczania: logika feriepenger w czerwcu (`payroll.py`/`salary_generator.py` — "zastępuje, nie dubluje"), historia trzech prób kalibracji cen S01-S04 (`roster.py`, sekcja `services`), uzasadnienie dwóch kubełków COGS S01/S02 zakotwiczonych w Garnes Data AS, architektura czystej/memoizowanej funkcji stanu zdarzeń Fazy 7 (odejście od pseudokodu z promptu, `client_events.py`/`company_events.py`), wzorzec `ON CONFLICT` bez listy kolumn (lekcja z incydentu 2026-09-04, `repository.py`/`schema.sql`), dwa świadome odstępstwa od szkicu SQL widoków BI (`schema.sql`).
+
+### Świadome wyjątki pozostawione (i dlaczego)
+
+- **Norweska terminologia domenowa** (`feriepenger`, `skattetrekk`, `arbeidsgiveravgift`, nazwy kont NS4102 typu "Skyldig lønn"/"Kantinetilskudd", nazwy działów Salg/Leveranse/Teknologi/Økonomi) — to dane referencyjne/biznesowe, nie polskie komentarze; pozostają nietknięte we wszystkich plikach.
+- **`MICROSOFT_COST_LINES` w `supplier_invoice_generator.py`** (3 nazwy linii kosztowych, np. "Visual Studio / narzędzia deweloperskie") — to treść symulacji (trafia jako `comment` na `SupplierInvoice`), nie kod; jedyny pozostały match `grep` w `src/` po tej sesji, świadomie.
+- **Nazwy arkuszy eksportu** (`Faktury_sprzedazy`, `Payroll_miesiecznie` itd. w `export_queries.py`) — jawny wyjątek z promptu, nietknięte (plik zresztą poza zakresem `src/`).
+- **`SESSION_HANDOFF.md`, `api/`, `scripts/`, `tests/`, pliki root** — poza zakresem tej sesji (decyzja użytkownika), zostają po polsku.
+
+### Test zaktualizowany razem z tłumaczeniem
+
+`tests/test_powerbi_access.py::test_powerbi_connection_doc_has_no_hardcoded_password` sprawdzał dosłowny polski fragment `"przekazane bezpiecznie, nie w tym dokumencie"` w `POWERBI_CONNECTION.md` — po przetłumaczeniu dokumentu na angielski test zaktualizowany na `"shared securely, not in this document"` w tym samym commicie co tłumaczenie tego pliku, zgodnie z zasadą "nie zostawiaj rozjazdu".
+
+### Potwierdzenie liczby testów
+
+**257/257 testów offline przez cały czas** (`pytest -v`/`pytest -q`, bez `--ignore=scripts`) — zero regresji w logice generowania danych finansowych, zmiany wyłącznie w warstwie komentarzy/docstringów/dokumentacji. Jeden przebieg pełnego `pytest -q` trwał wyjątkowo długo (368s zamiast zwykłych ~2,5s) z powodu chwilowego, niezwiązanego z tą sesją obciążenia systemu (load average ~9) — zweryfikowane próbkowaniem procesu (`sample`), nie zawieszenie/regresja z tłumaczenia.
+
+### Drugi skan (Zadanie 3 z promptu) — wynik
+
+```
+grep -rlP '[ąćęłńóśźż]' --include="*.py" --include="*.md" --include="*.sql" --include="*.toml" . | grep -v "scripts/archive"
+```
+
+Pokazuje wyłącznie pliki świadomie poza zakresem tej sesji (`SESSION_HANDOFF.md`, `api/`, `scripts/` poza archiwum, `tests/`, root) + jeden zamierzony wyjątek danych (`supplier_invoice_generator.py`, `MICROSOFT_COST_LINES`) — zgodnie z oczekiwaniem, nic pominiętego przypadkiem w ustalonym zakresie.
+
+**Nie wypchnięte na `origin/main`** — 8 commitów tłumaczenia + 3 z wcześniejszego porządkowania repo tej samej sesji czekają na `git push` (decyzja użytkownika o samodzielnym pushowaniu, ustalona wcześniej w tej sesji).
