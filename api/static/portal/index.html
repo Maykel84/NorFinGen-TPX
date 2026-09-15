@@ -82,14 +82,30 @@
   .blob-d { bottom: 10%; right: -100px; width: 260px; height: 260px; background: var(--blob-4); border-radius: 65% 35% 55% 45% / 40% 55% 45% 60%; }
 
   main { max-width: 720px; margin: 0 auto; position: relative; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 6px;
+  }
+  .brand svg { flex-shrink: 0; width: 52px; height: 52px; }
   h1 {
     font-family: "Quicksand", "Nunito", sans-serif;
     font-weight: 700;
     font-size: 2.1rem;
-    margin-bottom: 6px;
+    line-height: 1.15;
+    margin: 0;
     letter-spacing: -0.02em;
   }
-  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 36px; max-width: 52ch; }
+  h1 .tagline {
+    display: block;
+    font-family: "Nunito", sans-serif;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--accent2-dark);
+    letter-spacing: 0.01em;
+  }
+  .subtitle { color: var(--muted); margin-top: 12px; margin-bottom: 36px; max-width: 52ch; }
   section {
     background: var(--card);
     border: 1px solid var(--border);
@@ -200,6 +216,35 @@
   }
   a { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
   a:hover { text-decoration: underline; }
+  .lang-switch {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 5;
+    display: flex;
+    gap: 4px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px;
+    box-shadow: var(--shadow);
+  }
+  .lang-switch button {
+    margin: 0;
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    background: transparent;
+    color: var(--muted);
+    box-shadow: none;
+  }
+  .lang-switch button:hover:not(:disabled) { transform: none; background: var(--card-tint); }
+  .lang-switch button.active {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  @media (max-width: 480px) {
+    .lang-switch { top: 14px; right: 14px; }
+  }
 </style>
 </head>
 <body>
@@ -207,58 +252,91 @@
 <div class="blob blob-b" aria-hidden="true"></div>
 <div class="blob blob-c" aria-hidden="true"></div>
 <div class="blob blob-d" aria-hidden="true"></div>
+<div class="lang-switch">
+  <button type="button" id="lang-pl" data-lang="pl">PL</button>
+  <button type="button" id="lang-en" data-lang="en">EN</button>
+</div>
 <main>
-  <h1>📊 NorFinGen</h1>
-  <p class="subtitle">Synthetic financial data for a fictional Norwegian IT services company — grab an API key or download the numbers, no sign-up required.</p>
+  <div class="brand">
+    <svg viewBox="0 0 520 520" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M228 440 L292 440 L314 482 L206 482 Z" fill="#33272a"/>
+      <rect x="176" y="472" width="168" height="24" rx="8" fill="#33272a"/>
+      <rect x="30" y="38" width="460" height="360" rx="30" fill="#2c3440"/>
+      <rect x="50" y="58" width="420" height="292" rx="18" fill="#dff1fb"/>
+      <g transform="translate(150,178)">
+        <circle r="60" fill="none" stroke="#5fb0ef" stroke-width="36" stroke-dasharray="132 396" transform="rotate(-90)"/>
+        <circle r="60" fill="none" stroke="#ffd873" stroke-width="36" stroke-dasharray="132 396" stroke-dashoffset="-132" transform="rotate(-90)"/>
+        <circle r="60" fill="none" stroke="#8fdd9e" stroke-width="36" stroke-dasharray="112 396" stroke-dashoffset="-264" transform="rotate(-90)"/>
+        <circle r="26" fill="#eef6fb"/>
+      </g>
+      <rect x="70" y="262" width="120" height="12" rx="6" fill="#aebbc7"/>
+      <rect x="70" y="284" width="90" height="12" rx="6" fill="#aebbc7"/>
+      <rect x="272" y="76" width="150" height="12" rx="6" fill="#aebbc7"/>
+      <rect x="272" y="98" width="150" height="12" rx="6" fill="#aebbc7"/>
+      <rect x="272" y="120" width="110" height="12" rx="6" fill="#aebbc7"/>
+      <rect x="272" y="272" width="26" height="58" rx="4" fill="#ef7a6d"/>
+      <rect x="312" y="232" width="26" height="98" rx="4" fill="#8fdd9e"/>
+      <rect x="352" y="252" width="26" height="78" rx="4" fill="#ffd873"/>
+      <rect x="392" y="197" width="26" height="133" rx="4" fill="#5fb0ef"/>
+      <polyline points="267,227 312,192 352,212 417,152" fill="none" stroke="#5fb0ef" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      <polygon points="417,152 394,157 412,174" fill="#5fb0ef"/>
+      <g transform="translate(108,336) rotate(14)">
+        <circle r="78" fill="#eef8fd" stroke="#5fb0ef" stroke-width="24"/>
+        <rect x="42" y="52" width="30" height="104" rx="13" fill="#c98b4b" transform="rotate(45 42 52)"/>
+      </g>
+    </svg>
+    <h1>NorFinGen<span class="tagline" data-i18n="tagline">Synthetic financial data platform</span></h1>
+  </div>
+  <p class="subtitle" data-i18n="subtitle">Synthetic financial data for a fictional Norwegian IT services company — grab an API key or download the numbers, no sign-up required.</p>
 
   <section>
-    <h2>1. Get an API key</h2>
-    <label for="label-input">Your name or course identifier</label>
-    <input type="text" id="label-input" placeholder="e.g. jane-doe or DATA301-fall26" maxlength="100">
-    <button id="request-key-btn" type="button">Generate key</button>
+    <h2 data-i18n="s1Heading">1. Get an API key</h2>
+    <label for="label-input" data-i18n="labelText">Your name or course identifier</label>
+    <input type="text" id="label-input" data-i18n-placeholder="labelPlaceholder" placeholder="e.g. jane-doe or DATA301-fall26" maxlength="100">
+    <button id="request-key-btn" type="button" data-i18n="generateBtn">Generate key</button>
     <div id="key-status" class="status" hidden></div>
     <div id="key-box" class="key-box" hidden>
-      <strong>Save this key now — it won't be shown again.</strong>
+      <strong data-i18n="keyBoxStrong">Save this key now — it won't be shown again.</strong>
       <code id="key-value"></code>
-      Rate limit: <span id="key-rate-limit"></span> requests/hour.
+      <span data-i18n="rateLimitPrefix">Rate limit:</span> <span id="key-rate-limit"></span> <span data-i18n="rateLimitSuffix">requests/hour.</span>
     </div>
   </section>
 
   <section>
-    <h2>2. Download the data</h2>
+    <h2 data-i18n="s2Heading">2. Download the data</h2>
     <div class="radio-row">
       <input type="radio" id="range-all" name="range" value="all" checked>
-      <label for="range-all">Full history (2019 – today)</label>
+      <label for="range-all" data-i18n="rangeAllLabel">Full history (2019 – today)</label>
     </div>
     <div class="radio-row">
       <input type="radio" id="range-custom" name="range" value="custom">
-      <label for="range-custom">Custom range</label>
+      <label for="range-custom" data-i18n="rangeCustomLabel">Custom range</label>
     </div>
     <div class="custom-range" id="custom-range-fields" hidden>
       <div class="row">
         <div>
-          <label for="from-month">From (month)</label>
+          <label for="from-month" data-i18n="fromLabel">From (month)</label>
           <input type="month" id="from-month" min="2019-01">
         </div>
         <div>
-          <label for="to-month">To (month)</label>
+          <label for="to-month" data-i18n="toLabel">To (month)</label>
           <input type="month" id="to-month">
         </div>
       </div>
     </div>
     <div class="row">
-      <button id="download-csv-btn" type="button">Download CSV</button>
-      <button id="download-excel-btn" type="button" class="secondary">Download Excel</button>
+      <button id="download-csv-btn" type="button" data-i18n="csvBtn">Download CSV</button>
+      <button id="download-excel-btn" type="button" class="secondary" data-i18n="excelBtn">Download Excel</button>
     </div>
     <div id="export-status" class="status" hidden></div>
   </section>
 
   <section>
-    <h2>3. More</h2>
+    <h2 data-i18n="s3Heading">3. More</h2>
     <ul class="links">
-      <li><a href="/docs">Interactive API docs (Swagger)</a></li>
-      <li><a href="https://maykel84.github.io/raport" target="_blank" rel="noopener">Live analytics report</a></li>
-      <li><a href="https://github.com/Maykel84" target="_blank" rel="noopener">docs/EDU_ACCESS.md</a> (using your key from the command line)</li>
+      <li><a href="/docs" data-i18n="linkDocs">Interactive API docs (Swagger)</a></li>
+      <li><a href="https://maykel84.github.io/raport" target="_blank" rel="noopener" data-i18n="linkReport">Live analytics report</a></li>
+      <li><a href="https://github.com/Maykel84" target="_blank" rel="noopener">docs/EDU_ACCESS.md</a> <span data-i18n="linkEduSuffix">(using your key from the command line)</span></li>
     </ul>
   </section>
 </main>
@@ -266,6 +344,98 @@
 <script>
 (function () {
   const API_BASE = "/api/v1";
+
+  const I18N = {
+    en: {
+      pageTitle: "NorFinGen — self-service portal",
+      tagline: "Synthetic financial data platform",
+      subtitle: "Synthetic financial data for a fictional Norwegian IT services company — grab an API key or download the numbers, no sign-up required.",
+      s1Heading: "1. Get an API key",
+      labelText: "Your name or course identifier",
+      labelPlaceholder: "e.g. jane-doe or DATA301-fall26",
+      generateBtn: "Generate key",
+      keyBoxStrong: "Save this key now — it won't be shown again.",
+      rateLimitPrefix: "Rate limit:",
+      rateLimitSuffix: "requests/hour.",
+      s2Heading: "2. Download the data",
+      rangeAllLabel: "Full history (2019 – today)",
+      rangeCustomLabel: "Custom range",
+      fromLabel: "From (month)",
+      toLabel: "To (month)",
+      csvBtn: "Download CSV",
+      excelBtn: "Download Excel",
+      s3Heading: "3. More",
+      linkDocs: "Interactive API docs (Swagger)",
+      linkReport: "Live analytics report",
+      linkEduSuffix: "(using your key from the command line)",
+      enterTwoChars: "Enter at least 2 characters.",
+      generatingKey: "Generating...",
+      requestFailed: function (status) { return "Request failed (" + status + ")"; },
+      generatingExport: "Generating... this can take a few seconds for the full history.",
+      exportFailed: function (status) { return "Export failed (" + status + ")"; },
+      doneExport: function (filename) { return "Done — " + filename; },
+    },
+    pl: {
+      pageTitle: "NorFinGen — portal samoobsługowy",
+      tagline: "Platforma syntetycznych danych finansowych",
+      subtitle: "Syntetyczne dane finansowe fikcyjnej norweskiej firmy IT — pobierz klucz API albo dane liczbowe, bez rejestracji.",
+      s1Heading: "1. Pobierz klucz API",
+      labelText: "Twoje imię lub identyfikator kursu",
+      labelPlaceholder: "np. jan-kowalski lub DATA301-jesień26",
+      generateBtn: "Wygeneruj klucz",
+      keyBoxStrong: "Zapisz ten klucz teraz — nie pokaże się ponownie.",
+      rateLimitPrefix: "Limit zapytań:",
+      rateLimitSuffix: "zapytań/godzinę.",
+      s2Heading: "2. Pobierz dane",
+      rangeAllLabel: "Cała historia (2019 – dziś)",
+      rangeCustomLabel: "Własny zakres",
+      fromLabel: "Od (miesiąc)",
+      toLabel: "Do (miesiąc)",
+      csvBtn: "Pobierz CSV",
+      excelBtn: "Pobierz Excel",
+      s3Heading: "3. Więcej",
+      linkDocs: "Interaktywna dokumentacja API (Swagger)",
+      linkReport: "Raport analityczny na żywo",
+      linkEduSuffix: "(użycie klucza z linii poleceń)",
+      enterTwoChars: "Wpisz co najmniej 2 znaki.",
+      generatingKey: "Generowanie...",
+      requestFailed: function (status) { return "Żądanie nie powiodło się (" + status + ")"; },
+      generatingExport: "Generowanie... może potrwać kilka sekund dla pełnej historii.",
+      exportFailed: function (status) { return "Eksport nie powiódł się (" + status + ")"; },
+      doneExport: function (filename) { return "Gotowe — " + filename; },
+    },
+  };
+
+  let lang = "en";
+  let T = I18N.en;
+
+  function detectDefaultLang() {
+    try {
+      const saved = localStorage.getItem("norfingen-lang");
+      if (saved === "pl" || saved === "en") return saved;
+    } catch (err) { /* private mode / blocked storage - ignore, fall through */ }
+    return navigator.language && navigator.language.toLowerCase().startsWith("pl") ? "pl" : "en";
+  }
+
+  function applyLang(next) {
+    lang = next === "pl" ? "pl" : "en";
+    T = I18N[lang];
+    document.documentElement.lang = lang;
+    document.title = T.pageTitle;
+    document.querySelectorAll("[data-i18n]").forEach(function (el) {
+      el.textContent = T[el.getAttribute("data-i18n")];
+    });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
+      el.setAttribute("placeholder", T[el.getAttribute("data-i18n-placeholder")]);
+    });
+    document.getElementById("lang-pl").classList.toggle("active", lang === "pl");
+    document.getElementById("lang-en").classList.toggle("active", lang === "en");
+    try { localStorage.setItem("norfingen-lang", lang); } catch (err) { /* ignore */ }
+  }
+
+  document.getElementById("lang-pl").addEventListener("click", function () { applyLang("pl"); });
+  document.getElementById("lang-en").addEventListener("click", function () { applyLang("en"); });
+  applyLang(detectDefaultLang());
 
   const labelInput = document.getElementById("label-input");
   const requestKeyBtn = document.getElementById("request-key-btn");
@@ -283,12 +453,12 @@
   requestKeyBtn.addEventListener("click", async function () {
     const label = labelInput.value.trim();
     if (label.length < 2) {
-      setStatus(keyStatus, "Enter at least 2 characters.", true);
+      setStatus(keyStatus, T.enterTwoChars, true);
       return;
     }
     requestKeyBtn.disabled = true;
     keyBox.hidden = true;
-    setStatus(keyStatus, "Generating...", false);
+    setStatus(keyStatus, T.generatingKey, false);
     try {
       const resp = await fetch(API_BASE + "/keys/request", {
         method: "POST",
@@ -297,7 +467,7 @@
       });
       const data = await resp.json().catch(function () { return {}; });
       if (!resp.ok) {
-        throw new Error(data.detail || ("Request failed (" + resp.status + ")"));
+        throw new Error(data.detail || T.requestFailed(resp.status));
       }
       keyValue.textContent = data.api_key;
       keyRateLimit.textContent = data.rate_limit_per_hour;
@@ -340,12 +510,12 @@
     const otherBtn = format === "csv" ? excelBtn : csvBtn;
     btn.disabled = true;
     otherBtn.disabled = true;
-    setStatus(exportStatus, "Generating... this can take a few seconds for the full history.", false);
+    setStatus(exportStatus, T.generatingExport, false);
     try {
       const resp = await fetch(buildExportUrl(format));
       if (!resp.ok) {
         const data = await resp.json().catch(function () { return {}; });
-        throw new Error(data.detail || ("Export failed (" + resp.status + ")"));
+        throw new Error(data.detail || T.exportFailed(resp.status));
       }
       const blob = await resp.blob();
       const disposition = resp.headers.get("Content-Disposition") || "";
@@ -360,7 +530,7 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(objectUrl);
-      setStatus(exportStatus, "Done — " + filename, false);
+      setStatus(exportStatus, T.doneExport(filename), false);
     } catch (err) {
       setStatus(exportStatus, err.message, true);
     } finally {
