@@ -1,13 +1,15 @@
-"""Pętla historyczna — generuje wszystkie dokumenty W2 + Vouchery W3 dla zakresu dat.
+"""The historical loop — generates all Layer 2 documents + Layer 3 Vouchers for a date range.
 
-Domyślnie 2019-01-01 (założenie firmy) do dziś. Przed pętlą — jednorazowy MANUAL
-Voucher kapitału zakładowego (2019-01-02, DR 1910 / CR 2000, 30 000 NOK).
+Defaults to 2019-01-01 (company founding) through today. Before the loop —
+a one-off MANUAL Voucher for the founding capital (2019-01-02, DR 1910 /
+CR 2000, 30,000 NOK).
 
-Ten moduł NIE zapisuje jeszcze do Supabase — `persist_fn`, jeśli podana, jest
-wywoływana z każdym wygenerowanym obiektem (Order, SupplierInvoice, SalaryTransaction,
-Voucher) i to ona odpowiada za zapis. Domyślnie (`persist_fn=None`) backfill tylko
-generuje i waliduje w pamięci, zwracając statystyki — przydatne do testów i
-podglądu wolumenu przed podłączeniem warstwy bazodanowej.
+This module does NOT write to Supabase itself — `persist_fn`, if given, is
+called with each generated object (Order, SupplierInvoice,
+SalaryTransaction, Voucher) and it's responsible for the actual save. By
+default (`persist_fn=None`) the backfill only generates and validates
+in-memory, returning statistics — useful for tests and previewing volume
+before wiring up the database layer.
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ EMPTY_MONTH_STATS = {
 
 
 def founding_capital_voucher() -> Voucher:
-    """Jednorazowy MANUAL Voucher otwierający bilans — kapitał zakładowy 30 000 NOK."""
+    """A one-off MANUAL Voucher opening the balance sheet — 30,000 NOK founding capital."""
     voucher = Voucher(
         date=FOUNDING_CAPITAL_DATE,
         description="Stiftelse — aksjekapital 30 000 NOK",
@@ -59,7 +61,7 @@ def founding_capital_voucher() -> Voucher:
 
 
 def months_range(start_date: date, end_date: date) -> list[tuple[int, int]]:
-    """Lista (year, month) od start_date do end_date włącznie, po miesiącach."""
+    """A list of (year, month) from start_date to end_date inclusive, by month."""
     months: list[tuple[int, int]] = []
     year, month = start_date.year, start_date.month
     while (year, month) <= (end_date.year, end_date.month):
@@ -73,19 +75,22 @@ def months_range(start_date: date, end_date: date) -> list[tuple[int, int]]:
 
 def generate_and_persist_month(year: int, month: int, persist_fn: Optional[PersistFn] = None,
                                 cutoff: Optional[date] = None) -> dict:
-    """Generuje i (jeśli podano persist_fn) zapisuje Order/SupplierInvoice/
-    SalaryTransaction + odpowiadające Vouchery dla JEDNEGO miesiąca. Wydzielone
-    z run_backfill(), żeby run_daily.py (i docelowo APScheduler job na Railway)
-    mogły wygenerować tylko bieżący miesiąc bez przechodzenia całej historii.
+    """Generates and (if persist_fn is given) saves Order/SupplierInvoice/
+    SalaryTransaction + matching Vouchers for ONE month. Factored out of
+    run_backfill() so that run_daily.py (and eventually an APScheduler job
+    on Railway) can generate just the current month without walking the
+    entire history.
 
-    Faza 5a — `cutoff` (domyślnie dzisiaj, zob. seed.payroll.get_generation_cutoff_date):
-    dla BIEŻĄCEGO (niezakończonego) miesiąca ta funkcja wciąż jest wołana raz
-    dla całego (rok, miesiąc) — ale każdy wygenerowany rekord z datą PÓŹNIEJSZĄ
-    niż cutoff jest odrzucany przed zapisem (nie tylko przed persist_fn, ale
-    i przed liczeniem do stats), zamiast zakładać że skoro przetwarzamy dany
-    miesiąc, to cały już minął. Bez tego np. zamówienie klienta z invoice_day=27
-    powstawałoby z datą 27. dnia BIEŻĄCEGO miesiąca, nawet gdy backfill uruchomiono
-    7. dnia tego miesiąca."""
+    Phase 5a — `cutoff` (defaults to today, see
+    seed.payroll.get_generation_cutoff_date): for the CURRENT (not yet
+    finished) month, this function is still called once for the whole
+    (year, month) — but every generated record with a date LATER than
+    cutoff is discarded before saving (not just before persist_fn, but also
+    before it's counted into stats), instead of assuming that since we're
+    processing this month, the whole month has already passed. Without
+    this, e.g. a customer order with invoice_day=27 would be created dated
+    the 27th of the CURRENT month, even if the backfill was run on the 7th
+    of that month."""
     if cutoff is None:
         cutoff = get_generation_cutoff_date()
     stats = dict(EMPTY_MONTH_STATS)
@@ -134,16 +139,17 @@ def run_backfill(
     end_date: Optional[date] = None,
     persist_fn: Optional[PersistFn] = None,
 ) -> dict:
-    """Generuje Order/SupplierInvoice/SalaryTransaction + odpowiadające Vouchery
-    dla każdego miesiąca w [start_date, end_date]. Zwraca statystyki wolumenu i
-    loguje (logging.INFO) podsumowanie per miesiąc.
+    """Generates Order/SupplierInvoice/SalaryTransaction + matching Vouchers
+    for every month in [start_date, end_date]. Returns volume statistics and
+    logs (logging.INFO) a per-month summary.
 
-    Faza 5a — `end_date` (jawny lub domyślny `date.today()`) jest zawsze
-    dodatkowo przycięty do `get_generation_cutoff_date()` (też dziś) — generator
-    NIGDY nie tworzy rekordów z datą późniejszą niż rzeczywista data systemowa,
-    niezależnie od tego, jaki `end_date` poda wywołujący. Sam cutoff jest też
-    przekazywany do `generate_and_persist_month()`, żeby BIEŻĄCY (niezakończony)
-    miesiąc w tym zakresie nie został wygenerowany w całości (zob. tamta funkcja)."""
+    Phase 5a — `end_date` (explicit or the default `date.today()`) is
+    always additionally clamped to `get_generation_cutoff_date()` (also
+    today) — the generator NEVER creates records dated later than the
+    actual system date, regardless of what `end_date` the caller passes.
+    The cutoff itself is also passed into `generate_and_persist_month()`,
+    so the CURRENT (not yet finished) month within this range isn't
+    generated in full (see that function)."""
     cutoff = get_generation_cutoff_date()
     if end_date is None:
         end_date = cutoff
@@ -159,7 +165,7 @@ def run_backfill(
     _emit(capital_voucher)
     stats["vouchers"] += 1
     stats["postings"] += len(capital_voucher.postings)
-    logger.info("Voucher kapitału zakładowego zapisany (%s)", FOUNDING_CAPITAL_DATE)
+    logger.info("Founding capital Voucher saved (%s)", FOUNDING_CAPITAL_DATE)
 
     for year, month in months_range(start_date, end_date):
         stats["months"] += 1

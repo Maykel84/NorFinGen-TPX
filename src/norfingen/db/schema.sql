@@ -1,26 +1,26 @@
--- NorFinGen — schemat Supabase Postgres.
+-- NorFinGen — Supabase Postgres schema.
 --
--- Wszystkie CREATE TABLE są idempotentne (IF NOT EXISTS) — bezpieczne do
--- wielokrotnego wykonania (ensure_schema() w repository.py wywołuje ten plik
--- przy każdym starcie run_backfill.py / run_daily.py).
+-- All CREATE TABLE statements are idempotent (IF NOT EXISTS) — safe to run
+-- repeatedly (ensure_schema() in repository.py runs this file on every
+-- run_backfill.py / run_daily.py start).
 --
--- Klucze główne:
---   * Tabele referencyjne (departments, employees, customers, suppliers,
---     products, vat_types) używają INTEGER PRIMARY KEY (NIE SERIAL) — id musi
---     się zgadzać 1:1 z numeric_id()/TripletexRef(id=...) używanym w całym
---     kodzie generatorów (np. Employee E07 -> id=7). accounts używa "number"
---     (numer konta GL, np. 6410) jako PRIMARY KEY, bo tak adresuje konta
---     AccountRef w generators/voucher.py.
---   * Tabele transakcyjne (orders, order_lines, supplier_invoices,
+-- Primary keys:
+--   * Reference tables (departments, employees, customers, suppliers,
+--     products, vat_types) use INTEGER PRIMARY KEY (NOT SERIAL) — the id
+--     must match 1:1 the numeric_id()/TripletexRef(id=...) used throughout
+--     the generator code (e.g. Employee E07 -> id=7). accounts uses
+--     "number" (the GL account number, e.g. 6410) as PRIMARY KEY, because
+--     that's how AccountRef in generators/voucher.py addresses accounts.
+--   * Transactional tables (orders, order_lines, supplier_invoices,
 --     salary_transactions, payslips, salary_specifications, vouchers,
---     postings) używają SERIAL — Pydantic-owe id tych obiektów jest zawsze
---     None (nadawane przez Tripletex/bazę, nie przez generator).
+--     postings) use SERIAL — the Pydantic id of these objects is always
+--     None (assigned by Tripletex/the database, not by the generator).
 --
--- Idempotentność zapisu (ON CONFLICT DO NOTHING) wymaga naturalnych kluczy
--- biznesowych — stąd dodatkowe UNIQUE na np. (customer_id, order_date),
--- invoice_number, (year, month), (date, description) itd. Patrz repository.py.
+-- Idempotent saves (ON CONFLICT DO NOTHING) require natural business keys —
+-- hence the extra UNIQUE constraints on e.g. (customer_id, order_date),
+-- invoice_number, (year, month), (date, description), etc. See repository.py.
 
--- ─────────────────────────────────────────── Warstwa 1 — wymiary / referencje
+-- ─────────────────────────────────────────── Layer 1 — dimensions / reference data
 
 CREATE TABLE IF NOT EXISTS departments (
     id          INTEGER PRIMARY KEY,
@@ -116,12 +116,13 @@ CREATE TABLE IF NOT EXISTS products (
     vat_type_id  INTEGER REFERENCES vat_types(id),
     currency_id  INTEGER,
     is_inactive  BOOLEAN NOT NULL DEFAULT FALSE
-    -- service_code: kolumna + FK do services(code) dodane niżej przez ALTER,
-    -- PO utworzeniu tabeli services (Faza 1) — nie tutaj inline, żeby ta sama
-    -- migracja działała identycznie na fresh DB i na już istniejącej produkcji.
+    -- service_code: column + FK to services(code) added below via ALTER,
+    -- AFTER the services table is created (Phase 1) — not inline here, so
+    -- the same migration behaves identically on a fresh DB and on
+    -- already-existing production.
 );
 
--- ─────────────────────────────────────────────── Warstwa 2 — dokumenty źródłowe
+-- ─────────────────────────────────────────────── Layer 2 — source documents
 
 CREATE TABLE IF NOT EXISTS orders (
     id                     SERIAL PRIMARY KEY,
@@ -197,7 +198,7 @@ CREATE TABLE IF NOT EXISTS salary_specifications (
     UNIQUE (payslip_id, wage_type_id)
 );
 
--- ─────────────────────────────────────────────────── Warstwa 3 — ledger
+-- ─────────────────────────────────────────────────── Layer 3 — ledger
 
 CREATE TABLE IF NOT EXISTS vouchers (
     id            SERIAL PRIMARY KEY,
@@ -224,7 +225,7 @@ CREATE TABLE IF NOT EXISTS postings (
     UNIQUE (voucher_id, account_number, amount)
 );
 
--- ─────────────────────────────────────────────────── Etap 4 — bank / projekty / timesheet
+-- ─────────────────────────────────────────────────── Tier 4 — bank / projects / timesheet
 
 CREATE TABLE IF NOT EXISTS projects (
     id          SERIAL PRIMARY KEY,
@@ -267,18 +268,18 @@ CREATE TABLE IF NOT EXISTS hour_entries (
     UNIQUE(date, employee_id, project_id, activity_type)
 );
 
--- Naprawa incydentu 2026-09-04 (zob. docs/SESSION_HANDOFF.md): UNIQUE powyżej
--- NIE chroni wpisów INTERNAL/SICK (project_id zawsze NULL, zob. opis kolumny
--- wyżej) — Postgres traktuje NULL <> NULL, więc dwa identyczne wiersze z
--- project_id=NULL nie naruszają tego UNIQUE i `ON CONFLICT (date,
--- employee_id, project_id, activity_type) DO NOTHING` (repository.py,
--- _save_hour_entry) nigdy dla nich nie zadziała. Częściowy indeks unikalny
--- tylko dla project_id IS NULL domyka tę lukę.
+-- Fix for the 2026-09-04 incident (see docs/SESSION_HANDOFF.md): the UNIQUE
+-- above does NOT protect INTERNAL/SICK entries (project_id is always NULL,
+-- see the column description above) — Postgres treats NULL <> NULL, so two
+-- identical rows with project_id=NULL don't violate this UNIQUE, and
+-- `ON CONFLICT (date, employee_id, project_id, activity_type) DO NOTHING`
+-- (repository.py, _save_hour_entry) never fires for them. A partial unique
+-- index for project_id IS NULL only closes this gap.
 CREATE UNIQUE INDEX IF NOT EXISTS hour_entries_unique_null_project
     ON hour_entries (date, employee_id, activity_type)
     WHERE project_id IS NULL;
 
--- ─────────────────────────────────────────────────── Faza 1 — katalog usług, metadane
+-- ─────────────────────────────────────────────────── Phase 1 — service catalog, metadata
 
 CREATE TABLE IF NOT EXISTS services (
     code                    VARCHAR(10) PRIMARY KEY,
@@ -291,31 +292,32 @@ CREATE TABLE IF NOT EXISTS services (
     base_price_smb          NUMERIC(12,2)
 );
 
--- Kolumny dodane po utworzeniu tabel w produkcji — CREATE TABLE IF NOT EXISTS
--- ich nie doda do już istniejących tabel, stąd osobne ALTER (idempotentne).
--- products.service_code MUSI iść po CREATE TABLE services (FK) — stąd cała
--- ta sekcja umieszczona na końcu pliku, po wszystkich CREATE TABLE.
+-- Columns added after the tables already existed in production —
+-- CREATE TABLE IF NOT EXISTS won't add them to already-existing tables,
+-- hence separate (idempotent) ALTER statements. products.service_code MUST
+-- come after CREATE TABLE services (FK) — hence this whole section is
+-- placed at the end of the file, after all the CREATE TABLE statements.
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'PAID';
 ALTER TABLE products ADD COLUMN IF NOT EXISTS service_code VARCHAR(10) REFERENCES services(code);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS onboarding_date DATE;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS churn_date DATE;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS segment VARCHAR(20);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS price_multiplier NUMERIC(5,4);
--- Dodatek NACE/SN2007 — kod branżowy klienta (roster.CUSTOMER_NACE), czysto opisowy.
+-- NACE/SN2007 addendum — the customer's industry code (roster.CUSTOMER_NACE), purely descriptive.
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS nace_code VARCHAR(10);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS nace_name VARCHAR(200);
 
--- Krok 2 — naprawa: payroll (SalaryTransaction) nigdy nie generował
--- odpowiadającej transakcji bankowej OUTGOING (luka od Tier 2, nie
--- regresja Fazy 6 — zob. SESSION_HANDOFF.md). FK jawny (nie dopasowanie po
--- opisie tekstowym ILIKE), analogicznie do order_id/supplier_invoice_id.
+-- Step 2 — fix: payroll (SalaryTransaction) never generated a matching
+-- OUTGOING bank transaction (a gap since Tier 2, not a Phase 6 regression —
+-- see SESSION_HANDOFF.md). An explicit FK (not matching by ILIKE on the
+-- description text), analogous to order_id/supplier_invoice_id.
 ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS salary_transaction_id INTEGER REFERENCES salary_transactions(id);
 
--- ADD CONSTRAINT nie wspiera IF NOT EXISTS w Postgresie — DO blok, ten sam
--- wzorzec co CREATE POLICY (DROP IF EXISTS) niżej w tym pliku. UNIQUE
--- potrzebne żeby ON CONFLICT DO NOTHING w _save_bank_transaction() było
--- idempotentne dla płatności payrollowych (ponowne uruchomienie backfillu
--- dla tego samego miesiąca nie tworzy duplikatu).
+-- ADD CONSTRAINT doesn't support IF NOT EXISTS in Postgres — a DO block,
+-- the same pattern as CREATE POLICY (DROP IF EXISTS) further down in this
+-- file. The UNIQUE is needed so ON CONFLICT DO NOTHING in
+-- _save_bank_transaction() is idempotent for payroll payments (re-running
+-- the backfill for the same month doesn't create a duplicate).
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -342,13 +344,13 @@ CREATE INDEX IF NOT EXISTS idx_bank_transactions_date ON bank_transactions(date)
 CREATE INDEX IF NOT EXISTS idx_hour_entries_employee ON hour_entries(employee_id);
 CREATE INDEX IF NOT EXISTS idx_hour_entries_project ON hour_entries(project_id);
 
--- ─────────────────────────────────────────────────── Faza 1 — Row Level Security
+-- ─────────────────────────────────────────────────── Phase 1 — Row Level Security
 --
--- Bez zdefiniowanych POLICY tabele stają się domyślnie zamknięte dla ról bez
--- BYPASSRLS (np. anon/authenticated w Supabase) — świadome "default deny"
--- przed dodaniem docelowych polityk w kolejnym kroku. NIE wpływa na
--- run_backfill.py/run_daily.py/export_excel.py — łączą się jako "postgres"
--- (właściciel tabel, rolbypassrls=true), więc RLS jest dla nich przezroczyste.
+-- Without defined POLICYs, tables become closed by default to roles without
+-- BYPASSRLS (e.g. anon/authenticated in Supabase) — a deliberate "default
+-- deny" before adding the target policies in the next step. Does NOT affect
+-- run_backfill.py/run_daily.py/export_excel.py — they connect as "postgres"
+-- (the table owner, rolbypassrls=true), so RLS is transparent to them.
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_lines ENABLE ROW LEVEL SECURITY;
 ALTER TABLE supplier_invoices ENABLE ROW LEVEL SECURITY;
@@ -364,10 +366,10 @@ ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE services ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 
--- Rola analyst (read-only) — CREATE ROLE nie jest natywnie idempotentne
--- (błąd "role already exists" przy powtórnym wykonaniu), a ensure_schema()
--- odpala ten plik przy każdym starcie run_backfill.py/run_daily() — stąd
--- warunkowy blok zamiast gołego CREATE ROLE.
+-- The analyst role (read-only) — CREATE ROLE is not natively idempotent
+-- (a "role already exists" error on re-run), and ensure_schema() runs this
+-- file on every run_backfill.py/run_daily() start — hence a conditional
+-- block instead of a bare CREATE ROLE.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'analyst') THEN
@@ -376,8 +378,9 @@ BEGIN
 END
 $$;
 
--- CREATE POLICY też nie jest idempotentne (brak IF NOT EXISTS w Postgresie) —
--- DROP POLICY IF EXISTS + CREATE POLICY zamiast tego, spójnie z resztą pliku.
+-- CREATE POLICY is also not idempotent (no IF NOT EXISTS in Postgres) —
+-- DROP POLICY IF EXISTS + CREATE POLICY instead, consistent with the rest
+-- of this file.
 DROP POLICY IF EXISTS analyst_read_only ON orders;
 CREATE POLICY analyst_read_only ON orders FOR SELECT TO analyst USING (true);
 DROP POLICY IF EXISTS analyst_read_only ON order_lines;
@@ -407,59 +410,61 @@ CREATE POLICY analyst_read_only ON services FOR SELECT TO analyst USING (true);
 DROP POLICY IF EXISTS analyst_read_only ON projects;
 CREATE POLICY analyst_read_only ON projects FOR SELECT TO analyst USING (true);
 
--- ─────────────────────────────────────────────────── Krok 2 — dostęp read-only (Power BI)
+-- ─────────────────────────────────────────────────── Step 2 — read-only access (Power BI)
 --
--- Polityki RLS wyżej FILTRUJĄ wiersze, ale NIE nadają samego prawa odczytu —
--- bez GRANT SELECT Postgres odrzuca zapytanie ZANIM RLS w ogóle się uruchomi
--- ("permission denied for table"). Faza 1 utworzyła rolę `analyst` i komplet
--- polityk, ale nigdy nie nadała jej GRANT-ów, więc rola była nieużywalna do
--- faktycznego czytania danych (nie było to widoczne, bo nikt się nią nie
--- logował — jest NOLOGIN). Naprawione tutaj.
+-- The RLS policies above FILTER rows, but do NOT grant the underlying read
+-- privilege — without GRANT SELECT, Postgres rejects the query BEFORE RLS
+-- even runs ("permission denied for table"). Phase 1 created the `analyst`
+-- role and the full set of policies, but never granted it anything, so the
+-- role was unusable for actually reading data (this wasn't visible, because
+-- nobody logged in as it — it's NOLOGIN). Fixed here.
 --
--- GRANT ... ON ALL TABLES (nie lista tabel po przecinku) — obejmuje też
--- tabele referencyjne bez RLS (accounts, departments, products, vat_types,
--- employments, salary_specifications), niezbędne do analizy P&L w BI
--- (np. nazwy kont do rozbicia kosztów, działy do payrollu). ALTER DEFAULT
--- PRIVILEGES pilnuje, żeby przyszłe tabele też były od razu czytelne dla
--- analysta — bez tego każda nowa tabela wymagałaby ręcznego GRANT-a.
+-- GRANT ... ON ALL TABLES (not a comma-separated table list) — also covers
+-- reference tables without RLS (accounts, departments, products, vat_types,
+-- employments, salary_specifications), needed for P&L analysis in BI (e.g.
+-- account names for cost breakdowns, departments for payroll). ALTER
+-- DEFAULT PRIVILEGES ensures future tables are also immediately readable
+-- for the analyst — without this, every new table would need a manual GRANT.
 GRANT USAGE ON SCHEMA public TO analyst;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analyst;
 
--- ─────────────────────────────────────────────────── Krok 2, Zadanie 2 — widoki BI
+-- ─────────────────────────────────────────────────── Step 2, Task 2 — BI views
 --
--- Dwa świadome odstępstwa od szkicu w prompcie (nie kopiowane bezrefleksyjnie):
+-- Two deliberate deviations from the prompt's sketch (not copied blindly):
 --
--- 1. v_pl_monthly NIE liczy przychodu z postings (account_number 3000-3999) —
---    te postingi NIGDY nie istnieją w tej bazie (zweryfikowane: 0 wierszy).
---    Powód udokumentowany na samej górze DATA_DICTIONARY.md od początku
---    projektu: Order.invoiceDate w prawdziwym Tripletex automatycznie tworzy
---    Voucher przychodowy — NorFinGen nie wywołuje realnego API, więc ten
---    Voucher nigdy nie powstaje lokalnie. Przychód ZAWSZE liczy się z
---    orders/order_lines, nigdy z postings (ten sam wzorzec co
---    export_queries.PL_miesiecznie — CTE revenue z order_lines FULL OUTER
---    JOIN CTE kosztów z postings). Kopiowanie szkicu 1:1 dałoby widok, który
---    zawsze zwraca revenue=NULL.
+-- 1. v_pl_monthly does NOT compute revenue from postings (account_number
+--    3000-3999) — these postings NEVER exist in this database (verified:
+--    0 rows). The reason has been documented at the very top of
+--    DATA_DICTIONARY.md since the start of the project: Order.invoiceDate
+--    in real Tripletex automatically creates a revenue Voucher — NorFinGen
+--    doesn't call the real API, so that Voucher never gets created
+--    locally. Revenue is ALWAYS computed from orders/order_lines, never
+--    from postings (the same pattern as export_queries.PL_miesiecznie — a
+--    revenue CTE from order_lines FULL OUTER JOIN a cost CTE from
+--    postings). Copying the sketch verbatim would give a view that always
+--    returns revenue=NULL.
 --
--- 2. v_sales_flat.amount_including_vat_currency to ALIAS kolumny fizycznej
---    order_lines.amount_currency, NIE rename tej kolumny — "Koszyk 1"
---    (rename order_lines.amount_currency -> amount_including_vat_currency,
---    zgodnie z realną nazwą pola OrderLine w Tripletex API) był tylko
---    PROPONOWANY w tej sesji, nigdy jawnie zaakceptowany przez użytkownika
---    ani wykonany w kodzie/generatorach/testach. Ten widok daje poprawną,
---    Tripletex-zgodną nazwę w BI już teraz, bez ryzykownej zmiany fizycznego
---    schematu/generatorów w tle. Jeśli Koszyk 1 zostanie kiedyś wykonany,
---    ten alias stanie się zbędny (kolumna źródłowa już będzie się tak
---    nazywać) — do wtedy zostaje jako pomost.
+-- 2. v_sales_flat.amount_including_vat_currency is an ALIAS of the
+--    physical column order_lines.amount_currency, NOT a rename of that
+--    column — "Basket 1" (renaming order_lines.amount_currency ->
+--    amount_including_vat_currency, to match the real OrderLine field name
+--    in the Tripletex API) was only PROPOSED in a past session, never
+--    explicitly accepted by the user nor carried out in the
+--    code/generators/tests. This view gives the correct,
+--    Tripletex-matching name in BI right now, without a risky change to
+--    the underlying physical schema/generators. If Basket 1 is ever
+--    carried out, this alias becomes redundant (the source column will
+--    already be named that way) — until then it stays as a bridge.
 --
--- security_invoker=true (PG15+, Supabase = PG17) na wszystkich trzech
--- widokach — bez tego widok domyślnie czyta tabele źródłowe z
--- uprawnieniami WŁAŚCICIELA widoku (postgres, który omija RLS), nie
--- roli faktycznie odpytującej (analyst/powerbi_reader) — znany "RLS
--- bypass przez widok" w Postgresie. Dziś polityki są USING (true), więc
--- widoczne dane są identyczne niezależnie od trybu, ale bez tej flagi
--- każda przyszła, faktycznie filtrująca polityka RLS zostałaby po cichu
--- ominięta przy odpytywaniu przez widok zamiast tabeli wprost.
+-- security_invoker=true (PG15+, Supabase = PG17) on all three views —
+-- without this, a view by default reads its source tables with the
+-- privileges of the view's OWNER (postgres, which bypasses RLS), not the
+-- role actually querying it (analyst/powerbi_reader) — a known "RLS bypass
+-- via view" footgun in Postgres. Today the policies are USING (true), so
+-- the visible data is identical either way, but without this flag any
+-- future, actually-filtering RLS policy would be silently bypassed when
+-- queried through the view instead of the table directly.
 CREATE OR REPLACE VIEW v_sales_flat WITH (security_invoker = true) AS
 SELECT o.id AS order_id, o.customer_id, o.order_date, o.invoice_date,
        c.name AS customer_name, c.customer_number, c.segment,
@@ -498,15 +503,15 @@ SELECT TO_CHAR(COALESCE(r.month_start, c.month_start), 'YYYY-MM') AS month,
 FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month_start = c.month_start
 ORDER BY 1;
 
--- v_headcount_monthly liczy TYLKO pracowników billable, którzy faktycznie
--- logują hour_entries (Leveranse/Teknologi, bez E05 — zob. hours_generator.py)
--- — Salg/Økonomi (5 z 17 etatów w Fazie 6) nigdy nie mają wpisów godzin, więc
--- ten widok NIEDOSZACOWUJE prawdziwy headcount firmy. Zostawione zgodnie ze
--- szkicem z promptu (poprawne SQL, zgodne nazwy kolumn) — to świadomy
--- kompromis nazwany "active_employees" (godzinowo aktywni), nie "headcount"
--- w sensie kadrowym; jeśli potrzebny prawdziwy headcount kadrowy, właściwe
--- źródło to employments.start_date (jak roster.active_employees() w Pythonie),
--- nie hour_entries.
+-- v_headcount_monthly counts ONLY billable employees who actually log
+-- hour_entries (Leveranse/Teknologi, excluding E05 — see hours_generator.py)
+-- — Salg/Økonomi (5 of 17 FTEs in Phase 6) never have hour entries, so this
+-- view UNDERESTIMATES the company's true headcount. Left as per the
+-- prompt's sketch (correct SQL, matching column names) — this is a
+-- deliberate tradeoff named "active_employees" (hour-active), not
+-- "headcount" in the HR sense; if a true HR headcount is needed, the
+-- correct source is employments.start_date (like roster.active_employees()
+-- in Python), not hour_entries.
 CREATE OR REPLACE VIEW v_headcount_monthly WITH (security_invoker = true) AS
 SELECT TO_CHAR(date, 'YYYY-MM') AS month, COUNT(DISTINCT employee_id) AS active_employees
 FROM hour_entries GROUP BY 1 ORDER BY 1;

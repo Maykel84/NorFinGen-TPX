@@ -1,20 +1,21 @@
-"""Warstwa persystencji — psycopg2 + Supabase Postgres.
+"""Persistence layer — psycopg2 + Supabase Postgres.
 
-save_all(data) jest główną funkcją używaną jako persist_fn w generators/backfill.py
-(zob. run_backfill.py / run_daily.py). Przyjmuje instancję Order, SupplierInvoice,
-SalaryTransaction lub Voucher (to wszystko, co backfill.py faktycznie emituje) —
-albo równoważny dict (np. z .model_dump()), żeby zostać zgodna z sygnaturą
-save_all(data: dict) z zadania. Każdy zapis jest idempotentny: INSERT ... ON
-CONFLICT DO NOTHING na naturalnym kluczu biznesowym (np. invoice_number,
-(customer_id, order_date), (year, month), (date, description)) — wielokrotne
-uruchomienie run_backfill.py / run_daily.py dla tego samego zakresu dat nie
-tworzy duplikatów.
+save_all(data) is the main function used as persist_fn in
+generators/backfill.py (see run_backfill.py / run_daily.py). It accepts an
+Order, SupplierInvoice, SalaryTransaction, or Voucher instance (everything
+backfill.py actually emits) — or an equivalent dict (e.g. from
+.model_dump()), to stay compatible with the save_all(data: dict) signature
+from the task. Every save is idempotent: INSERT ... ON CONFLICT DO NOTHING
+on a natural business key (e.g. invoice_number, (customer_id, order_date),
+(year, month), (date, description)) — running run_backfill.py / run_daily.py
+repeatedly for the same date range does not create duplicates.
 
-seed_reference_data() zasila tabele Warstwy 1 (departments, employees,
-employments, customers, suppliers, accounts, vat_types, products) z
-norfingen.seed.roster — to dane referencyjne, nigdy emitowane przez generatory
-W2/W3, więc trzeba je wgrać raz na początku (run_backfill.py i run_daily()
-wywołują ją zawsze, idempotentnie, na wszelki wypadek pustej bazy).
+seed_reference_data() populates the Layer 1 tables (departments, employees,
+employments, customers, suppliers, accounts, vat_types, products) from
+norfingen.seed.roster — this is reference data, never emitted by the
+Layer 2/3 generators, so it needs to be loaded once at the start
+(run_backfill.py and run_daily() always call it, idempotently, in case the
+database is empty).
 """
 
 from __future__ import annotations
@@ -51,12 +52,12 @@ from norfingen.seed.roster import (
     numeric_id,
 )
 
-MAX_PAYMENT_TERMS_DAYS = 45  # najdłuższy payment_terms w roster.CUSTOMERS (K03/K08)
+MAX_PAYMENT_TERMS_DAYS = 45  # the longest payment_terms in roster.CUSTOMERS (K03/K08)
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
-# Plan kont NS 4102 i kody MVA nie są emitowane przez żaden generator — to
-# stałe dane referencyjne. Źródło: docs/norfingen_warstwa1_schemas.html.
+# The NS 4102 chart of accounts and MVA (VAT) codes are not emitted by any
+# generator — this is fixed reference data. Source: docs/norfingen_warstwa1_schemas.html.
 # (number, name, type, vat_type_id)
 ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (1200, "Maskiner og anlegg", "ASSETS", None),
@@ -83,23 +84,23 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (6900, "Telefon og internett", "OPERATING_EXPENSE", 1),
     (7000, "Reisekostnader", "OPERATING_EXPENSE", 1),
     (7500, "Forsikringspremier", "OPERATING_EXPENSE", 1),
-    # Faza 3 — nowe kategorie kosztów (bez VAT, koszt gotówkowy bezpośredni).
+    # Phase 3 — new cost categories (no VAT, a direct cash cost).
     (4290, "Driftsmateriell for kundeleveranse", "OPERATING_EXPENSE", None),
     (7350, "Kantinetilskudd", "OPERATING_EXPENSE", None),
     (7420, "Representasjon", "OPERATING_EXPENSE", None),
-    # Faza 6 — COGS pass-through S02 (zastępuje płaski koszt Azure z Fazy 2).
+    # Phase 6 — S02 COGS pass-through (replaces the flat Azure cost from Phase 2).
     (4291, "Videresalgskostnad Microsoft/Azure", "OPERATING_EXPENSE", None),
-    # Faza 6 — COGS pass-through S01 (narzędzia RMM/PSA, licencje ticketing,
-    # EDR/antywirus odsprzedawane klientom, sprzęt zapasowy — zob. roster.calc_s01_cogs_monthly).
+    # Phase 6 — S01 COGS pass-through (RMM/PSA tools, ticketing licenses,
+    # EDR/antivirus resold to customers, spare hardware — see roster.calc_s01_cogs_monthly).
     (4292, "Driftskostnad Managed IT Support (RMM/EDR/verktøy)", "OPERATING_EXPENSE", None),
-    # Faza 7, Zadanie 3c — UNPROFITABLE_QUARTER: jednorazowy koszt opex
-    # (company_events.ACCOUNT_UNEXPECTED_COST), księgowany przez
-    # _simple_cost_voucher (bez VAT, jak 7350/7420) — stąd vat_type_id=None.
+    # Phase 7, Task 3c — UNPROFITABLE_QUARTER: a one-off opex cost
+    # (company_events.ACCOUNT_UNEXPECTED_COST), booked via
+    # _simple_cost_voucher (no VAT, like 7350/7420) — hence vat_type_id=None.
     (7790, "Annen driftskostnad", "OPERATING_EXPENSE", None),
 ]
 
-# (id, name, number, percentage, vat_code) — id zgodny z TripletexRef(id=...)
-# używanym w kodzie (SALES_VAT_TYPE_REF=3, PURCHASE_VAT_TYPE_REF=1).
+# (id, name, number, percentage, vat_code) — id matches the TripletexRef(id=...)
+# used in the code (SALES_VAT_TYPE_REF=3, PURCHASE_VAT_TYPE_REF=1).
 VAT_TYPES_SEED: list[tuple[int, str, Optional[str], float, str]] = [
     (0, "Utenfor MVA-loven", "0", 0.0, "0"),
     (1, "Inngående MVA, høy sats", "1", 25.0, "1"),
@@ -114,13 +115,13 @@ _conn = None
 
 
 def get_connection():
-    """Leniwie tworzy i cache'uje jedno połączenie psycopg2 — backfill robi
-    setki/tysiące małych insertów, więc otwieranie nowego połączenia na każdy
-    obiekt byłoby zbyt kosztowne."""
+    """Lazily creates and caches a single psycopg2 connection — the backfill
+    does hundreds/thousands of small inserts, so opening a new connection
+    per object would be too costly."""
     global _conn
     if _conn is None or _conn.closed:
         if not settings.DATABASE_URL:
-            raise RuntimeError("DATABASE_URL nie jest ustawione w środowisku (.env)")
+            raise RuntimeError("DATABASE_URL is not set in the environment (.env)")
         _conn = psycopg2.connect(settings.DATABASE_URL)
     return _conn
 
@@ -133,14 +134,15 @@ def close_connection() -> None:
 
 
 def terminate_stale_sessions(min_idle_seconds: int = 60) -> int:
-    """Zabija sesje 'idle in transaction' (poza bieżącą) — pozostałość po
-    zerwanych połączeniach (sieć/uśpienie maszyny w trakcie backfillu). Taka
-    sesja trzyma otwartą transakcję z niezacommitowanym INSERT-em i blokuje
-    kolejne insercje do tej samej tabeli/indeksu, dopóki serwer nie wykryje
-    martwego peera przez TCP keepalive — co może trwać bardzo długo i objawia
-    się jako "statement timeout" przy retry na zupełnie nowym połączeniu.
-    Wywoływana w pętli retry run_backfill_daily po napotkaniu błędu. Zwraca
-    liczbę zabitych sesji."""
+    """Kills 'idle in transaction' sessions (other than the current one) —
+    leftovers from dropped connections (network/machine sleep during the
+    backfill). Such a session holds an open transaction with an
+    uncommitted INSERT and blocks further inserts into the same
+    table/index until the server detects the dead peer via TCP keepalive —
+    which can take a very long time and shows up as a "statement timeout"
+    on retry over a brand-new connection. Called in run_backfill_daily's
+    retry loop after hitting an error. Returns the number of killed
+    sessions."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
@@ -159,8 +161,8 @@ def terminate_stale_sessions(min_idle_seconds: int = 60) -> int:
 
 
 def ensure_schema() -> None:
-    """Wykonuje db/schema.sql (16× CREATE TABLE IF NOT EXISTS) — bezpieczne do
-    wielokrotnego wywołania, idempotentne."""
+    """Executes db/schema.sql (16x CREATE TABLE IF NOT EXISTS) — safe to call
+    repeatedly, idempotent."""
     sql = SCHEMA_PATH.read_text()
     conn = get_connection()
     with conn.cursor() as cur:
@@ -169,17 +171,17 @@ def ensure_schema() -> None:
 
 
 def _prune_orphaned_employees(cur) -> list[int]:
-    """Usuwa z employees/employments rekordy, których ID wypadło z aktualnego
-    roster.EMPLOYEES — bez tego INSERT ... ON CONFLICT DO NOTHING (niżej)
-    dodaje nowych pracowników, ale nigdy nie usuwa starych, gdy roster się
-    kurczy (dokładnie to się stało w Fazie 6: 38→17, a TRUNCATE świadomie
-    pomija tabele referencyjne jak employees/customers — zob.
-    SESSION_HANDOFF.md, incydent "osierocone rekordy employees").
+    """Removes rows from employees/employments whose ID has dropped out of
+    the current roster.EMPLOYEES — without this, INSERT ... ON CONFLICT DO
+    NOTHING (below) adds new employees but never removes old ones when the
+    roster shrinks (exactly what happened in Phase 6: 38->17, while TRUNCATE
+    deliberately skips reference tables like employees/customers — see
+    SESSION_HANDOFF.md, the "orphaned employees rows" incident).
 
-    Bezpieczne z konstrukcji: employee_id na payslips/postings/hour_entries
-    nie ma ON DELETE CASCADE (zwykłe REFERENCES) — gdyby kiedyś jakiś
-    osierocony ID miał jednak prawdziwe dane transakcyjne, Postgres odrzuci
-    DELETE naruszeniem FK zamiast po cichu skasować dane."""
+    Safe by construction: employee_id on payslips/postings/hour_entries has
+    no ON DELETE CASCADE (a plain REFERENCES) — if some orphaned ID ever did
+    have real transactional data, Postgres will reject the DELETE with an FK
+    violation instead of silently wiping the data."""
     current_ids = {numeric_id(e.number) for e in EMPLOYEES}
     cur.execute("SELECT id FROM employees")
     db_ids = {row[0] for row in cur.fetchall()}
@@ -191,16 +193,16 @@ def _prune_orphaned_employees(cur) -> list[int]:
 
 
 def seed_reference_data() -> None:
-    """Zasila tabele referencyjne Warstwy 1 z norfingen.seed.roster + statyczny
-    plan kont/kody MVA. Idempotentne (ON CONFLICT DO NOTHING) — bezpieczne do
-    wywołania przy każdym starcie run_backfill.py / run_daily()."""
-    seed_services()  # PRZED products — products.service_code ma FK do services(code)
+    """Populates the Layer 1 reference tables from norfingen.seed.roster +
+    the static chart of accounts/MVA codes. Idempotent (ON CONFLICT DO
+    NOTHING) — safe to call on every run_backfill.py / run_daily() start."""
+    seed_services()  # BEFORE products — products.service_code has an FK to services(code)
 
     conn = get_connection()
     with conn.cursor() as cur:
         orphaned = _prune_orphaned_employees(cur)
         if orphaned:
-            logger.info("seed_reference_data: usunięto %d osieroconych rekordów employees: %s", len(orphaned), orphaned)
+            logger.info("seed_reference_data: removed %d orphaned employees rows: %s", len(orphaned), orphaned)
 
         for d in DEPARTMENTS:
             cur.execute(
@@ -292,10 +294,10 @@ def seed_reference_data() -> None:
 
 
 def seed_projects() -> None:
-    """Zasila tabelę projects z norfingen.seed.roster.PROJECTS. Idempotentne
-    (ON CONFLICT DO NOTHING). Wydzielona jako osobna, publiczna funkcja (nie
-    tylko wewnętrzna pętla w seed_reference_data()) na wypadek potrzeby
-    ponownego zasilenia samych projektów bez przechodzenia całego seeda."""
+    """Populates the projects table from norfingen.seed.roster.PROJECTS.
+    Idempotent (ON CONFLICT DO NOTHING). Factored out as a separate, public
+    function (not just an inner loop in seed_reference_data()) in case
+    projects alone need to be reseeded without running the whole seed."""
     conn = get_connection()
     with conn.cursor() as cur:
         for project in PROJECTS:
@@ -308,10 +310,10 @@ def seed_projects() -> None:
 
 
 def seed_services() -> None:
-    """Zasila tabelę services z norfingen.seed.roster.SERVICES (Faza 1).
-    ON CONFLICT DO UPDATE (nie DO NOTHING) — katalog usług to metadane, które
-    powinny odzwierciedlać aktualny stan roster.py przy każdym seedzie, nie
-    tylko przy pierwszym."""
+    """Populates the services table from norfingen.seed.roster.SERVICES
+    (Phase 1). ON CONFLICT DO UPDATE (not DO NOTHING) — the service catalog
+    is metadata that should reflect the current state of roster.py on every
+    seed, not just the first one."""
     conn = get_connection()
     with conn.cursor() as cur:
         for service in SERVICES:
@@ -338,9 +340,10 @@ def seed_services() -> None:
 
 
 def month_already_generated(year: int, month: int) -> bool:
-    """Sprawdza czy orders dla danego miesiąca już istnieją w bazie — pozwala
-    run_daily() pominąć generację, zamiast polegać wyłącznie na ON CONFLICT
-    DO NOTHING (poprawne, ale generuje i odrzuca cały miesiąc na próżno)."""
+    """Checks whether orders for a given month already exist in the
+    database — lets run_daily() skip generation, instead of relying solely
+    on ON CONFLICT DO NOTHING (correct, but generates and discards the
+    whole month for nothing)."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
@@ -353,9 +356,10 @@ def month_already_generated(year: int, month: int) -> bool:
 
 
 def _upsert_get_id(cur, insert_sql: str, insert_params: tuple, select_sql: str, select_params: tuple) -> int:
-    """INSERT ... ON CONFLICT DO NOTHING RETURNING id; jeśli konflikt (brak
-    wiersza), pobiera istniejące id przez select_sql. Wzorzec wymagany, bo
-    ON CONFLICT DO NOTHING nie zwraca wiersza gdy nic nie wstawiono."""
+    """INSERT ... ON CONFLICT DO NOTHING RETURNING id; on a conflict (no row
+    returned), fetches the existing id via select_sql. This pattern is
+    needed because ON CONFLICT DO NOTHING returns no row when nothing was
+    inserted."""
     cur.execute(insert_sql, insert_params)
     row = cur.fetchone()
     if row is not None:
@@ -517,9 +521,10 @@ def _save_voucher(cur, voucher: Voucher) -> int:
 
 
 def _model_from_dict(data: dict):
-    """Rekonstrukcja modelu Pydantic z dict (np. .model_dump()) na podstawie
-    charakterystycznych pól — pozwala save_all() przyjmować dict zgodnie z
-    sygnaturą save_all(data: dict) z zadania, nie tylko żywe instancje modeli."""
+    """Reconstructs a Pydantic model from a dict (e.g. .model_dump()) based
+    on characteristic fields — lets save_all() accept a dict per the
+    save_all(data: dict) signature from the task, not just live model
+    instances."""
     if "voucherType" in data:
         return Voucher.model_validate(data)
     if "orderLines" in data:
@@ -528,14 +533,14 @@ def _model_from_dict(data: dict):
         return SupplierInvoice.model_validate(data)
     if "payslips" in data:
         return SalaryTransaction.model_validate(data)
-    raise ValueError(f"save_all: nie można rozpoznać typu danych z kluczy {sorted(data)}")
+    raise ValueError(f"save_all: cannot recognize the data type from keys {sorted(data)}")
 
 
 def save_all(data: Union[Order, SupplierInvoice, SalaryTransaction, Voucher, dict]) -> None:
-    """Idempotentny zapis jednego obiektu wygenerowanego przez generatory W2/W3
-    do Supabase. Używana jako persist_fn w generators/backfill.py — backfill
-    woła ją raz na każdy Order/SupplierInvoice/SalaryTransaction/Voucher,
-    razem z dzieckami (orderLines/payslips+specifications/postings)."""
+    """Idempotent save of a single object generated by the Layer 2/3
+    generators, to Supabase. Used as persist_fn in generators/backfill.py —
+    the backfill calls it once per Order/SupplierInvoice/SalaryTransaction/
+    Voucher, along with its children (orderLines/payslips+specifications/postings)."""
     if isinstance(data, dict):
         data = _model_from_dict(data)
 
@@ -550,13 +555,13 @@ def save_all(data: Union[Order, SupplierInvoice, SalaryTransaction, Voucher, dic
         elif isinstance(data, Voucher):
             _save_voucher(cur, data)
         else:
-            raise TypeError(f"save_all: nieobsługiwany typ {type(data)!r}")
+            raise TypeError(f"save_all: unsupported type {type(data)!r}")
     conn.commit()
 
 
 def save_orders(orders: list[Order]) -> None:
-    """Zapisuje listę Order (np. z generate_daily_orders) — cienki wrapper
-    nad save_all() na wielu obiektach naraz, jak w run_daily.py."""
+    """Saves a list of Order (e.g. from generate_daily_orders) — a thin
+    wrapper over save_all() for multiple objects at once, as in run_daily.py."""
     for order in orders:
         save_all(order)
 
@@ -586,10 +591,11 @@ def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Option
 
 
 def save_bank_transactions(transactions: list[tuple[BankTransaction, Voucher]]) -> None:
-    """Zapisuje pary (BankTransaction, Voucher) z generate_daily_bank_transactions.
-    Dla płatności OUTGOING oznacza powiązaną supplier_invoice jako PAID —
-    dzięki temu get_unpaid_supplier_invoices() nie zwróci jej ponownie następnego
-    dnia (bez tego status pozostałby na sztywno UNPAID/heurystyce z generatora)."""
+    """Saves (BankTransaction, Voucher) pairs from
+    generate_daily_bank_transactions. For OUTGOING payments, marks the
+    linked supplier_invoice as PAID — so get_unpaid_supplier_invoices()
+    won't return it again the next day (without this the status would stay
+    stuck at UNPAID/the generator's heuristic)."""
     conn = get_connection()
     with conn.cursor() as cur:
         for transaction, voucher in transactions:
@@ -604,15 +610,15 @@ def save_bank_transactions(transactions: list[tuple[BankTransaction, Voucher]]) 
 
 
 def _save_hour_entry(cur, entry: HourEntry) -> None:
-    # ON CONFLICT bez listy kolumn (nie "ON CONFLICT (date, employee_id,
-    # project_id, activity_type)") celowo — łapie naruszenie KTÓREGOKOLWIEK
-    # z dwóch unikalnych indeksów na tej tabeli: pełnego UNIQUE (project_id
-    # NOT NULL, BILLABLE) i częściowego hour_entries_unique_null_project
-    # (project_id IS NULL, INTERNAL/SICK). Named conflict target łapałby
-    # tylko pierwszy z nich — dokładnie ten brak spowodował incydent
-    # 2026-09-04 (duplikaty INTERNAL/SICK przy dwóch niezależnych
-    # uruchomieniach run_daily() dla tego samego dnia, zob. schema.sql
-    # i docs/SESSION_HANDOFF.md).
+    # ON CONFLICT with no column list (not "ON CONFLICT (date, employee_id,
+    # project_id, activity_type)") deliberately — this catches a violation
+    # of EITHER of the two unique indexes on this table: the full UNIQUE
+    # (project_id NOT NULL, BILLABLE) and the partial
+    # hour_entries_unique_null_project (project_id IS NULL, INTERNAL/SICK).
+    # A named conflict target would only catch the first of these — exactly
+    # this gap caused the 2026-09-04 incident (duplicate INTERNAL/SICK rows
+    # from two independent run_daily() runs for the same day, see
+    # schema.sql and docs/SESSION_HANDOFF.md).
     cur.execute(
         """INSERT INTO hour_entries (date, employee_id, project_id, activity_type, hours, description)
            VALUES (%s, %s, %s, %s, %s, %s)
@@ -630,16 +636,17 @@ def save_hour_entries(entries: list[HourEntry]) -> None:
 
 
 def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> int:
-    """Zapisuje SalaryTransaction (+payslips+specifications) i odpowiadające
-    Vouchery (lista płac, AGA, ew. feriepenger) — para zwracana przez
-    generate_monthly_salary(). Zwraca prawdziwe (z bazy) `salary_transactions.id`
-    — Krok 2: potrzebne wołającemu (run_daily.py) do zbudowania
-    `generate_payroll_bank_transaction()`, której `salary_transaction_id`
-    FK wymaga rzeczywistego ID, nie `None` ze świeżo wygenerowanego obiektu.
-    Woła `_save_salary_transaction()` bezpośrednio zamiast przez `save_all()`
-    właśnie po to, żeby dostać ten zwracany ID (save_all() ma jednolitą
-    sygnaturę `persist_fn(obj) -> None` używaną jako callback w backfill.py,
-    nie może zwracać różnych typów zależnie od klasy `data`)."""
+    """Saves a SalaryTransaction (+payslips+specifications) and its matching
+    Vouchers (payroll, AGA, possibly feriepenger) — the pair returned by
+    generate_monthly_salary(). Returns the real (from the database)
+    `salary_transactions.id` — Step 2: needed by the caller (run_daily.py)
+    to build `generate_payroll_bank_transaction()`, whose
+    `salary_transaction_id` FK requires a real ID, not `None` from a
+    freshly generated object. Calls `_save_salary_transaction()` directly
+    instead of going through `save_all()` precisely to get that returned ID
+    (save_all() has a uniform `persist_fn(obj) -> None` signature used as a
+    callback in backfill.py, it can't return different types depending on
+    the class of `data`)."""
     conn = get_connection()
     with conn.cursor() as cur:
         transaction_id = _save_salary_transaction(cur, transaction)
@@ -649,19 +656,18 @@ def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> int:
     return transaction_id
 
 
-ORDER_PAYMENT_LOOKBACK_DAYS = MAX_PAYMENT_TERMS_DAYS + OVERDUE_PAYMENT_DELAY_DAYS  # OVERDUE płaci +90 dni później
+ORDER_PAYMENT_LOOKBACK_DAYS = MAX_PAYMENT_TERMS_DAYS + OVERDUE_PAYMENT_DELAY_DAYS  # OVERDUE pays +90 days later
 
 
 def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMENT_LOOKBACK_DAYS) -> list[Order]:
-    """Rekonstruuje Order (+orderLines) z bazy, wystawione w oknie
-    [as_of-lookback_days, as_of]. Okno pokrywa najdłuższy payment_terms w
-    roster.CUSTOMERS (45 dni) + opóźnienie płatności OVERDUE (90 dni) —
-    inaczej opóźnione faktury nigdy nie zostałyby dopasowane do swojej
-    (późniejszej) daty płatności. generate_daily_bank_transactions() i tak
-    dopasowuje tylko zamówienia, których obliczona data płatności == as_of
-    (i pomija WRITTEN_OFF), więc powtórne przetworzenie tego samego okna
-    kolejnego dnia jest nieszkodliwe (ON CONFLICT DO NOTHING w
-    save_bank_transactions)."""
+    """Reconstructs Order (+orderLines) from the database, issued in the
+    window [as_of-lookback_days, as_of]. The window covers the longest
+    payment_terms in roster.CUSTOMERS (45 days) + the OVERDUE payment delay
+    (90 days) — otherwise delayed invoices would never be matched to their
+    (later) payment date. generate_daily_bank_transactions() only matches
+    orders whose computed payment date == as_of anyway (and skips
+    WRITTEN_OFF), so reprocessing the same window the next day is harmless
+    (ON CONFLICT DO NOTHING in save_bank_transactions)."""
     conn = get_connection()
     start = as_of - timedelta(days=lookback_days)
     with conn.cursor() as cur:
@@ -713,10 +719,10 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMEN
 
 
 def get_unpaid_supplier_invoices(as_of: date, lookback_days: int = MAX_PAYMENT_TERMS_DAYS) -> list[SupplierInvoice]:
-    """Rekonstruuje SupplierInvoice ze statusem UNPAID, których payment_due_date
-    wypada w oknie [as_of-lookback_days, as_of]. Status przełącza się na PAID w
-    save_bank_transactions() po zaksięgowaniu płatności — raz przetworzona
-    faktura nie pojawi się tu ponownie."""
+    """Reconstructs SupplierInvoice rows with status UNPAID whose
+    payment_due_date falls in the window [as_of-lookback_days, as_of]. The
+    status switches to PAID in save_bank_transactions() once the payment is
+    booked — an invoice, once processed, won't show up here again."""
     conn = get_connection()
     start = as_of - timedelta(days=lookback_days)
     with conn.cursor() as cur:
