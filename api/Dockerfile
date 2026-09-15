@@ -5,7 +5,8 @@ WORKDIR /app
 COPY api/requirements.txt api/requirements.txt
 RUN pip install --no-cache-dir -r api/requirements.txt
 
-# Kod usługi + docs/ (events.py czyta docs/faza7_life_events_log.csv)
+# Kod usługi (w tym api/static/portal/, zamontowany pod /portal w main.py) +
+# docs/ (events.py czyta docs/faza7_life_events_log.csv)
 COPY api/ api/
 COPY docs/faza7_life_events_log.csv docs/faza7_life_events_log.csv
 

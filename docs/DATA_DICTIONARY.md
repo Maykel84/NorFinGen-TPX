@@ -383,7 +383,7 @@ Dwie role, warstwowo:
 - **`analyst`** (`NOLOGIN`) — czysto techniczna, definiuje docelowy zestaw uprawnień: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**20/20 tabel z aktywną polityką RLS `USING (true)`** — zob. "Audyt bezpieczeństwa" niżej, wcześniej 6 tabel referencyjnych nie miało RLS w ogóle) + `ALTER DEFAULT PRIVILEGES` (przyszłe tabele automatycznie czytelne, bez ręcznego GRANT-a przy każdej migracji).
 - **`powerbi_reader`** (`LOGIN`, `CONNECTION LIMIT 3`) — realna rola do faktycznego logowania z Power BI (lub dowolnego innego narzędzia BI). Dziedziczy komplet uprawnień/polityk `analyst` przez `GRANT analyst TO powerbi_reader` — nic nie jest duplikowane. Utworzona/rotowana przez `scripts/setup_powerbi_reader.py` (hasło generowane losowo za każdym uruchomieniem, wypisywane TYLKO na stdout, nigdy nie trafia do repo/`.env`).
 - **`demo_reader`** (`LOGIN`, `CONNECTION LIMIT 2`, `statement_timeout=10s`) — publicznie udostępniany dostęp testowy (`docs/API_ACCESS.md`). Osobna rola od `powerbi_reader` (niezależna rotacja/odwołanie), ale ten sam mechanizm dziedziczenia `analyst`. **Od 2026-09-04 to również rola, jako którą łączy się usługa REST API (`api/`)** — jedyna rola używana przez `api/db.py` do zapytań danych, nigdy `service_role`/`postgres`.
-- **`api_key_manager`** (`LOGIN`, `CONNECTION LIMIT 5`, `statement_timeout=10s`, 2026-09-04) — NIE dziedziczy `analyst`, nie ma dostępu do żadnej tabeli poza `api_keys` (`GRANT SELECT, UPDATE`). Używana wyłącznie przez `api/auth.py` do walidacji kluczy API i rate limitingu. Zob. `scripts/setup_api_backend.py`.
+- **`api_key_manager`** (`LOGIN`, `CONNECTION LIMIT 5`, `statement_timeout=10s`, 2026-09-04) — NIE dziedziczy `analyst`, nie ma dostępu do żadnej tabeli poza `api_keys`/`export_requests` (`GRANT SELECT, INSERT, UPDATE` na `api_keys`, `GRANT SELECT, INSERT` na `export_requests`). Używana przez `api/auth.py` (walidacja kluczy + rate limiting), `api/routers/keys.py` (samoobsługowe generowanie kluczy — `INSERT` dodany w sesji portalu self-service) i `api/routers/export.py` (licznik `export_requests`). Zob. `scripts/setup_api_backend.py`.
 
 **Connection string dla Power BI Desktop** (Get Data → PostgreSQL database): host/port/dbname z `DATABASE_URL`, ale **username musi być w formacie poolera Supabase** `powerbi_reader.<project_ref>` (nie sam `powerbi_reader`) — `scripts/setup_powerbi_reader.py` wypisuje gotowy, poprawny username. Wymagane `Encrypt connection` (SSL).
 
@@ -427,8 +427,15 @@ Wszystkie trzy: `GRANT SELECT ... TO analyst` (dziedziczone przez `powerbi_reade
 | revoked | BOOLEAN | Odwołanie klucza bez usuwania wiersza (audyt) |
 | request_count_this_window / window_start | INT / TIMESTAMPTZ | Licznik rate-limitu, atomowo aktualizowany w `api/auth.py` (`SELECT ... FOR UPDATE`) — rozszerzenie ponad szkic z promptu (tam było tylko `last_used_at`), żeby limit przetrwał restart usługi bez trzymania stanu w pamięci procesu |
 | last_used_at | TIMESTAMPTZ | Ostatnie użycie klucza |
+| requester_label | TEXT | Portal self-service (Zadanie 1, `api/routers/keys.py`) — dokładnie to, co użytkownik wpisał w formularzu; duplikuje `owner_label` celowo, żeby móc kiedyś odróżnić klucze self-service od ręcznych bez zgadywania po treści |
+| self_service | BOOLEAN | `true` dla kluczy wygenerowanych przez `POST /api/v1/keys/request`, `false`/`NULL` dla kluczy ręcznych (`api/scripts/generate_api_key.py`) |
+| created_from_ip | TEXT | IP żądającego w momencie generowania — jedyne dane identyfikujące zbierane (świadomie **żadnego adresu e-mail**), używane wyłącznie do limitu 3 kluczy/IP/dobę |
 
-RLS włączone, **bez polityki dla `analyst`/`demo_reader`/`powerbi_reader`** — świadomie niewidoczna dla konsumentów danych read-only, tylko `api_key_manager` (polityka `api_key_manager_access FOR ALL USING (true)`) i `postgres` (bypass RLS, jedyna rola z prawem `INSERT` nowych kluczy — `api/scripts/generate_api_key.py` łączy się jako właściciel, nie jako `api_key_manager`). Nie jest częścią żadnej z 20 tabel domenowych liczonych gdzie indziej w tym dokumencie.
+RLS włączone, **bez polityki dla `analyst`/`demo_reader`/`powerbi_reader`** — świadomie niewidoczna dla konsumentów danych read-only, tylko `api_key_manager` (polityka `api_key_manager_access FOR ALL USING (true)`) i `postgres` (bypass RLS). Od portalu self-service `api_key_manager` też może `INSERT`-ować nowe klucze (`POST /api/v1/keys/request`) — `api/scripts/generate_api_key.py` (ręczne wydawanie) nadal łączy się jako właściciel, niezależnie. Nie jest częścią żadnej z 20 tabel domenowych liczonych gdzie indziej w tym dokumencie.
+
+### `export_requests` (portal self-service, eksport na żądanie)
+
+Licznik rate-limitu dla `GET /api/v1/export/{format}` (1 eksport/5 min/IP) — celowo osobna, minimalna tabela (`id`, `ip`, `created_at`) zamiast rozszerzania semantyki `api_keys`, bo eksport nie wymaga klucza API wcale. Ta sama rola `api_key_manager` ją obsługuje (`GRANT SELECT, INSERT`), RLS włączone, polityka analogiczna do `api_keys` (tylko `api_key_manager`/`postgres`).
 
 ## Znane ograniczenia całościowe
 

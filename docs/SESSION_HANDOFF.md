@@ -800,3 +800,51 @@ Zadanie 4 z oryginalnego prompta API wykonane po domknięciu incydentu:
 7. **`docs/API_ACCESS.md`/`README.md`** zaktualizowane z realnym URL (`https://norfingen-api.fly.dev`), placeholder `<deployment-url>` usunięty, dopisek o auto-stop/cold-start.
 
 **Koszt**: plan darmowy Fly.io, `auto_stop_machines`/`min_machines_running=0` — $0 przy typowym niskim ruchu demo (2 maszyny `shared-cpu-1x`/256MB, usypiają przy braku żądań). Warto monitorować w razie realnego wzrostu ruchu.
+
+## Portal samoobsługowy: klucze API + eksport na żądanie (2026-09-15)
+
+Trzy zadania z jednego prompta, w kolejności (Zadanie 2 portal zależy od Zadań 1+3):
+
+### Zadanie 1 — `POST /api/v1/keys/request`
+
+`api/routers/keys.py` — generuje klucz `nfg_edu_*` bez interwencji właściciela. Dwuwarstwowa ochrona przed masowym generowaniem: (a) `enforce_ip_signup_limit` — licznik `api_keys.created_from_ip`/`created_at` w bazie, max 3/IP/dobę, **nie** osobna tabela (kolumna już niesie tę informację); (b) `@limiter.limit("5/minute")` (slowapi, w pamięci procesu) na sam endpoint, niezależny od (a). Rate limit klucza self-service: **60/h** (niżej niż domyślne 100/h kluczy ręcznych). Zbierane wyłącznie: `label` (dowolny tekst) + IP — **żadnego adresu e-mail**.
+
+`api/rate_limit.py` — instancja `Limiter` wydzielona z `main.py` do osobnego modułu, żeby `routers/keys.py` mógł ją zaimportować do dekoratora bez cyklicznego importu (`main.py` importuje routery, więc routery nie mogą importować `main.py`).
+
+**Migracja** (`scripts/setup_api_backend.py`, rozszerzony, idempotentny): `api_keys` +3 kolumny (`requester_label`, `self_service`, `created_from_ip`), nowa tabela `export_requests` (Zadanie 3b), **`GRANT INSERT ON api_keys TO api_key_manager`** (do tej pory rola miała tylko `SELECT, UPDATE` — nowe klucze self-service wymagają zapisu przez tę samą wąską rolę, nie przez `postgres`). Uruchomiona na żywej bazie.
+
+**⚠️ Efekt uboczny migracji**: skrypt **zawsze rotuje hasło `api_key_manager`** przy każdym uruchomieniu (udokumentowane, zamierzone zachowanie od pierwszej sesji, zob. wyżej) — uruchomienie migracji natychmiast unieważniło hasło używane przez już wdrożoną usługę na Fly.io. **Naprawione od razu w tej samej sesji**: `fly secrets set API_KEY_MANAGER_DATABASE_URL=...` z nowym hasłem (URL-encoded), zastosowane przy kolejnym `fly deploy` (p. niżej) — usługa nie miała przestoju widocznego użytkownikom (maszyny i tak `auto_stop`, ruch między migracją a deployem nieprawdopodobny). **Lekcja dla przyszłych sesji**: każde uruchomienie `scripts/setup_api_backend.py` na już-wdrożonej usłudze wymaga natychmiastowego `fly secrets set` + deploy, inaczej usługa przestaje móc czytać/pisać `api_keys`.
+
+**Zadanie 1d** (zakres dostępu kluczy self-service) — świadomie **niezdecydowane**, zgodnie z promptem: klucze self-service mają pełny dostęp do wszystkich endpointów `/api/v1/*` (identyczny jak klucze ręczne, poza niższym rate limitem). Temat do rewizji jeśli kiedyś pojawi się potrzeba ograniczenia (np. brak dostępu do `/orders` czy `/events` dla self-service).
+
+### Zadanie 3 — `GET /api/v1/export/{format}` (bez trwałego magazynu)
+
+`api/export_data.py` — generuje CSV/Excel **na żądanie**, bezpośrednio z `demo_reader` (asyncpg `data_pool()`, ten sam pool co reszta `api/routers/*.py`). **Świadomie NIE reużywa** `export_csv.py`/`export_excel.py`/`export_queries.py` z korzenia repo — te łączą się jako właściciel bazy (`DATABASE_URL`, psycopg2) i piszą na dysk lokalny, żaden fakt nie pasuje do kontenera `api/` (ma wyłącznie `DEMO_READER_DATABASE_URL`/`API_KEY_MANAGER_DATABASE_URL`, nigdy dostęp właściciela). Zapytania SQL przepisane na `asyncpg` ($1/$2), z dopisanym filtrem `WHERE <kolumna_daty> BETWEEN $1 AND $2` per źródło (order_date/invoice_date/v.date/st.date — jak w oryginale).
+
+**Świadome odstępstwo od szkicu w prompcie**: `/export/csv` zwraca **ZIP pięciu CSV** (jeden per zestawienie: PL miesięczny, faktury sprzedaży, faktury zakupu, payroll miesięczny, payroll per pracownik, postingi GL), nie jeden płaski plik — te tabele mają różny kształt wierszy i nie dają się sensownie połączyć bez utraty struktury (dokładnie tak jak lokalny `export_csv.py` od zawsze zapisuje pięć osobnych plików, nigdy jednego). `/export/excel` zwraca dokładnie to samo jako jeden wieloarkuszowy `.xlsx` — bez tego kompromisu, bo Excel naturalnie obsługuje wiele arkuszy.
+
+**Format zakresu dat**: `?from=YYYY-MM&to=YYYY-MM` (miesiąc, nie dzień) — spójne z istniejącym `/pl/monthly`. Domyślnie `from=2019-01`, `to=<bieżący miesiąc>`. Walidacja (Zadanie 3d): format, zakres [2019-01, bieżący miesiąc], `from<=to` → 400 czytelny błąd. Koniec zakresu przycinany do `date.today()` (miesiąc bieżący jest częściowy).
+
+**Zadanie 3b** — `enforce_export_rate_limit`: nowa tabela `export_requests` (ip, created_at), limit **1 eksport/5 min/IP**, liczona przez `api_key_manager` (ten sam wzorzec co Zadanie 1c). Endpoint eksportu celowo **bez klucza API** — najniższy próg wejścia z portalu.
+
+**Zadanie 3c (czas generowania, zmierzony empirycznie)** — zapytania testowane bezpośrednio na żywej bazie (właściciel, psycopg2, pełna historia 2019-dziś): `Faktury_sprzedazy` 3738 wierszy/0,34s, `Postingi_GL` 7246 wierszy/0,29s, `Payroll_per_pracownik` 1160 wierszy/0,07s — rząd wielkości **dziesiątych części sekundy per zapytanie**, daleko poniżej progu 30s z promptu i poniżej `statement_timeout=10s` na `demo_reader`. **Brak potrzeby kolejek/zadań w tle** — zgodnie z decyzją z promptu (nie dodawać złożoności bez konsultacji). Wskaźnik "Generowanie..." w portalu (Zadanie 2a) wystarczający.
+
+### Zadanie 2 — portal (`api/static/portal/index.html`)
+
+Statyczny HTML/CSS/vanilla JS (zero frameworka, zgodnie z 2b), zamontowany `app.mount("/portal", StaticFiles(...))` w `main.py`. Trzy sekcje: (1) generowanie klucza z ostrzeżeniem "zapisz teraz"; (2) eksport z wyborem `Cała historia` / `Własny zakres` (radio + `<input type="month">`), przyciski CSV/Excel wołające `/api/v1/export/{format}` bezpośrednio z `fetch` + `Blob`/`URL.createObjectURL` (nie `<a href>` bezpośrednio na endpoint, żeby móc pokazać stan "Generowanie..." i błędy inline); (3) linki (`/docs`, raport, `docs/EDU_ACCESS.md`). Jasny/ciemny motyw przez `prefers-color-scheme`.
+
+### Zadanie 4 — dokumentacja
+
+`docs/EDU_ACCESS.md` (nowy) — instrukcja dla studentów/kursów, portal jako opcja A, `curl` jako opcja B, wyjaśnienie że CSV to ZIP. `README.md` — link do portalu + EDU_ACCESS.md w sekcji "Explore it". `docs/DATA_DICTIONARY.md` — nowe kolumny `api_keys`, nowa tabela `export_requests`, zaktualizowany opis uprawnień `api_key_manager`.
+
+### Zadanie 5 — testy
+
+`tests/test_api_keys_export.py` (nowy, 12 testów, offline, atrapy `auth_pool`/`data_pool` w pamięci jak `tests/test_api.py`) — limit IP/dobę, rate limit klucza self-service, rate limit samego endpointu `/keys/request` (`limiter.reset()` w fixturze `client`, żeby stan slowapi nie przeciekał między testami), eksport bez klucza, domyślny/własny zakres dat (sprawdzone przez przechwycone parametry `$1/$2` przekazane do atrapy `data_pool`), rate limit eksportu, błędna kolejność dat → 400, nieznany format → 404, poprawność wygenerowanego `.xlsx` (nagłówki arkuszy nawet przy pustym wyniku zapytań). `tests/test_api.py::test_api_read_only_no_write_endpoints` zaktualizowany o jeden świadomy wyjątek (`/api/v1/keys/request`, nie dotyka `demo_reader`/danych finansowych). **252/252 testów offline.**
+
+**⚠️ Odkryta przy okazji, niezwiązana luka środowiska**: `.venv` (Python 3.14) miał `starlette==1.6.0` (najnowszy, po dużym skoku wersji major) który wymaga pakietu `httpx2` zamiast `httpx` dla `TestClient` — `requirements-dev.txt` wciąż pinuje stare `httpx>=0.27,<1`. Zainstalowano `httpx2` ręcznie do lokalnego `.venv` na czas tej sesji (nie zmieniono `requirements-dev.txt` — poza zakresem tego prompta, zgłoszone tutaj do przyszłej naprawy jeśli `starlette`/`fastapi` zostaną zaktualizowane w pinach).
+
+### Weryfikacja end-to-end (Krok "Po implementacji")
+
+Wykonane w tej kolejności, wszystkie na **żywym** `https://norfingen-api.fly.dev` (nie lokalnie): (1) 252/252 testów offline; (2) `curl POST /keys/request` → klucz `nfg_edu_*`, użyty z `X-API-Key` na `/pl/yearly` → dane; (3) 4. żądanie klucza z tego samego IP w ciągu doby → `429`; (4) portal otwarty w przeglądarce (`/portal`), formularz klucza poprawnie pokazuje błąd 429 (limit dobowy już wyczerpany testem (3)), przełącznik "Custom range" pokazuje pola dat, przycisk "Download CSV" poprawnie pokazuje błąd rate-limitu eksportu (limit 1/5min już wyczerpany testem (5)); (5) `curl` eksport Excel (zakres 2023-01/2023-06) → poprawny `.xlsx` (46 KB, `Content-Disposition` z nazwą pliku), natychmiastowy powtórny eksport → `429`, `from>to` → `400` z czytelnym komunikatem; (6) czas generowania zmierzony bezpośrednio na bazie (zob. Zadanie 3c) — brak potrzeby zatrzymywania się/eskalacji.
+
+**Deploy**: `fly deploy -a norfingen-api` (build zdalny, obraz 59 MB, rolling update obu maszyn HA) — sukces. `daily.yml` **niedotknięty w tej sesji** (nie było TRUNCATE/resetu danych transakcyjnych — czysto warstwa API/infrastruktury), nie wymagał wstrzymania.

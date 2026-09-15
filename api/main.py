@@ -9,22 +9,21 @@ Uruchomienie lokalne:
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 
 from api.db import auth_pool, close_pools, data_pool, init_pools
 from api.models import HealthStatus
-from api.routers import customers, events, financials, payroll
+from api.rate_limit import limiter
+from api.routers import customers, events, export, financials, keys, payroll
 
-# Warstwa dodatkowa NIEZALEŻNA od per-klucz rate limitu w auth.py (Zadanie 2c)
-# - per-IP, chroni nawet przed kimś próbującym wielu losowych/nieprawidłowych
-# kluczy naraz (te nie dotrą nawet do liczników w tabeli api_keys).
-limiter = Limiter(key_func=get_remote_address, default_limits=["300/hour"])
+_PORTAL_DIR = Path(__file__).resolve().parent / "static" / "portal"
 
 
 @asynccontextmanager
@@ -53,6 +52,15 @@ app.include_router(financials.router, prefix="/api/v1")
 app.include_router(customers.router, prefix="/api/v1")
 app.include_router(payroll.router, prefix="/api/v1")
 app.include_router(events.router, prefix="/api/v1")
+app.include_router(keys.router, prefix="/api/v1")
+app.include_router(export.router, prefix="/api/v1")
+
+# Portal samoobsługowy (Zadanie 2) - statyczny HTML/CSS/JS, brak frameworka.
+# Zamontowany tylko jeśli katalog istnieje - w testach offline (tests/test_api.py)
+# `api/static/portal` jest kopiowany razem z resztą repo, więc zawsze obecny,
+# ale sprawdzenie chroni przed 500 przy ewentualnym niepełnym checkout/obrazie.
+if _PORTAL_DIR.is_dir():
+    app.mount("/portal", StaticFiles(directory=str(_PORTAL_DIR), html=True), name="portal")
 
 
 @app.get("/health", response_model=HealthStatus, tags=["meta"])

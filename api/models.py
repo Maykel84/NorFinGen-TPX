@@ -80,3 +80,15 @@ class LifeEvent(BaseModel):
 class HealthStatus(BaseModel):
     status: str
     database: str
+
+
+class KeyRequest(BaseModel):
+    label: str = Field(
+        min_length=2, max_length=100, description="Twoje imię lub identyfikator kursu"
+    )
+
+
+class KeyResponse(BaseModel):
+    api_key: str
+    rate_limit_per_hour: int
+    message: str

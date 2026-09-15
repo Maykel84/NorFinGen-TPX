@@ -146,12 +146,17 @@ def test_api_accepts_key_via_query_param(client, monkeypatch):
 
 
 def test_api_read_only_no_write_endpoints():
-    """Żaden endpoint danych finansowych nie dopuszcza POST/PUT/PATCH/DELETE -
+    """Żaden endpoint DANYCH FINANSOWYCH nie dopuszcza POST/PUT/PATCH/DELETE -
     usługa jest strukturalnie read-only (dane płyną z demo_reader, który sam
     odrzuca zapis na poziomie bazy, ale API nie powinno nawet wystawiać
-    takiej trasy)."""
+    takiej trasy). Jedyny świadomy wyjątek: `POST /api/v1/keys/request`
+    (Zadanie 1 self-service) - nie dotyka demo_reader/danych finansowych
+    wcale, pisze wyłącznie do wąskiej tabeli `api_keys` przez `api_key_manager`."""
     forbidden_methods = {"POST", "PUT", "PATCH", "DELETE"}
+    allowed_write_paths = {"/api/v1/keys/request"}
     for route in main.app.routes:
+        if getattr(route, "path", None) in allowed_write_paths:
+            continue
         methods = getattr(route, "methods", set()) or set()
         offending = methods & forbidden_methods
         assert not offending, f"Endpoint zapisu znaleziony: {route.path} {offending}"

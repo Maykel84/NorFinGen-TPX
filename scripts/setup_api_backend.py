@@ -52,6 +52,31 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 """
 
+# Samoobsługowe generowanie kluczy (portal /portal, Zadanie 1) - kolumny
+# dodane w tej sesji. `requester_label` duplikuje `owner_label` celowo:
+# `owner_label` jest ogólnym polem używanym też przez klucze wydawane
+# ręcznie (api/scripts/generate_api_key.py), `requester_label` to to samo
+# co user wpisał w formularzu, trzymane osobno żeby móc kiedyś odróżnić
+# self-service od ręcznych bez zgadywania po treści etykiety.
+ALTER_TABLE_SELF_SERVICE_SQL = """
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS requester_label TEXT;
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS self_service BOOLEAN DEFAULT false;
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS created_from_ip TEXT;
+"""
+
+# Licznik dla /api/v1/export/{format} (Zadanie 3b) - osobna, celowo bardzo
+# wąska tabela (tylko IP + znacznik czasu), żeby nie przeciążać semantyki
+# api_keys (eksport nie wymaga klucza API wcale). Ta sama rola
+# `api_key_manager` ją obsługuje - już jest jedyną rolą usługi z prawem
+# zapisu do stanu rate-limitingu, więc nie ma powodu tworzyć czwartej roli.
+CREATE_EXPORT_REQUESTS_SQL = """
+CREATE TABLE IF NOT EXISTS export_requests (
+    id SERIAL PRIMARY KEY,
+    ip TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+"""
+
 
 def generate_password(length: int = PASSWORD_LENGTH) -> str:
     return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(length))
@@ -63,6 +88,9 @@ def setup_api_backend() -> str:
     with conn.cursor() as cur:
         cur.execute(CREATE_TABLE_SQL)
         cur.execute("ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;")
+        cur.execute(ALTER_TABLE_SELF_SERVICE_SQL)
+        cur.execute(CREATE_EXPORT_REQUESTS_SQL)
+        cur.execute("ALTER TABLE export_requests ENABLE ROW LEVEL SECURITY;")
 
         cur.execute(
             """
@@ -79,9 +107,13 @@ def setup_api_backend() -> str:
         cur.execute(f"ALTER ROLE {ROLE_NAME} CONNECTION LIMIT {CONNECTION_LIMIT};")
         cur.execute(f"ALTER ROLE {ROLE_NAME} SET statement_timeout = '{STATEMENT_TIMEOUT}';")
 
-        # Wąski zakres: tylko SELECT/UPDATE na api_keys, nic więcej (nie
-        # dziedziczy analyst - nie ma powodu widzieć żadnej innej tabeli).
-        cur.execute("GRANT SELECT, UPDATE ON api_keys TO api_key_manager;")
+        # Wąski zakres: SELECT/UPDATE (klucze istniejące, walidacja+licznik w
+        # auth.py) + INSERT (nowe klucze self-service, Zadanie 1b) na
+        # api_keys, nic więcej (nie dziedziczy analyst - nie ma powodu
+        # widzieć żadnej innej tabeli). INSERT dodany w tej sesji - do teraz
+        # nowe klucze powstawały wyłącznie przez api/scripts/generate_api_key.py
+        # z uprawnieniami właściciela, bez potrzeby prawa zapisu dla tej roli.
+        cur.execute("GRANT SELECT, INSERT, UPDATE ON api_keys TO api_key_manager;")
         cur.execute("GRANT USAGE, SELECT ON SEQUENCE api_keys_id_seq TO api_key_manager;")
         cur.execute(
             """
@@ -100,6 +132,24 @@ def setup_api_backend() -> str:
         )
         # Świadomie ŻADNEJ polityki dla analyst/demo_reader/powerbi_reader -
         # api_keys musi zostac niewidoczna dla konsumentow danych read-only.
+
+        cur.execute("GRANT SELECT, INSERT ON export_requests TO api_key_manager;")
+        cur.execute("GRANT USAGE, SELECT ON SEQUENCE export_requests_id_seq TO api_key_manager;")
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT FROM pg_policies
+                    WHERE tablename = 'export_requests' AND policyname = 'api_key_manager_access'
+                ) THEN
+                    CREATE POLICY api_key_manager_access ON export_requests
+                        FOR ALL TO api_key_manager USING (true) WITH CHECK (true);
+                END IF;
+            END
+            $$;
+            """
+        )
     conn.commit()
     conn.close()
 

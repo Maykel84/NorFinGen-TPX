@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NorFinGen — self-service portal</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6b6b6b;
+    --border: #d9d9d9;
+    --accent: #1c5fbf;
+    --accent-fg: #ffffff;
+    --card: #f7f7f8;
+    --code-bg: #f0f0f0;
+    --warn-bg: #fff6e0;
+    --warn-border: #e0b800;
+    --error: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --fg: #eaeaea;
+      --muted: #a0a0a0;
+      --border: #33353a;
+      --accent: #5b9dff;
+      --accent-fg: #0b1220;
+      --card: #202226;
+      --code-bg: #26282c;
+      --warn-bg: #3a2f0e;
+      --warn-border: #8a6d00;
+      --error: #ff6b60;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 16px 64px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 32px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  label { display: block; font-size: 0.9rem; margin-bottom: 6px; color: var(--muted); }
+  input[type="text"], input[type="date"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 0.95rem;
+  }
+  button {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    margin-top: 12px;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 140px; }
+  .radio-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .radio-row label { margin: 0; color: var(--fg); font-size: 0.95rem; }
+  .custom-range { margin-left: 26px; margin-bottom: 10px; }
+  .custom-range[hidden] { display: none; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    word-break: break-all;
+  }
+  .key-box {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+  .key-box code { display: block; margin: 8px 0; padding: 8px; }
+  .status { font-size: 0.9rem; color: var(--muted); margin-top: 10px; }
+  .status.error { color: var(--error); }
+  ul.links { padding-left: 20px; }
+  ul.links li { margin-bottom: 6px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>NorFinGen</h1>
+  <p class="subtitle">Synthetic financial data for a fictional Norwegian IT services company — grab an API key or download the numbers, no sign-up required.</p>
+
+  <section>
+    <h2>1. Get an API key</h2>
+    <label for="label-input">Your name or course identifier</label>
+    <input type="text" id="label-input" placeholder="e.g. jane-doe or DATA301-fall26" maxlength="100">
+    <button id="request-key-btn" type="button">Generate key</button>
+    <div id="key-status" class="status" hidden></div>
+    <div id="key-box" class="key-box" hidden>
+      <strong>Save this key now — it won't be shown again.</strong>
+      <code id="key-value"></code>
+      Rate limit: <span id="key-rate-limit"></span> requests/hour.
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Download the data</h2>
+    <div class="radio-row">
+      <input type="radio" id="range-all" name="range" value="all" checked>
+      <label for="range-all">Full history (2019 – today)</label>
+    </div>
+    <div class="radio-row">
+      <input type="radio" id="range-custom" name="range" value="custom">
+      <label for="range-custom">Custom range</label>
+    </div>
+    <div class="custom-range" id="custom-range-fields" hidden>
+      <div class="row">
+        <div>
+          <label for="from-month">From (month)</label>
+          <input type="month" id="from-month" min="2019-01">
+        </div>
+        <div>
+          <label for="to-month">To (month)</label>
+          <input type="month" id="to-month">
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <button id="download-csv-btn" type="button">Download CSV</button>
+      <button id="download-excel-btn" type="button" class="secondary">Download Excel</button>
+    </div>
+    <div id="export-status" class="status" hidden></div>
+  </section>
+
+  <section>
+    <h2>3. More</h2>
+    <ul class="links">
+      <li><a href="/docs">Interactive API docs (Swagger)</a></li>
+      <li><a href="https://maykel84.github.io/raport" target="_blank" rel="noopener">Live analytics report</a></li>
+      <li><a href="https://github.com/Maykel84" target="_blank" rel="noopener">docs/EDU_ACCESS.md</a> (using your key from the command line)</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+(function () {
+  const API_BASE = "/api/v1";
+
+  const labelInput = document.getElementById("label-input");
+  const requestKeyBtn = document.getElementById("request-key-btn");
+  const keyStatus = document.getElementById("key-status");
+  const keyBox = document.getElementById("key-box");
+  const keyValue = document.getElementById("key-value");
+  const keyRateLimit = document.getElementById("key-rate-limit");
+
+  function setStatus(el, message, isError) {
+    el.textContent = message;
+    el.hidden = !message;
+    el.classList.toggle("error", !!isError);
+  }
+
+  requestKeyBtn.addEventListener("click", async function () {
+    const label = labelInput.value.trim();
+    if (label.length < 2) {
+      setStatus(keyStatus, "Enter at least 2 characters.", true);
+      return;
+    }
+    requestKeyBtn.disabled = true;
+    keyBox.hidden = true;
+    setStatus(keyStatus, "Generating...", false);
+    try {
+      const resp = await fetch(API_BASE + "/keys/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: label }),
+      });
+      const data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) {
+        throw new Error(data.detail || ("Request failed (" + resp.status + ")"));
+      }
+      keyValue.textContent = data.api_key;
+      keyRateLimit.textContent = data.rate_limit_per_hour;
+      keyBox.hidden = false;
+      setStatus(keyStatus, "", false);
+    } catch (err) {
+      setStatus(keyStatus, err.message, true);
+    } finally {
+      requestKeyBtn.disabled = false;
+    }
+  });
+
+  const rangeRadios = document.querySelectorAll('input[name="range"]');
+  const customFields = document.getElementById("custom-range-fields");
+  rangeRadios.forEach(function (radio) {
+    radio.addEventListener("change", function () {
+      customFields.hidden = document.getElementById("range-custom").checked === false;
+    });
+  });
+
+  const exportStatus = document.getElementById("export-status");
+  const csvBtn = document.getElementById("download-csv-btn");
+  const excelBtn = document.getElementById("download-excel-btn");
+
+  function buildExportUrl(format) {
+    let url = API_BASE + "/export/" + format;
+    if (document.getElementById("range-custom").checked) {
+      const from = document.getElementById("from-month").value;
+      const to = document.getElementById("to-month").value;
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      const qs = params.toString();
+      if (qs) url += "?" + qs;
+    }
+    return url;
+  }
+
+  async function downloadExport(format, btn) {
+    const otherBtn = format === "csv" ? excelBtn : csvBtn;
+    btn.disabled = true;
+    otherBtn.disabled = true;
+    setStatus(exportStatus, "Generating... this can take a few seconds for the full history.", false);
+    try {
+      const resp = await fetch(buildExportUrl(format));
+      if (!resp.ok) {
+        const data = await resp.json().catch(function () { return {}; });
+        throw new Error(data.detail || ("Export failed (" + resp.status + ")"));
+      }
+      const blob = await resp.blob();
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename=([^;]+)/);
+      const filename = match ? match[1].trim() : ("norfingen." + (format === "csv" ? "zip" : "xlsx"));
+
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+      setStatus(exportStatus, "Done — " + filename, false);
+    } catch (err) {
+      setStatus(exportStatus, err.message, true);
+    } finally {
+      btn.disabled = false;
+      otherBtn.disabled = false;
+    }
+  }
+
+  csvBtn.addEventListener("click", function () { downloadExport("csv", csvBtn); });
+  excelBtn.addEventListener("click", function () { downloadExport("excel", excelBtn); });
+})();
+</script>
+</body>
+</html>

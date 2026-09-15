@@ -49,6 +49,10 @@ day — this is not a static dataset.
 - **Try the data yourself:** a [REST API](https://norfingen-api.fly.dev/docs)
   with an API key (Tripletex-style `GET` + key), or read-only test access
   via Power BI/Tableau/direct SQL — see [docs/API_ACCESS.md](docs/API_ACCESS.md)
+- **Self-service portal:** [norfingen-api.fly.dev/portal](https://norfingen-api.fly.dev/portal)
+  — generate your own API key or download a fresh CSV/Excel export (full
+  history or a custom date range) in one click, no sign-up. See
+  [docs/EDU_ACCESS.md](docs/EDU_ACCESS.md) for students/coursework.
 
 ## Current scale
 
