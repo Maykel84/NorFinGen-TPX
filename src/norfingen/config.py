@@ -1,4 +1,4 @@
-"""Konfiguracja środowiskowa NorFinGen — czytana z .env / zmiennych systemowych."""
+"""NorFinGen environment configuration — read from .env / system environment variables."""
 
 import os
 

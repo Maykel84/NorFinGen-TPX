@@ -1,11 +1,12 @@
-"""SalaryTransaction + Payslip + SalarySpecification — miesięczna lista płac.
+"""SalaryTransaction + Payslip + SalarySpecification — monthly payroll run.
 
 POST /v2/salaryV2/transaction · POST /v2/salaryV2/payslip
 
-Jeden SalaryTransaction na miesiąc, jeden Payslip na pracownika. Generator tworzy
-Vouchery jawnie — dwa osobne: lista płac (5000/2710/2740) + AGA (5400/2700).
-Czerwiec ma odmienny pattern (zob. norfingen.seed.payroll): kod 920 nieobecny,
-kod 260 (Feriepenger) liczony od brutto roku poprzedniego.
+One SalaryTransaction per month, one Payslip per employee. The generator
+creates Vouchers explicitly — two separate ones: payroll (5000/2710/2740) +
+employer's social security contribution/AGA (5400/2700). June has a different
+pattern (see norfingen.seed.payroll): wage type 920 is absent, wage type 260
+(feriepenger/holiday pay) is calculated from the previous year's gross pay.
 """
 
 import datetime
@@ -17,9 +18,9 @@ from pydantic import BaseModel, ConfigDict, computed_field
 
 from norfingen.models.base import TripletexRef
 
-WAGE_TYPE_FAST_LONN = TripletexRef(id=100)  # Fast lønn — miesiące 1-12
-WAGE_TYPE_SKATTETREKK = TripletexRef(id=920)  # Skattetrekk — miesiące 1-5, 7-12
-WAGE_TYPE_FERIEPENGER = TripletexRef(id=260)  # Feriepenger — tylko czerwiec
+WAGE_TYPE_FAST_LONN = TripletexRef(id=100)  # Fast lønn (base salary) — months 1-12
+WAGE_TYPE_SKATTETREKK = TripletexRef(id=920)  # Skattetrekk (tax withholding) — months 1-5, 7-12
+WAGE_TYPE_FERIEPENGER = TripletexRef(id=260)  # Feriepenger (holiday pay) — June only
 
 
 class SalaryTransactionStatus(str, Enum):
@@ -32,17 +33,17 @@ class SalarySpecification(BaseModel):
 
     wageType: TripletexRef
     description: str
-    amount: float  # ujemne dla potrąceń (np. skattetrekk)
+    amount: float  # negative for deductions (e.g. skattetrekk)
 
 
 class Payslip(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[int] = None
-    transaction: Optional[TripletexRef] = None  # None gdy zagnieżdżony w SalaryTransaction.payslips
+    transaction: Optional[TripletexRef] = None  # None when nested in SalaryTransaction.payslips
     employee: TripletexRef
-    # Optional[datetime.date] (nie "date") — pole nazwane "date" przesłania bare import
-    # "date" w lokalnym namespace klasy przy ewaluacji default=None (gotcha pydantic/Python).
+    # Optional[datetime.date] (not "date") — a field named "date" shadows the bare
+    # "date" import in the class's local namespace when evaluating default=None (a pydantic/Python gotcha).
     date: Optional[datetime.date] = None
     specifications: list[SalarySpecification] = []
     url: Optional[str] = None

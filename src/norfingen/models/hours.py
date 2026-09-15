@@ -1,7 +1,7 @@
-"""HourEntry — dzienne wpisy godzin pracowników (timesheet). To NIE jest encja
-Tripletex API v2 — model wewnętrzny do śledzenia wykorzystania czasu (fakturowalne
-vs wewnętrzne vs chorobowe), stąd snake_case (zgodny z db/schema.sql), nie
-camelCase jak w modelach Tripletex. Zob. też models/bank_transaction.py.
+"""HourEntry — daily employee timesheet entries. This is NOT a Tripletex
+API v2 entity — an internal model for tracking time usage (billable vs
+internal vs sick leave), hence snake_case (matching db/schema.sql), not
+camelCase like the Tripletex-mirroring models. See also models/bank_transaction.py.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ActivityType(str, Enum):
-    BILLABLE = "BILLABLE"  # fakturowalne — przypisane do projektu klienta
-    INTERNAL = "INTERNAL"  # wewnętrzne — spotkania, admin
-    SICK = "SICK"  # chorobowe
+    BILLABLE = "BILLABLE"  # billable — assigned to a customer project
+    INTERNAL = "INTERNAL"  # internal — meetings, admin
+    SICK = "SICK"  # sick leave
 
 
 class HourEntry(BaseModel):
@@ -25,7 +25,7 @@ class HourEntry(BaseModel):
     id: Optional[int] = None
     date: date
     employee_id: int
-    project_id: Optional[int] = None  # None dla INTERNAL/SICK
+    project_id: Optional[int] = None  # None for INTERNAL/SICK
     activity_type: ActivityType
-    hours: float  # 0.5 – 7.5
+    hours: float  # 0.5 - 7.5
     description: Optional[str] = None

@@ -1,4 +1,4 @@
-"""Wspólne typy pomocnicze odwzorowujące konwencje Tripletex API v2."""
+"""Common helper types mirroring Tripletex API v2 conventions."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class TripletexRef(BaseModel):
-    """Referencja do innej encji w stylu Tripletex: {id, url}."""
+    """Reference to another entity, Tripletex-style: {id, url}."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -30,7 +30,7 @@ NOK_CURRENCY_REF = TripletexRef(id=1)
 
 
 class CompanyBase(BaseModel):
-    """Pola wspólne dla Customer i Supplier (~75% wg dokumentacji Warstwy 1)."""
+    """Fields shared by Customer and Supplier (~75% per the Layer 1 docs)."""
 
     model_config = ConfigDict(populate_by_name=True)
 

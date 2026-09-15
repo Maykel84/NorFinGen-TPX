@@ -1,7 +1,7 @@
-"""VatType — kody MVA. Tylko do odczytu: GET /v2/ledger/vatType.
+"""VatType — MVA (VAT) codes. Read-only: GET /v2/ledger/vatType.
 
-Uwaga: vatCode "0" oznacza brak VAT w ogóle (posting bez pola vatAmount),
-nie zerową stawkę — to różni się od vatCode "6" (vatAmount = 0, zwolnione/eksport).
+Note: vatCode "0" means no VAT at all (a posting without a vatAmount field),
+not a zero rate — that's different from vatCode "6" (vatAmount = 0, exempt/export).
 """
 
 from __future__ import annotations

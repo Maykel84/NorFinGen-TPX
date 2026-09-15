@@ -1,4 +1,4 @@
-"""Customer — kontrahent po stronie przychodów. POST /v2/customer."""
+"""Customer — counterparty on the revenue side. POST /v2/customer."""
 
 from __future__ import annotations
 

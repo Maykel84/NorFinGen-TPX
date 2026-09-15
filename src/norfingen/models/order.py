@@ -1,9 +1,9 @@
-"""Order + OrderLine — dokumenty sprzedaży.
+"""Order + OrderLine — sales documents.
 
 POST /v2/order · POST /v2/order/orderline
 
-Wypełniony invoiceDate wyzwala automatyczne utworzenie Vouchera przez Tripletex —
-generator NIE tworzy Vouchera sprzedaży ręcznie (w przeciwieństwie do SupplierInvoice).
+A populated invoiceDate triggers automatic Voucher creation by Tripletex —
+the generator does NOT create a sales Voucher manually (unlike SupplierInvoice).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, computed_field
 from norfingen.models.base import NOK_CURRENCY_REF, TripletexRef
 from norfingen.models.product import SALES_VAT_TYPE_REF
 
-SALES_VAT_RATE = 0.25  # vatCode "3" — jedyna stawka używana w OrderLine
+SALES_VAT_RATE = 0.25  # vatCode "3" — the only rate used in OrderLine
 
 
 class InvoicesDueInType(str, Enum):
@@ -26,15 +26,15 @@ class InvoicesDueInType(str, Enum):
 
 class OrderStatus(str, Enum):
     PAID = "PAID"
-    OVERDUE = "OVERDUE"  # opóźniona (>90 dni), ale prawdopodobnie zostanie spłacona
-    WRITTEN_OFF = "WRITTEN_OFF"  # odpis — nieściągalna, bad debt
+    OVERDUE = "OVERDUE"  # overdue (>90 days), but likely still to be paid
+    WRITTEN_OFF = "WRITTEN_OFF"  # written off — uncollectible, bad debt
 
 
 class OrderLine(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[int] = None
-    order: Optional[TripletexRef] = None  # None gdy linia zagnieżdżona w Order.orderLines (id rodzica jeszcze nieznane)
+    order: Optional[TripletexRef] = None  # None when the line is nested in Order.orderLines (parent id not yet known)
     product: Optional[TripletexRef] = None
     count: float = 1.0
     unitPriceExcludingVatCurrency: float = 0.0

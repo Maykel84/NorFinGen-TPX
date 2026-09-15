@@ -1,10 +1,10 @@
-"""SupplierInvoice — dokumenty kosztowe. POST /v2/supplierInvoice.
+"""SupplierInvoice — cost documents. POST /v2/supplierInvoice.
 
-W przeciwieństwie do Order — Voucher musi być tworzony jawnie przez generator.
+Unlike Order — the Voucher must be created explicitly by the generator.
 
-Reguła L05 (Sandvik IT Solutions): jeśli amountExcludingVatCurrency >= 30 000 NOK
-→ konto 1200 (kapitalizacja, środek trwały), inaczej → konto 6540 (koszt okresu).
-Zob. norfingen.seed.roster.SupplierSeed.capitalization_threshold/capitalization_account.
+Rule L05 (Sandvik IT Solutions): if amountExcludingVatCurrency >= 30,000 NOK
+→ account 1200 (capitalized, fixed asset), otherwise → account 6540 (period expense).
+See norfingen.seed.roster.SupplierSeed.capitalization_threshold/capitalization_account.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class SupplierInvoice(BaseModel):
     invoiceDate: date
     receivedDate: Optional[date] = None
     paymentDueDate: Optional[date] = None
-    amountCurrency: float  # kwota incl. VAT
+    amountCurrency: float  # amount incl. VAT
     currency: Optional[TripletexRef] = NOK_CURRENCY_REF
     account: Optional[TripletexRef] = None
     vatType: Optional[TripletexRef] = PURCHASE_VAT_TYPE_REF

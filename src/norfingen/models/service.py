@@ -1,8 +1,9 @@
-"""Service — katalog usług firmy (Faza 1). To NIE jest encja Tripletex API v2
-(brak takiego endpointu) — model wewnętrzny opisujący ofertę produktową
-niezależnie od konkretnych cen per klient (te ustala roster.CustomerSeed /
-CUSTOMER_PRICE_MULTIPLIER), stąd snake_case, nie camelCase jak w modelach
-Tripletex. Zob. też models/bank_transaction.py, models/hours.py.
+"""Service — the company's service catalog (Phase 1). This is NOT a Tripletex
+API v2 entity (no such endpoint) — an internal model describing the product
+offering independently of per-customer pricing (that's set by
+roster.CustomerSeed / CUSTOMER_PRICE_MULTIPLIER), hence snake_case, not
+camelCase like the Tripletex-mirroring models. See also
+models/bank_transaction.py, models/hours.py.
 """
 
 from __future__ import annotations
@@ -32,6 +33,6 @@ class Service(BaseModel):
     description: str
     billing_model: BillingModel
     availability: ServiceSegmentAvailability
-    base_price_enterprise: Optional[float] = None  # NOK/mies. lub NOK/h
+    base_price_enterprise: Optional[float] = None  # NOK/month or NOK/hour
     base_price_mid: Optional[float] = None
     base_price_smb: Optional[float] = None

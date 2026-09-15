@@ -1,8 +1,9 @@
-"""BankTransaction — ruchy gotówkowe na koncie bankowym (wpływy od klientów,
-wypływy do dostawców/payroll). To NIE jest encja Tripletex API v2 (brak takiego
-endpointu) — model wewnętrzny do śledzenia faktycznych przepływów pieniężnych
-i uzgadniania ich z Order/SupplierInvoice/SalaryTransaction, stąd snake_case
-(zgodny z kolumnami db/schema.sql), nie camelCase jak w modelach Tripletex.
+"""BankTransaction — cash movements on the bank account (inflows from
+customers, outflows to suppliers/payroll). This is NOT a Tripletex API v2
+entity (no such endpoint) — an internal model for tracking actual cash flows
+and reconciling them against Order/SupplierInvoice/SalaryTransaction, hence
+snake_case (matching db/schema.sql columns), not camelCase like the
+Tripletex-mirroring models.
 """
 
 from __future__ import annotations
@@ -15,22 +16,22 @@ from pydantic import BaseModel, ConfigDict
 
 
 class BankTransactionType(str, Enum):
-    INCOMING = "INCOMING"  # klient płaci fakturę
-    OUTGOING = "OUTGOING"  # firma płaci dostawcę lub payroll
+    INCOMING = "INCOMING"  # customer pays an invoice
+    OUTGOING = "OUTGOING"  # company pays a supplier or payroll
 
 
 class BankTransaction(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[int] = None
-    date: date  # data płatności
-    amount: float  # kwota dodatnia
+    date: date  # payment date
+    amount: float  # positive amount
     transaction_type: BankTransactionType
     description: str
-    customer_id: Optional[int] = None  # jeśli płatność od klienta
-    supplier_id: Optional[int] = None  # jeśli płatność do dostawcy
-    order_id: Optional[int] = None  # powiązana faktura sprzedaży
-    supplier_invoice_id: Optional[int] = None  # powiązana faktura zakupu
-    salary_transaction_id: Optional[int] = None  # powiązana lista płac (Krok 2, naprawa payroll OUTGOING)
-    account_from: int  # konto źródłowe
-    account_to: int  # konto docelowe
+    customer_id: Optional[int] = None  # set if payment from a customer
+    supplier_id: Optional[int] = None  # set if payment to a supplier
+    order_id: Optional[int] = None  # linked sales invoice
+    supplier_invoice_id: Optional[int] = None  # linked purchase invoice
+    salary_transaction_id: Optional[int] = None  # linked payroll run (Step 2, payroll OUTGOING fix)
+    account_from: int  # source account
+    account_to: int  # destination account

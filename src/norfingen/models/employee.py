@@ -1,6 +1,6 @@
-"""Employee + Employment — zależy od Department.
+"""Employee + Employment — depends on Department.
 
-Dwa wywołania API na pracownika:
+Two API calls per employee:
   POST /v2/employee
   POST /v2/employee/{id}/employment
 """

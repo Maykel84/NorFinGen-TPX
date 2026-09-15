@@ -1,4 +1,4 @@
-"""Supplier — kontrahent po stronie kosztów. POST /v2/supplier."""
+"""Supplier — counterparty on the cost side. POST /v2/supplier."""
 
 from __future__ import annotations
 

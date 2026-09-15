@@ -1,4 +1,4 @@
-"""Product — prerekvizyt dla OrderLine. POST /v2/product."""
+"""Product — prerequisite for OrderLine. POST /v2/product."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from norfingen.models.base import NOK_CURRENCY_REF, TripletexRef
 
-SALES_VAT_TYPE_REF = TripletexRef(id=3)  # vatCode "3" — 25%, sprzedaż
+SALES_VAT_TYPE_REF = TripletexRef(id=3)  # vatCode "3" — 25%, sales
 
 
 class Product(BaseModel):
