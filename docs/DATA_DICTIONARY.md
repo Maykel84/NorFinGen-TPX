@@ -1,453 +1,453 @@
 # NorFinGen — Data Dictionary
 
-Opis wszystkich 20 tabel w schemacie Supabase (`src/norfingen/db/schema.sql`). Waluta domyślna: **NOK**. Wszystkie tabele mają włączone RLS (Faza 1) — dostęp z `run_backfill.py`/`run_daily.py` idzie przez rolę `postgres` (bypass RLS), odczyt-tylko przez rolę `analyst`.
+Description of all 20 tables in the Supabase schema (`src/norfingen/db/schema.sql`). Default currency: **NOK**. All tables have RLS enabled (Phase 1) — access from `run_backfill.py`/`run_daily.py` goes through the `postgres` role (bypasses RLS), read-only access through the `analyst` role.
 
-**Najważniejsze ograniczenie całego modelu**: `Order.invoiceDate` w prawdziwym Tripletex automatycznie tworzy Voucher (konta 3000/3100, przychód). NorFinGen **nie wywołuje realnego Tripletex API** — ten Voucher nigdy nie powstaje lokalnie. Skutek: **`vouchers`/`postings` nigdy nie zawierają przychodu ze sprzedaży** — tylko koszty (payroll, dostawcy, bank). Każde zapytanie P&L musi liczyć przychód z `orders`/`order_lines`, a koszty z `vouchers`/`postings` osobno i łączyć je ręcznie (zob. przykłady w historii sesji — `WITH p AS (...orders...), k AS (...postings...)`).
-
----
-
-## Profil branżowy firmy (dodatek NACE/SN2007)
-
-Norwegia klasyfikuje firmy wg SN2007 (Standard for næringsgruppering), zgodnego z unijnym NACE Rev.2 — każda firma zarejestrowana w Brønnøysundregistrene ma przypisany kod branżowy (næringskode).
-
-**Kod główny firmy**: `roster.COMPANY_NACE_CODE` = **62.020** "Konsulentvirksomhet tilknyttet informasjonsteknologi og forvaltning og drift av it-systemer" — obejmuje explicite i konsulting/zarządzanie IT (S02, S04), i drift/wsparcie systemów (S01, S03), więc pasuje do całego portfela usług naraz, nie tylko do jednej. Realny odpowiednik z tego samego segmentu: **Garnes Data AS** (benchmark marżowy Fazy 6, zarejestrowany pod pokrewnym 62.030 "Forvaltning og drift av IT-systemer" — bliższym czystemu S01/drift).
-
-**Kod sekundarny**: brak (`COMPANY_NACE_SECONDARY_CODE = None`). Zadanie przewidywało dodanie 70.220 "Bedriftsrådgivning og annen administrativ rådgivning", jeśli S04 (konsulting) przekracza 20% przychodu — zweryfikowane zapytaniem SQL na żywej bazie (`order_lines` JOIN `products.service_code`, lata 2025-2026): S04 to **1,9%** przychodu, daleko poniżej progu (cena S04 obniżona w Fazie 6 do 950 NOK/h). Próg nieprzekroczony, kod sekundarny pominięty.
-
-Kody klientów: zob. sekcja `customers` niżej (`roster.CUSTOMER_NACE`).
+**The most important limitation of the whole model**: `Order.invoiceDate` in real Tripletex automatically creates a Voucher (accounts 3000/3100, revenue). NorFinGen **does not call the real Tripletex API** — that Voucher never gets created locally. Consequence: **`vouchers`/`postings` never contain sales revenue** — only costs (payroll, suppliers, bank). Every P&L query must compute revenue from `orders`/`order_lines`, and costs from `vouchers`/`postings` separately, and join them manually (see examples in the session history — `WITH p AS (...orders...), k AS (...postings...)`).
 
 ---
 
-## Warstwa 1 — wymiary / referencje
+## Company industry profile (NACE/SN2007 addendum)
+
+Norway classifies companies per SN2007 (Standard for næringsgruppering), aligned with the EU's NACE Rev.2 — every company registered in Brønnøysundregistrene has an assigned industry code (næringskode).
+
+**The company's primary code**: `roster.COMPANY_NACE_CODE` = **62.020** "Konsulentvirksomhet tilknyttet informasjonsteknologi og forvaltning og drift av it-systemer" — explicitly covers both IT consulting/management (S02, S04) and systems operations/support (S01, S03), so it fits the whole service portfolio at once, not just one part of it. Real-world equivalent from the same segment: **Garnes Data AS** (the Phase 6 margin benchmark, registered under the related 62.030 "Forvaltning og drift av IT-systemer" — closer to pure S01/operations).
+
+**Secondary code**: none (`COMPANY_NACE_SECONDARY_CODE = None`). The task anticipated adding 70.220 "Bedriftsrådgivning og annen administrativ rådgivning" if S04 (consulting) exceeds 20% of revenue — verified with a SQL query on the live database (`order_lines` JOIN `products.service_code`, 2025-2026): S04 is **1.9%** of revenue, far below the threshold (the S04 price was cut in Phase 6 to 950 NOK/h). Threshold not crossed, secondary code skipped.
+
+Customer codes: see the `customers` section below (`roster.CUSTOMER_NACE`).
+
+---
+
+## Layer 1 — dimensions / reference data
 
 ### departments
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
-| id | INTEGER (PK) | Numer działu, 1-4 |
+| id | INTEGER (PK) | Department number, 1-4 |
 | name | TEXT | Salg / Leveranse / Teknologi / Økonomi |
-| number | TEXT | Kod tekstowy = `id` |
-| is_inactive | BOOLEAN | Zawsze `false` — brak logiki dezaktywacji działów |
+| number | TEXT | Text code = `id` |
+| is_inactive | BOOLEAN | Always `false` — no department deactivation logic |
 
-Znaczenie biznesowe: struktura organizacyjna firmy, używana do przypisania pracowników i (opcjonalnie) postingów kosztowych. Ograniczenie: statyczne, nie zmienia się w czasie mimo że firma rośnie z 1 do 17 osób.
+Business meaning: the company's organizational structure, used to assign employees and (optionally) cost postings. Limitation: static, doesn't change over time even though the company grows from 1 to 17 people.
 
 ### employees
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
-| id | INTEGER (PK) | 1-17, odpowiada `numeric_id("E01")..("E17")` (Faza 6 skróciła z 1-38 — zob. niżej) |
-| first_name / last_name | TEXT | Imię / nazwisko |
-| employee_number | TEXT | Kod "E01"-"E17" |
+| id | INTEGER (PK) | 1-17, matches `numeric_id("E01")..("E17")` (Phase 6 shrank this from 1-38 — see below) |
+| first_name / last_name | TEXT | First / last name |
+| employee_number | TEXT | Code "E01"-"E17" |
 | department_id | INTEGER (FK) | → departments.id |
-| bank_account_number, national_identity_number, date_of_birth | TEXT/DATE | Nigdy nie wypełniane (NULL) — placeholder pod przyszłe rozszerzenia |
-| allow_information_registration | BOOLEAN | Zawsze `true`, bez znaczenia biznesowego w generatorze |
+| bank_account_number, national_identity_number, date_of_birth | TEXT/DATE | Never populated (NULL) — placeholder for future extensions |
+| allow_information_registration | BOOLEAN | Always `true`, no business meaning in the generator |
 
-Znaczenie biznesowe: kadra firmy. **Data zatrudnienia jest w `employments.start_date`, nie tutaj**. Kohorta założycielska (E01-E06) rozłożona na 4 miesiące 2019-01→2019-04 (nie jeden dzień) — zob. `employments`.
+Business meaning: the company's staff. **The hire date is in `employments.start_date`, not here**. The founding cohort (E01-E06) is spread over 4 months, 2019-01→2019-04 (not a single day) — see `employments`.
 
-**Faza 6 (ZASTĘPUJE Fazę 4) — zespół obcięty z 38 do 17 osób (E18-E38 usunięte)**: kalibracja względem realnych danych rynkowych (Brønnøysundregistrene, 4 norweskie firmy IT — zob. `SESSION_HANDOFF.md`) wykazała, że porównywalne firmy IT drift/support (Garnes Data AS: 17 pracowników, ~48-59 mln NOK przychodu, marża 5,4%) obsługują duży portfel klientów małym zespołem, bo większość kosztu obsługi jest kosztem materiałowym (COGS pass-through, zob. `accounts` 4291/4292), nie osobowym. E17 (Vegard Lien, Leveranse, 2022-10-03) pozostaje jedynym dociążeniem po fuzji 2022-09 — dalszy wzrost zespołu (Faza 4: E18-E38, 22 rekrutacje do 2026-03) usunięty w całości.
+**Phase 6 (REPLACES Phase 4) — the team was cut from 38 to 17 people (E18-E38 removed)**: calibration against real market data (Brønnøysundregistrene, 4 Norwegian IT companies — see `SESSION_HANDOFF.md`) showed that comparable IT drift/support firms (Garnes Data AS: 17 employees, ~48-59M NOK revenue, 5.4% margin) serve a large customer portfolio with a small team, because most of the servicing cost is a materials cost (COGS pass-through, see `accounts` 4291/4292), not a headcount cost. E17 (Vegard Lien, Leveranse, 2022-10-03) remains the only post-merger addition — further team growth (Phase 4: E18-E38, 22 hires through 2026-03) was removed entirely.
 
-**Faza 5 — wszystkie `start_date` przyciągnięte do pierwszego dnia roboczego miesiąca** (`payroll.first_working_day_of_month()`) — eliminuje potrzebę liczenia proporcji "ile dni w niepełnym miesiącu"; pierwszy miesiąc zatrudnienia jest zawsze pełnym miesiącem pracy. Kilka par pracowników (E02/E03, E04/E05 w kohorcie założycielskiej; kilka par z Fazy 4) ma teraz identyczny `start_date` w efekcie tego przyciągnięcia — staggering wyraża się przez MIESIĄC startu, nie już przez dzień w miesiącu. **Naprawiony bugfix**: `generate_monthly_salary()`/`brutto_earned_in_year()` porównywały aktywność pracownika do kalendarzowego dnia 1 (`date(year, month, 1)`), co błędnie wykluczało z wypłaty pracownika, którego pierwszy dzień roboczy wypadał 2./3. dnia miesiąca (bo 1. to weekend) — naprawione porównaniem do `first_working_day_of_month()`.
+**Phase 5 — all `start_date` values snapped to the first working day of the month** (`payroll.first_working_day_of_month()`) — eliminates the need to prorate "how many days in a partial month"; the first month of employment is always a full month of work. Several pairs of employees (E02/E03, E04/E05 in the founding cohort; a few pairs from Phase 4) now have an identical `start_date` as a result of this snapping — the staggering is now expressed by the start MONTH, not the day within the month. **Bugfix**: `generate_monthly_salary()`/`brutto_earned_in_year()` compared employee activity against the calendar day 1 (`date(year, month, 1)`), which wrongly excluded from pay an employee whose first working day fell on the 2nd/3rd of the month (because the 1st was a weekend) — fixed by comparing against `first_working_day_of_month()`.
 
 ### employments
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
-| employee_id | INTEGER (FK, UNIQUE) | → employees.id — jeden rekord na pracownika |
-| start_date | DATE | Data zatrudnienia — punkt odniesienia dla `active_employees()`, podwyżek (+3%/rok w lipcu) i feriepenger |
-| end_date | DATE | Zawsze NULL — brak modelu odejść pracowników |
-| employment_type, remuneration_type | TEXT | Zawsze "ORDINARY" / "FIXED_SALARY" |
-| weekly_working_hours, percentage | NUMERIC | Zawsze 37.5h / 100% — brak niepełnego etatu |
-| payroll_tax_zone | TEXT | Zawsze "ZONE_1" (Oslo) |
+| employee_id | INTEGER (FK, UNIQUE) | → employees.id — one record per employee |
+| start_date | DATE | Hire date — the reference point for `active_employees()`, raises (+3%/year in July), and feriepenger |
+| end_date | DATE | Always NULL — no employee-departure model |
+| employment_type, remuneration_type | TEXT | Always "ORDINARY" / "FIXED_SALARY" |
+| weekly_working_hours, percentage | NUMERIC | Always 37.5h / 100% — no part-time |
+| payroll_tax_zone | TEXT | Always "ZONE_1" (Oslo) |
 
-Ograniczenie: brak odejść pracowników (rotacji kadry) — każdy zatrudniony zostaje na zawsze aktywny.
+Limitation: no employee departures (staff turnover) — once hired, an employee stays active forever.
 
 ### customers
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
-| id | INTEGER (PK) | 1-50, `numeric_id("K01")..("K50")` (Faza 4: +38, K13-K50) |
-| name | TEXT | Nazwa firmy klienta |
-| customer_number | TEXT | Kod "K01"-"K50" |
-| city | TEXT | Miasto siedziby |
-| **segment** | VARCHAR(20) | Enterprise / Mid-market / SMB (Faza 1) — docelowo 15/18/17 (Faza 4) |
-| **onboarding_date** | DATE | Data rozpoczęcia współpracy — klient nie generuje zamówień przed tą datą (Faza "realistyczny start firmy"). Faza 4: rozłożone 2023-2026 + kohorta fuzji (2022-09-01, 4 klientów, ta sama data co fuzja pracownicza) |
-| **churn_date** | DATE | Data zakończenia współpracy, NULL = nadal aktywny. K09 (2024-11-30) i K15 (2025-10-31, Faza 4) — oba SMB |
-| **price_multiplier** | NUMERIC(5,4) | Indywidualny mnożnik ceny ±8% (0.92-1.08), deterministyczny per klient — symuluje wynik negocjacji B2B |
-| **nace_code** | VARCHAR(10) | Kod branżowy SN2007/NACE klienta (dodatek NACE) — format "XX.XXX" |
-| **nace_name** | VARCHAR(200) | Nazwa branży wg SN2007 (po norwesku) |
-| **postal_code** | TEXT | Kod pocztowy (postnummer) na podstawie `city` — realne kody Posten/Bring (`roster.NORWEGIAN_POSTAL_CODES`), poprawka eksportu, format "XXXX" |
-| organization_number, email, phone_number, address_line1 | TEXT | Nigdy wypełniane (NULL) |
-| is_private_individual | BOOLEAN | Zawsze `false` |
-| country_id, currency_id | INTEGER | Zawsze 161 (Norwegia) / 1 (NOK) |
-| invoices_due_in, invoices_due_in_type | INTEGER/TEXT | Kolumny istnieją, ale realny termin płatności per zamówienie jest w `orders.invoices_due_in` (per-order, nie per-customer) |
+| id | INTEGER (PK) | 1-50, `numeric_id("K01")..("K50")` (Phase 4: +38, K13-K50) |
+| name | TEXT | Customer company name |
+| customer_number | TEXT | Code "K01"-"K50" |
+| city | TEXT | Headquarters city |
+| **segment** | VARCHAR(20) | Enterprise / Mid-market / SMB (Phase 1) — target 15/18/17 (Phase 4) |
+| **onboarding_date** | DATE | Start-of-relationship date — the customer generates no orders before this date (the "realistic company start" phase). Phase 4: spread across 2023-2026 + the merger cohort (2022-09-01, 4 customers, the same date as the employee merger) |
+| **churn_date** | DATE | End-of-relationship date, NULL = still active. K09 (2024-11-30) and K15 (2025-10-31, Phase 4) — both SMB |
+| **price_multiplier** | NUMERIC(5,4) | Individual price multiplier ±8% (0.92-1.08), deterministic per customer — simulates the outcome of B2B negotiations |
+| **nace_code** | VARCHAR(10) | The customer's SN2007/NACE industry code (NACE addendum) — format "XX.XXX" |
+| **nace_name** | VARCHAR(200) | Industry name per SN2007 (in Norwegian) |
+| **postal_code** | TEXT | Postal code (postnummer) based on `city` — real Posten/Bring codes (`roster.NORWEGIAN_POSTAL_CODES`), an export fix, format "XXXX" |
+| organization_number, email, phone_number, address_line1 | TEXT | Never populated (NULL) |
+| is_private_individual | BOOLEAN | Always `false` |
+| country_id, currency_id | INTEGER | Always 161 (Norway) / 1 (NOK) |
+| invoices_due_in, invoices_due_in_type | INTEGER/TEXT | Columns exist, but the actual payment term per order is in `orders.invoices_due_in` (per-order, not per-customer) |
 
-**Pogrubione kolumny to dodatki Fazy 1 (+ dodatek NACE dla `nace_code`/`nace_name`, + poprawka eksportu dla `postal_code`)** — populowane przez `seed_reference_data()`/`scripts/migrate_customer_metadata.py`. `postal_code` jako kolumna **istniała już w oryginalnym schemacie** (`schema.sql`), tylko nigdy nie była wypełniana — poprawka eksportu (2026-07) dodała jej wypełnianie, nie samą kolumnę. Ograniczenie: tylko 2 klienci mają churn (celowo niski, realistyczny wskaźnik, nie pełny model rotacji portfela).
+**Bolded columns are Phase 1 additions (+ the NACE addendum for `nace_code`/`nace_name`, + the export fix for `postal_code`)** — populated by `seed_reference_data()`/`scripts/migrate_customer_metadata.py`. `postal_code` as a column **already existed in the original schema** (`schema.sql`), it was just never populated — the export fix (2026-07) added its population, not the column itself. Limitation: only 2 customers have churned (deliberately low, a realistic rate, not a full portfolio-turnover model).
 
-**Dodatek — kody branżowe NACE/SN2007** (`roster.CUSTOMER_NACE`, dict `customer_number -> NaceCode(code, name)`, nie osobne pole na `CustomerSeed` — analogicznie do `CUSTOMER_PRICE_MULTIPLIER`, żeby nie zmieniać sygnatury konstrukcji w 50 miejscach). Kod dopasowany do rzeczywistej nazwy firmy klienta (np. "Nordkraft Energi AS" → 35.140 Handel med elektrisitet, "Halden Design AS" → 74.100 Spesialisert designvirksomhet), nie losowo — 18 różnych sektorów wśród 50 klientów. Czysto opisowy dodatek, **nie wpływa na przychód/koszty/marżę**, nie wymaga backfillu transakcyjnego.
+**Addendum — NACE/SN2007 industry codes** (`roster.CUSTOMER_NACE`, a dict `customer_number -> NaceCode(code, name)`, not a separate field on `CustomerSeed` — analogous to `CUSTOMER_PRICE_MULTIPLIER`, so as not to change the constructor signature in 50 places). The code is matched to the customer's actual company name (e.g. "Nordkraft Energi AS" → 35.140 Handel med elektrisitet, "Halden Design AS" → 74.100 Spesialisert designvirksomhet), not random — 18 different sectors among 50 customers. A purely descriptive addendum, **does not affect revenue/costs/margin**, requires no transactional backfill.
 
-**Faza 4 — dwie kohorty cenowe** (`roster.get_service_price_table()`/`service_by_code_for_customer()`): klienci onboardowani przed `CUSTOMER_PRICING_COHORT_CUTOFF` (2023-01-01, obejmuje K01-K12 + kohortę fuzji 2022-09) płacą ceny `LEGACY_SERVICES` (Faza 2), klienci od tej daty płacą `SCALE_SERVICES` (niżej, ~2,2x). Powód: jeden globalny cennik dla wszystkich 50 klientów przez całą historię 2019-2026 psuł retroaktywnie marżę — obniżka dla nowych klientów obniżała też przychód starych klientów w latach, gdy byli jedyną bazą przychodową. Zob. `services` niżej i `SESSION_HANDOFF.md` (Faza 4) po pełne uzasadnienie.
+**Phase 4 — two pricing cohorts** (`roster.get_service_price_table()`/`service_by_code_for_customer()`): customers onboarded before `CUSTOMER_PRICING_COHORT_CUTOFF` (2023-01-01, covers K01-K12 + the 2022-09 merger cohort) pay `LEGACY_SERVICES` prices (Phase 2), customers from that date on pay `SCALE_SERVICES` (below, ~2.2x lower). Reason: one global price list for all 50 customers across the entire 2019-2026 history was retroactively breaking margin — a price cut for new customers also lowered old customers' revenue in the years when they were the sole revenue base. See `services` below and `SESSION_HANDOFF.md` (Phase 4) for the full rationale.
 
 ### suppliers
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | INTEGER (PK) | 1-8, `numeric_id("L01")..("L08")` |
-| name | TEXT | Nazwa dostawcy |
-| supplier_number | TEXT | Kod "L01"-"L08" |
-| organization_number, email, phone_number, address_line1, postal_code, city, bank_account_number | TEXT | Nigdy wypełniane (NULL) |
-| is_private_individual, is_wholesaler, show_products | BOOLEAN | Zawsze `false` |
-| country_id, currency_id | INTEGER | Zawsze 161 / 1 |
+| name | TEXT | Supplier name |
+| supplier_number | TEXT | Code "L01"-"L08" |
+| organization_number, email, phone_number, address_line1, postal_code, city, bank_account_number | TEXT | Never populated (NULL) |
+| is_private_individual, is_wholesaler, show_products | BOOLEAN | Always `false` |
+| country_id, currency_id | INTEGER | Always 161 / 1 |
 
-Znaczenie biznesowe: 8 dostawców kosztowych (Microsoft, Telenor, Reitan, Statsbygg, Sandvik, Thommessen, Avis, Nordic Insurance) — każdy z własnym rytmem fakturowania i wariancją kwot (Q1/Q3 wyższe u Avis, sezonowość Sandvik).
+Business meaning: 8 cost suppliers (Microsoft, Telenor, Reitan, Statsbygg, Sandvik, Thommessen, Avis, Nordic Insurance) — each with its own invoicing rhythm and amount variance (higher for Avis in Q1/Q3, Sandvik seasonality).
 
-**`postal_code` zostaje NULL nawet po poprawce eksportu (2026-07)** — `SupplierSeed` (roster.py) nigdy nie miał pola `city` (w przeciwieństwie do `CustomerSeed`), więc nie ma z czego wyprowadzić kodu pocztowego bez wymyślania nowych danych adresowych. Świadome ograniczenie, nie przeoczenie — zob. `SESSION_HANDOFF.md` p. 10.
+**`postal_code` stays NULL even after the export fix (2026-07)** — `SupplierSeed` (roster.py) never had a `city` field (unlike `CustomerSeed`), so there's nothing to derive a postal code from without inventing new address data. A deliberate limitation, not an oversight — see `SESSION_HANDOFF.md` section 10.
 
 ### vat_types
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | INTEGER (PK) | 0 / 1 / 3 / 6 |
-| name | TEXT | Opis stawki po norwesku |
-| number | TEXT | Kod tekstowy = `id` |
-| percentage | NUMERIC(5,2) | Stawka % — 25.0 dla sprzedaży/zakupu, 0.0 dla zwolnionych |
-| vat_code | TEXT | "0"/"1"/"3"/"6" — kod Tripletex |
+| name | TEXT | Rate description in Norwegian |
+| number | TEXT | Text code = `id` |
+| percentage | NUMERIC(5,2) | Rate % — 25.0 for sales/purchases, 0.0 for exempt |
+| vat_code | TEXT | "0"/"1"/"3"/"6" — the Tripletex code |
 
-Znaczenie biznesowe: stały słownik stawek VAT (jedyna realnie używana stawka w generatorach to 25%, kody "1" zakup / "3" sprzedaż).
+Business meaning: a fixed dictionary of VAT rates (the only rate actually used in the generators is 25%, codes "1" purchase / "3" sales).
 
 ### accounts
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
-| number | INTEGER (PK) | Numer konta wg NS 4102 (norweski plan kont), np. 5000, 6410 |
-| name | TEXT | Nazwa konta po norwesku |
+| number | INTEGER (PK) | Account number per NS 4102 (the Norwegian chart of accounts), e.g. 5000, 6410 |
+| name | TEXT | Account name in Norwegian |
 | type | TEXT | ASSETS / EQUITY_AND_LIABILITY / OPERATING_INCOME / OPERATING_EXPENSE |
-| vat_type_id | INTEGER (FK) | → vat_types.id, tylko dla kont przychodowych/kosztowych z VAT |
+| vat_type_id | INTEGER (FK) | → vat_types.id, only for revenue/cost accounts with VAT |
 
-Znaczenie biznesowe: 29-pozycyjny plan kont (24 + 3 z Fazy 3 + 2 z Fazy 6) używany przez wszystkie `postings.account_number`. **Konta 3000/3100 (przychód) istnieją w tym słowniku, ale nigdy nie mają postingów** — zob. ograniczenie na górze dokumentu.
+Business meaning: a 29-entry chart of accounts (24 + 3 from Phase 3 + 2 from Phase 6) used by every `postings.account_number`. **Accounts 3000/3100 (revenue) exist in this dictionary, but never have any postings** — see the limitation at the top of this document.
 
-**Faza 3 — 3 nowe konta kosztowe** (`generators/opex_generator.py`), wszystkie bez VAT (`vat_type_id=NULL`) — koszty gotówkowe księgowane bezpośrednio (DR koszt / CR 1910), bez pośredniego `SupplierInvoice`:
-- **4290** "Driftsmateriell for kundeleveranse" — COGS (klasa 4 NS4102, nie 6xxx/7xxx jak reszta kosztów operacyjnych): jednorazowy sprzęt wdrożeniowy (routery/serwery) przy onboardingu klienta Enterprise/Mid-market, 45-90 tys. NOK (Enterprise) / 15-35 tys. NOK (Mid-market). Ponieważ obecni 12 klientów onboardowali się 2019-2022, ten koszt występuje niemal wyłącznie w latach historycznych.
-- **7350** "Kantinetilskudd" — dopłata do kantyny, 820 NOK/pracownika/miesiąc (stała, bez inflacji — polityka firmy).
-- **7420** "Representasjon" — koszty reprezentacyjne per aktywny klient: 1000 NOK/mies. (Enterprise) / 400 NOK/mies. (Mid-market), z inflacją +3%/rok. SMB nie generuje kosztu (relacja czysto transakcyjna). **Nie zaimplementowano** flagi `tax_deductible_pct` (ograniczona odliczalność podatkowa reprezentacji w Norwegii) — zadanie explicite dopuszczało pominięcie, zostawione jako komentarz w kodzie na przyszłość.
+**Phase 3 — 3 new cost accounts** (`generators/opex_generator.py`), all without VAT (`vat_type_id=NULL`) — cash costs booked directly (DR cost / CR 1910), without an intermediate `SupplierInvoice`:
+- **4290** "Driftsmateriell for kundeleveranse" — COGS (NS4102 class 4, not 6xxx/7xxx like the rest of operating costs): a one-off piece of implementation equipment (routers/servers) at Enterprise/Mid-market customer onboarding, 45-90k NOK (Enterprise) / 15-35k NOK (Mid-market). Since the current 12 customers onboarded 2019-2022, this cost occurs almost exclusively in the historical years.
+- **7350** "Kantinetilskudd" — a canteen subsidy, 820 NOK/employee/month (fixed, no inflation — company policy).
+- **7420** "Representasjon" — representation costs per active customer: 1,000 NOK/month (Enterprise) / 400 NOK/month (Mid-market), with +3%/year inflation. SMB generates no cost (a purely transactional relationship). A `tax_deductible_pct` flag (the limited tax deductibility of representation costs in Norway) was **not implemented** — the task explicitly allowed this to be skipped, left as a code comment for the future.
 
-Kilometrówka (kwartalne wizyty u klientów) i wyjazdy konferencyjne (2-3x/rok, losowe) księgowane na **istniejące konto 7000** "Reisekostnader" — to samo konto co L07 Avis (dostawca kosztowy z Fazy wcześniejszej), bo to logicznie ta sama kategoria NS4102 (koszty podróży), nie osobny nowy numer. L07 Avis pozostaje bez zmian (żadnego "miksu" service/transport nie było do rozdzielenia — L07 to czysto wynajem samochodów).
+Mileage (quarterly customer visits) and conference trips (2-3x/year, random) are booked to the **existing account 7000** "Reisekostnader" — the same account as L07 Avis (a cost supplier from an earlier phase), because it's logically the same NS4102 category (travel costs), not a separate new number. L07 Avis remains unchanged (there was no service/transport "mix" to split out — L07 is purely car rental).
 
-**Faza 6 — 2 nowe konta COGS** (`generators/opex_generator.py`, wzorzec `_cogs_accrual_voucher`: DR koszt / CR 2400 Leverandørgjeld — zobowiązanie wobec dostawcy, nie natychmiastowa płatność gotówkowa jak konta Fazy 3), skalujące się co miesiąc z portfelem klientów:
-- **4291** "Videresalgskostnad Microsoft/Azure" — pass-through dla S02, tylko klienci Enterprise+Mid (`roster.calc_azure_cogs_monthly`): 22 000/11 500 NOK/mies. (rok bazowy 2019, ×liczba klientów, +inflacja). Zastępuje płaską pozycję "Azure hosting" (35 000 NOK/mies.) usuniętą z `supplier_invoices` L01 (zob. niżej).
-- **4292** "Driftskostnad Managed IT Support (RMM/EDR/verktøy)" — pass-through dla S01, WSZYSCY aktywni klienci niezależnie od segmentu (`roster.calc_s01_cogs_monthly`): 53 000/26 500/13 300 NOK/mies. (Enterprise/Mid/SMB, waga 4:2:1). Dodany po tym, jak offline sanity-check wykazał, że S02-only COGS fizycznie nie może wypełnić luki między realnym przychodem (~52 mln NOK w 2026, nie zakładane ~35 mln) a celem headcount~17/marża 7% — S02 generuje tylko ~13 mln NOK/rok przychodu, za mało jako baza. Zakotwiczone w Garnes Data AS (IT drift/support, realny opex+COGS/przychód = 61,6%) — cel `(opex_tradycyjny + cogs_s02 + cogs_s01) / przychód ≈ 58-62%`. Zob. `roster.py` (komentarz przy `calc_s01_cogs_monthly`) i `SESSION_HANDOFF.md` (Faza 6) dla pełnego wyprowadzenia.
+**Phase 6 — 2 new COGS accounts** (`generators/opex_generator.py`, pattern `_cogs_accrual_voucher`: DR cost / CR 2400 Leverandørgjeld — a liability owed to a supplier, not an immediate cash payment like the Phase 3 accounts), scaling monthly with the customer portfolio:
+- **4291** "Videresalgskostnad Microsoft/Azure" — S02 pass-through, Enterprise+Mid customers only (`roster.calc_azure_cogs_monthly`): 22,000/11,500 NOK/month (2019 base year, xnumber of customers, +inflation). Replaces the flat "Azure hosting" line (35,000 NOK/month) removed from `supplier_invoices` L01 (see below).
+- **4292** "Driftskostnad Managed IT Support (RMM/EDR/verktøy)" — S01 pass-through, ALL active customers regardless of segment (`roster.calc_s01_cogs_monthly`): 53,000/26,500/13,300 NOK/month (Enterprise/Mid/SMB, weight 4:2:1). Added after an offline sanity-check showed that S02-only COGS cannot physically close the gap between real revenue (~52M NOK in 2026, not the assumed ~35M) and the headcount~17/margin 7% target — S02 generates only ~13M NOK/year of revenue, too small a base. Anchored to Garnes Data AS (IT drift/support, real opex+COGS/revenue = 61.6%) — target `(traditional_opex + cogs_s02 + cogs_s01) / revenue ≈ 58-62%`. See `roster.py` (the comment on `calc_s01_cogs_monthly`) and `SESSION_HANDOFF.md` (Phase 6) for the full derivation.
 
 ### products
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
-| id | INTEGER (PK) | 1-7, `numeric_id("P01")..("P07")` (P07 dodany w Fazie 2) |
-| name | TEXT | Nazwa produktu |
-| number | TEXT | Kod "P01"-"P07" |
-| sales_price | NUMERIC(14,2) | Cena bazowa 2019 (NOK/mies.), historyczna/informacyjna. **Od Fazy 2 NIE jest już używana do liczenia ceny na fakturze** dla P01/P04/P06/P07 (zob. niżej) — NULL dla P06/P07 |
-| vat_type_id | INTEGER (FK) | Zawsze 3 (sprzedaż 25%) |
-| currency_id | INTEGER | Zawsze 1 (NOK) |
-| is_inactive | BOOLEAN | Zawsze `false` |
-| **service_code** | VARCHAR(10) (FK → services.code) | P01-P03→S01, P04-P05→S02, P06→S04, **P07→S03 (Faza 2)** |
+| id | INTEGER (PK) | 1-7, `numeric_id("P01")..("P07")` (P07 added in Phase 2) |
+| name | TEXT | Product name |
+| number | TEXT | Code "P01"-"P07" |
+| sales_price | NUMERIC(14,2) | 2019 base price (NOK/month), historical/informational. **No longer used to compute the invoice price** for P01/P04/P06/P07 as of Phase 2 (see below) — NULL for P06/P07 |
+| vat_type_id | INTEGER (FK) | Always 3 (sales 25%) |
+| currency_id | INTEGER | Always 1 (NOK) |
+| is_inactive | BOOLEAN | Always `false` |
+| **service_code** | VARCHAR(10) (FK → services.code) | P01-P03→S01, P04-P05→S02, P06→S04, **P07→S03 (Phase 2)** |
 
-Znaczenie biznesowe: 7 produktów sprzedażowych — P01-P03 IT Support (per segment), P04-P05 licencje (Enterprise/Mid-market), P06 consulting, **P07 (Faza 2) Cyberbezpieczeństwo**. Ceny obniżone ~17% względem oryginalnych założeń (2026-07) w celu domknięcia marży operacyjnej do 15-25%.
+Business meaning: 7 sales products — P01-P03 IT Support (per segment), P04-P05 licenses (Enterprise/Mid-market), P06 consulting, **P07 (Phase 2) Cybersecurity**. Prices cut ~17% relative to the original assumptions (2026-07) to close the operating margin down to 15-25%.
 
-**Faza 2 — zmiana źródła prawdy dla ceny**: `order_generator.build_order_lines()` liczy cenę linii bezpośrednio z `services.base_price_{segment}` (nie z `products.sales_price`) — jeden kanoniczny produkt per usługa (`roster.product_for_service()`: P01→S01, P04→S02, P07→S03, P06→S04) referencjonowany niezależnie od segmentu klienta, tylko dla celów FK/etykiety na fakturze Tripletex. P02/P03/P05 pozostają w katalogu (zgodność wsteczna/testy), ale **nie są już używane do generowania linii zamówień** — zastąpione bundlingiem segmentowym (zob. `services`, `order_lines`).
+**Phase 2 — change in the source of truth for price**: `order_generator.build_order_lines()` computes the line price directly from `services.base_price_{segment}` (not from `products.sales_price`) — one canonical product per service (`roster.product_for_service()`: P01→S01, P04→S02, P07→S03, P06→S04) referenced independently of the customer's segment, purely for FK/label purposes on the Tripletex invoice. P02/P03/P05 remain in the catalog (backward compatibility/tests), but **are no longer used to generate order lines** — replaced by segment-based bundling (see `services`, `order_lines`).
 
 ---
 
-## Faza 1 — katalog usług
+## Phase 1 — service catalog
 
 ### services
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | code | VARCHAR(10) (PK) | S01-S04 |
-| name | VARCHAR(200) | Nazwa usługi |
-| description | TEXT | Opis biznesowy |
-| billing_model | VARCHAR(20) | SUBSCRIPTION (miesięczna) / HOURLY (rozliczana godzinowo) |
-| availability | VARCHAR(30) | ALL / ENTERPRISE_MID / ENTERPRISE_ONLY — który segment może kupić |
-| base_price_enterprise / base_price_mid / base_price_smb | NUMERIC(12,2) | Cena bazowa 2019: NOK/mies. dla SUBSCRIPTION, NOK/h dla HOURLY. NULL = usługa niedostępna dla tego segmentu |
+| name | VARCHAR(200) | Service name |
+| description | TEXT | Business description |
+| billing_model | VARCHAR(20) | SUBSCRIPTION (monthly) / HOURLY (billed hourly) |
+| availability | VARCHAR(30) | ALL / ENTERPRISE_MID / ENTERPRISE_ONLY — which segment can buy it |
+| base_price_enterprise / base_price_mid / base_price_smb | NUMERIC(12,2) | 2019 base price: NOK/month for SUBSCRIPTION, NOK/h for HOURLY. NULL = the service isn't available for that segment |
 
-Znaczenie biznesowe: katalog ofertowy niezależny od konkretnych cen per klient (te ustala `customers.price_multiplier`). **Faza 2**: każda usługa ma teraz produkt referencyjny (`products.service_code`) i realny bundling per segment (`roster.get_customer_services()` — Enterprise S01+S02+S03, Mid-market S01+S02, SMB S01) — S03 (Cyberbezpieczeństwo) generuje przychód dla wszystkich klientów Enterprise od momentu ich onboardingu (produkt P07).
+Business meaning: a product catalog independent of per-customer pricing (that's set by `customers.price_multiplier`). **Phase 2**: every service now has a reference product (`products.service_code`) and real per-segment bundling (`roster.get_customer_services()` — Enterprise S01+S02+S03, Mid-market S01+S02, SMB S01) — S03 (Cybersecurity) generates revenue for every Enterprise customer from the moment they onboard (product P07).
 
-**Ograniczenie Fazy 4**: ta tabela zawiera TYLKO `LEGACY_SERVICES` (ceny Fazy 2: S01 133k/84,5k/49k NOK/mies., S02 59k/37,5k, S03 44k) — klucz PK jest `code`, jedna cena per usługę, więc `SCALE_SERVICES` (ceny obniżone dla klientów onboardowanych od 2023-01-01: S01 60k/24k/6k, S02 25k/10k, S03 18k) **istnieje tylko w kodzie Python** (`roster.SCALE_SERVICES`), nie ma reprezentacji w tej tabeli. Zapytania SQL liczące przychód per usługa (`order_lines JOIN products`) są poprawne (cena faktycznie wystawiona jest w `order_lines.unit_price_excluding_vat_currency`), ale zapytania odczytujące `services.base_price_*` bezpośrednio pokażą tylko cennik legacy, nie faktyczny cennik nowych klientów.
+**Phase 4 limitation**: this table contains ONLY `LEGACY_SERVICES` (Phase 2 prices: S01 133k/84.5k/49k NOK/month, S02 59k/37.5k, S03 44k) — the PK is `code`, one price per service, so `SCALE_SERVICES` (cut prices for customers onboarded from 2023-01-01: S01 60k/24k/6k, S02 25k/10k, S03 18k) **exists only in Python code** (`roster.SCALE_SERVICES`), with no representation in this table. SQL queries computing revenue per service (`order_lines JOIN products`) are correct (the price actually invoiced is in `order_lines.unit_price_excluding_vat_currency`), but queries reading `services.base_price_*` directly will only show the legacy price list, not the actual price list for newer customers.
 
 ---
 
-## Warstwa 2 — dokumenty źródłowe
+## Layer 2 — source documents
 
 ### orders
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
 | customer_id | INTEGER (FK) | → customers.id |
-| order_date, invoice_date | DATE | Zwykle identyczne — data wystawienia faktury sprzedaży (`customer.invoice_day`) |
-| delivery_date | DATE | Ostatni dzień miesiąca rozliczeniowego |
-| invoices_due_in | INTEGER | Dni do terminu płatności (`customer.payment_terms`: 14/30/45) |
-| invoices_due_in_type | TEXT | Zawsze "DAYS" |
-| department_id | INTEGER (FK) | Zawsze 1 (Salg) |
-| our_contact_id | INTEGER | Zawsze id E01 (Erik Strand, Sales Manager) |
-| comment | TEXT | Opis "Månedlig faktura — {miesiąc} {rok}" |
-| **status** | TEXT | PAID (domyślnie) / OVERDUE (~1,6% zamówień, opóźnienie +90 dni) / WRITTEN_OFF (~0,4%, nigdy niezapłacone — bad debt) |
+| order_date, invoice_date | DATE | Usually identical — the sales invoice issue date (`customer.invoice_day`) |
+| delivery_date | DATE | Last day of the billing month |
+| invoices_due_in | INTEGER | Days until due date (`customer.payment_terms`: 14/30/45) |
+| invoices_due_in_type | TEXT | Always "DAYS" |
+| department_id | INTEGER (FK) | Always 1 (Salg) |
+| our_contact_id | INTEGER | Always E01's id (Erik Strand, Sales Manager) |
+| comment | TEXT | Description "Månedlig faktura — {month} {year}" |
+| **status** | TEXT | PAID (default) / OVERDUE (~1.6% of orders, +90 days delayed) / WRITTEN_OFF (~0.4%, never paid — bad debt) |
 
-Znaczenie biznesowe: **faktura sprzedaży (przychód)**. Kwota = suma `order_lines.amount_currency`. Waluta: NOK. Ograniczenie: `status` ustalany **raz, deterministycznie, przy tworzeniu zamówienia** (nie na podstawie realnego upływu czasu) — celowe, żeby backfill był w pełni powtarzalny.
+Business meaning: **sales invoice (revenue)**. Amount = the sum of `order_lines.amount_currency`. Currency: NOK. Limitation: `status` is decided **once, deterministically, when the order is created** (not based on actual elapsed time) — deliberate, so the backfill is fully reproducible.
 
 ### order_lines
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
 | order_id | INTEGER (FK, CASCADE) | → orders.id |
 | product_id | INTEGER (FK) | → products.id |
-| count | NUMERIC(10,2) | Zawsze 1.0 |
-| unit_price_excluding_vat_currency | NUMERIC(14,2) | Cena jednostkowa NOK, po inflacji (+3%/rok) i mnożniku klienta (±8%) |
-| discount | NUMERIC(5,4) | Zawsze 0 — brak rabatów |
-| amount_excluding_vat_currency | NUMERIC(14,2) | = count × cena × (1-discount). **To pole liczy się do przychodu w P&L** |
-| amount_currency | NUMERIC(14,2) | Kwota brutto (+25% VAT) |
-| vat_type_id | INTEGER (FK) | Zawsze 3 (sprzedaż 25%) |
+| count | NUMERIC(10,2) | Always 1.0 |
+| unit_price_excluding_vat_currency | NUMERIC(14,2) | Unit price in NOK, after inflation (+3%/year) and the customer's multiplier (±8%) |
+| discount | NUMERIC(5,4) | Always 0 — no discounts |
+| amount_excluding_vat_currency | NUMERIC(14,2) | = count x price x (1-discount). **This field is what counts toward revenue in the P&L** |
+| amount_currency | NUMERIC(14,2) | Gross amount (+25% VAT) |
+| vat_type_id | INTEGER (FK) | Always 3 (sales 25%) |
 
-Znaczenie biznesowe: pojedyncza pozycja faktury sprzedaży. **Faza 2**: jedna linia per usługa, którą klient kupuje wg segmentu (Enterprise 3 linie S01+S02+S03, Mid-market 2 linie S01+S02, SMB 1 linia S01) — zastąpiło dawne liczenie wg litery `order_pattern` (A=1/B=2/C=1). `order_lines` nie ma własnej kolumny `product_service_code` — kod usługi danej linii wynika z joina `product_id → products.service_code` (zob. `products`, `services`).
+Business meaning: a single sales invoice line item. **Phase 2**: one line per service the customer buys based on segment (Enterprise 3 lines S01+S02+S03, Mid-market 2 lines S01+S02, SMB 1 line S01) — replaced the old count-by-`order_pattern`-letter logic (A=1/B=2/C=1). `order_lines` has no `product_service_code` column of its own — a line's service code is derived by joining `product_id → products.service_code` (see `products`, `services`).
 
 ### supplier_invoices
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
-| invoice_number | TEXT (UNIQUE) | Format "{L0x}-{rok}-{numer}" |
+| invoice_number | TEXT (UNIQUE) | Format "{L0x}-{year}-{number}" |
 | supplier_id | INTEGER (FK) | → suppliers.id |
-| invoice_date, received_date | DATE | Zwykle identyczne |
-| payment_due_date | DATE | invoice_date + 30 dni |
-| amount_currency | NUMERIC(14,2) | Kwota brutto NOK |
-| amount_excluding_vat_currency, vat_amount_currency | NUMERIC(14,2) | Netto / VAT (25%) |
-| account_number | INTEGER (FK) | Konto kosztowe (6xxx) lub kapitalizacji (1200, dla L05 ≥30 000 NOK) |
-| **status** | TEXT | UNPAID / PAID — flaguje się na PAID automatycznie po zaksięgowaniu odpowiadającego `bank_transactions` (OUTGOING) |
+| invoice_date, received_date | DATE | Usually identical |
+| payment_due_date | DATE | invoice_date + 30 days |
+| amount_currency | NUMERIC(14,2) | Gross amount in NOK |
+| amount_excluding_vat_currency, vat_amount_currency | NUMERIC(14,2) | Net / VAT (25%) |
+| account_number | INTEGER (FK) | Cost account (6xxx) or capitalization account (1200, for L05 >= 30,000 NOK) |
+| **status** | TEXT | UNPAID / PAID — flipped to PAID automatically once the matching `bank_transactions` row (OUTGOING) is booked |
 
-Znaczenie biznesowe: **faktura zakupu (koszt)**. Ograniczenie: 526 historycznych faktur miało status PAID nadany starą heurystyką czasową (sprzed wdrożenia `bank_transactions`) — naprawione jednorazowo przez `scripts/fix_outgoing_transactions.py`, ale **ten skrypt trzeba uruchamiać ponownie po każdym pełnym resecie tabel** (TRUNCATE zeruje `bank_transactions`).
+Business meaning: **purchase invoice (cost)**. Limitation: 526 historical invoices had PAID status assigned by an old time-based heuristic (predating the `bank_transactions` rollout) — fixed once by `scripts/fix_outgoing_transactions.py`, but **this script needs to be re-run after every full table reset** (TRUNCATE zeroes out `bank_transactions`).
 
-**Faza 2 — L01 (Microsoft Norge) rozbite na kilka faktur/miesiąc** (nie 1 płaska pozycja 85 000 NOK) — `supplier_invoice_generator.MICROSOFT_COST_LINES`: M365 E3 licencje, Visual Studio/narzędzia deweloperskie, wsparcie CSP/Premier. Suma bazowa 2019 = 18 100 NOK/mies., z inflacją +3%/rok (`apply_annual_inflation`, w przeciwieństwie do L02-L08, które pozostają płaskie). `invoice_number` dla L01 ma dodatkowy sufiks `-{1..3}` (np. `L01-2024-01-1`).
+**Phase 2 — L01 (Microsoft Norge) split into several invoices/month** (not 1 flat 85,000 NOK line) — `supplier_invoice_generator.MICROSOFT_COST_LINES`: M365 E3 licenses, Visual Studio/developer tools, CSP/Premier support. 2019 base total = 18,100 NOK/month, with +3%/year inflation (`apply_annual_inflation`, unlike L02-L08, which stay flat). L01's `invoice_number` has an extra `-{1..3}` suffix (e.g. `L01-2024-01-1`).
 
-**Faza 6 — "Azure hosting" (4. pozycja, 35 000 NOK/mies. płaska) USUNIĘTA stąd**, zastąpiona COGS pass-through skalującym się z liczbą klientów S02 (konto 4291, zob. `accounts` wyżej) — koszt odsprzedaży, nie stały koszt operacyjny.
+**Phase 6 — "Azure hosting" (the 4th line item, a flat 35,000 NOK/month) REMOVED from here**, replaced by a COGS pass-through scaling with the number of S02 customers (account 4291, see `accounts` above) — a resale cost, not a fixed operating cost.
 
 ### salary_transactions
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
-| date | DATE | Ostatni dzień roboczy miesiąca (data wypłaty) |
-| year, month | INTEGER | Klucz naturalny (UNIQUE razem) |
-| status | TEXT | Zawsze "OPEN" — brak logiki zamykania okresu |
+| date | DATE | The last working day of the month (payout date) |
+| year, month | INTEGER | Natural key (UNIQUE together) |
+| status | TEXT | Always "OPEN" — no period-closing logic |
 
-Znaczenie biznesowe: nagłówek jednej listy płac (miesiąc). Jeden rekord/miesiąc, 91 rekordów łącznie (2019-01 → 2026-07).
+Business meaning: the header of one payroll run (month). One record/month, 91 records total (2019-01 → 2026-07).
 
 ### payslips
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
 | transaction_id | INTEGER (FK, CASCADE) | → salary_transactions.id |
 | employee_id | INTEGER (FK) | → employees.id |
-| date | DATE | Data wypłaty (= salary_transactions.date) |
-| amount | NUMERIC(14,2) | **Netto** (na rękę) NOK — brutto minus skattetrekk. W czerwcu wyższe niż zwykle (feriepenger nieopodatkowane) |
+| date | DATE | Payout date (= salary_transactions.date) |
+| amount | NUMERIC(14,2) | **Net** pay in NOK — gross minus skattetrekk. Higher than usual in June (feriepenger is untaxed) |
 
-Znaczenie biznesowe: pasek wypłaty jednego pracownika za dany miesiąc. Ograniczenie: `amount` to netto, nie brutto — do analiz kosztowych (P&L) używać `salary_specifications` lub postingów konta 5000, nie tej kolumny.
+Business meaning: one employee's payslip for a given month. Limitation: `amount` is net, not gross — for cost analysis (P&L), use `salary_specifications` or postings on account 5000, not this column.
 
 ### salary_specifications
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
 | payslip_id | INTEGER (FK, CASCADE) | → payslips.id |
-| wage_type_id | INTEGER | Typ składnika: Fast lønn / Skattetrekk / Feriepenger |
-| description | TEXT | Opis po norwesku |
-| amount | NUMERIC(14,2) | NOK, dodatnie dla pensji/feriepenger, **ujemne** dla skattetrekk (potrącenie) |
+| wage_type_id | INTEGER | Component type: Fast lønn / Skattetrekk / Feriepenger |
+| description | TEXT | Description in Norwegian |
+| amount | NUMERIC(14,2) | NOK, positive for salary/feriepenger, **negative** for skattetrekk (a deduction) |
 
-Znaczenie biznesowe: rozbicie wypłaty na składniki. W czerwcu: standardowo tylko "Feriepenger" (pensja bazowa = 0, zastąpiona przez feriepenger); dla pracowników z niepełnym rokiem stażu — "Fast lønn" (dopłata) + "Feriepenger" + "Skattetrekk" od dopłaty.
+Business meaning: the breakdown of a payslip into its components. In June: normally just "Feriepenger" (base salary = 0, replaced by feriepenger); for employees with less than a full year of tenure — "Fast lønn" (the top-up) + "Feriepenger" + "Skattetrekk" on the top-up.
 
 ---
 
-## Warstwa 3 — ledger
+## Layer 3 — ledger
 
 ### vouchers
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
-| date | DATE | Data księgowania |
-| description | TEXT | Opis (klucz naturalny razem z `date`, UNIQUE) |
-| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL / **OPERATING_COST (Faza 3)**. **Nigdy INVOICE** (zob. ograniczenie na górze dokumentu) |
+| date | DATE | Booking date |
+| description | TEXT | Description (natural key together with `date`, UNIQUE) |
+| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL / **OPERATING_COST (Phase 3)**. **Never INVOICE** (see the limitation at the top of this document) |
 
-Znaczenie biznesowe: nagłówek zapisu księgowego. **Nie zawiera przychodu ze sprzedaży** — tylko koszty (faktury zakupu, payroll, ruchy bankowe, Faza 3: kantyna/reprezentacja/transport/sprzęt wdrożeniowy) i kapitał zakładowy. `OPERATING_COST` (Faza 3, `generators/opex_generator.py`) — koszty gotówkowe bez odpowiadającego dokumentu źródłowego (w przeciwieństwie do `INCOMING_INVOICE`, które zawsze mają `SupplierInvoice`).
+Business meaning: the header of an accounting entry. **Contains no sales revenue** — only costs (purchase invoices, payroll, bank movements, Phase 3: canteen/representation/transport/implementation equipment) and founding capital. `OPERATING_COST` (Phase 3, `generators/opex_generator.py`) — cash costs with no matching source document (unlike `INCOMING_INVOICE`, which always has a `SupplierInvoice`).
 
 ### postings
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
 | voucher_id | INTEGER (FK, CASCADE) | → vouchers.id |
 | account_number | INTEGER (FK) | → accounts.number |
-| amount | NUMERIC(14,2) | **+ = debet, − = kredyt**. Suma postingów w voucherze ≈ 0 (z tolerancją VAT, zob. `validate_balance()`) |
-| vat_amount | NUMERIC(14,2) | Tylko na postingu debetowym, embedded (nie osobny posting) |
-| customer_id / supplier_id / employee_id / department_id | INTEGER (FK) | Wymiary analityczne — wypełniane w zależności od typu postingu (np. customer_id dla konta 1500, employee_id dla 2710/2740) |
+| amount | NUMERIC(14,2) | **+ = debit, - = credit**. The sum of postings in a voucher ≈ 0 (with a VAT tolerance, see `validate_balance()`) |
+| vat_amount | NUMERIC(14,2) | Only on the debit posting, embedded (not a separate posting) |
+| customer_id / supplier_id / employee_id / department_id | INTEGER (FK) | Analytical dimensions — populated depending on the posting type (e.g. customer_id for account 1500, employee_id for 2710/2740) |
 
-Znaczenie biznesowe: pojedyncza linia zapisu księgowego (DR/CR). Do analiz kosztowych: filtrować `account_number BETWEEN 5000 AND 5999` (płace) lub `BETWEEN 6000 AND 7999` (koszty operacyjne).
+Business meaning: a single line of an accounting entry (DR/CR). For cost analysis: filter `account_number BETWEEN 5000 AND 5999` (payroll) or `BETWEEN 6000 AND 7999` (operating costs).
 
 ---
 
-## Etap 4 — bank / projekty / timesheet
+## Tier 4 — bank / projects / timesheet
 
 ### bank_transactions
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
-| date | DATE | Data faktycznego przepływu gotówki (nie data faktury!) |
-| amount | NUMERIC(12,2) | NOK, zawsze dodatnie |
-| transaction_type | VARCHAR(20) | INCOMING (klient płaci) / OUTGOING (firma płaci dostawcy lub payroll) |
-| customer_id / supplier_id | INTEGER (FK) | Wypełnione zależnie od kierunku |
-| order_id / supplier_invoice_id | INTEGER (FK) | Powiązany dokument źródłowy |
-| **salary_transaction_id** | INTEGER (FK) | → salary_transactions.id — wypełnione dla OUTGOING będącego wypłatą payrollu (dodatek "Naprawa: osierocone rekordy + payroll OUTGOING") |
-| account_from, account_to | INTEGER | Konta GL: INCOMING 1500→1910, OUTGOING (dostawca) 1910→2400, OUTGOING (payroll) 1910→2710 |
-| voucher_id | INTEGER (FK) | → vouchers.id (typu BANK) |
+| date | DATE | The actual cash-flow date (not the invoice date!) |
+| amount | NUMERIC(12,2) | NOK, always positive |
+| transaction_type | VARCHAR(20) | INCOMING (customer pays) / OUTGOING (company pays a supplier or payroll) |
+| customer_id / supplier_id | INTEGER (FK) | Populated depending on direction |
+| order_id / supplier_invoice_id | INTEGER (FK) | The linked source document |
+| **salary_transaction_id** | INTEGER (FK) | → salary_transactions.id — populated for OUTGOING rows that are payroll payouts (addendum: "Fix: orphaned records + payroll OUTGOING") |
+| account_from, account_to | INTEGER | GL accounts: INCOMING 1500→1910, OUTGOING (supplier) 1910→2400, OUTGOING (payroll) 1910→2710 |
+| voucher_id | INTEGER (FK) | → vouchers.id (of type BANK) |
 
-Znaczenie biznesowe: rzeczywisty ruch na koncie bankowym, przesunięty w czasie względem faktury o `payment_terms` (klient) lub 30 dni (dostawca), +90 dni dla zamówień OVERDUE, nigdy dla WRITTEN_OFF. Payroll płaci się tego samego dnia co lista płac (`salary_transaction.date` = ostatni dzień roboczy miesiąca) — bez opóźnienia jak przy fakturach.
+Business meaning: the actual movement on the bank account, time-shifted relative to the invoice by `payment_terms` (customer) or 30 days (supplier), +90 days for OVERDUE orders, never for WRITTEN_OFF. Payroll is paid the same day as the payroll run (`salary_transaction.date` = the last working day of the month) — no delay like invoices have.
 
-**Naprawiona nieścisłość (poprzednia wersja tego dokumentu)**: wcześniej pisało "asymetria INCOMING/OUTGOING to artefakt kolejności wdrażania funkcji" — **to było niepełne wyjaśnienie**. Rzeczywista przyczyna: `bank_transaction_generator.py` od Tier 2 miał logikę WYŁĄCZNIE dla `Order` (INCOMING) i `SupplierInvoice` (OUTGOING) — **payroll (największa pojedyncza pozycja kosztowa) nigdy nie generował żadnej transakcji bankowej, w ogóle**. Wykryte przez rozjazd między opublikowanym raportem a bazą (1264 INCOMING/187,6M vs 719 OUTGOING/17,5M — fizycznie niemożliwe przy kosztach rzędu 30M+/rok). Naprawione: `generate_payroll_bank_transaction()` (jedna zagregowana transakcja/miesiąc: netto+skattetrekk+AGA, świadome uproszczenie — realnie skattetrekk/AGA trafiają do Skatteetaten z opóźnieniem, nie tego samego dnia, ale to wykraczało poza zakres tej naprawy) + jednorazowa migracja `scripts/archive/fix_missing_payroll_transactions.py` (91 brakujących). Po naprawie: 810 OUTGOING (107,6M) vs 1267 INCOMING (188,3M) — nadal nierówne (firma jest rentowna, to oczekiwane), ale już bez strukturalnej dziury.
+**A fixed inaccuracy (in a previous version of this document)**: it used to say "the INCOMING/OUTGOING asymmetry is an artifact of the order features were implemented in" — **that was an incomplete explanation**. The real cause: `bank_transaction_generator.py` had logic ONLY for `Order` (INCOMING) and `SupplierInvoice` (OUTGOING) since Tier 2 — **payroll (the single largest cost line item) never generated any bank transaction at all**. Detected via the mismatch between the published report and the database (1264 INCOMING/187.6M vs 719 OUTGOING/17.5M — physically impossible at costs on the order of 30M+/year). Fixed: `generate_payroll_bank_transaction()` (one aggregated transaction/month: net pay+skattetrekk+AGA, a deliberate simplification — in reality skattetrekk/AGA are remitted to Skatteetaten with a delay, not the same day, but that was beyond the scope of this fix) + a one-time migration `scripts/archive/fix_missing_payroll_transactions.py` (91 missing). After the fix: 810 OUTGOING (107.6M) vs 1267 INCOMING (188.3M) — still unequal (the company is profitable, that's expected), but no longer a structural gap.
 
 ### hour_entries
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
-| date | DATE | Dzień roboczy (pon-pt) |
-| employee_id | INTEGER (FK) | Tylko 12 z 17 pracowników loguje godziny (działy Leveranse/Teknologi, bez E05) |
-| project_id | INTEGER (FK) | NULL dla INTERNAL/SICK |
+| date | DATE | A working day (Mon-Fri) |
+| employee_id | INTEGER (FK) | Only 12 of 17 employees log hours (Leveranse/Teknologi departments, excluding E05) |
+| project_id | INTEGER (FK) | NULL for INTERNAL/SICK |
 | activity_type | VARCHAR(20) | BILLABLE / INTERNAL / SICK |
-| hours | NUMERIC(4,1) | Godziny, suma BILLABLE+INTERNAL = 7.5/dzień (albo SICK=0) |
+| hours | NUMERIC(4,1) | Hours, BILLABLE+INTERNAL sum = 7.5/day (or SICK=0) |
 
-Znaczenie biznesowe: timesheet konsultantów. **Nie generuje żadnych postingów księgowych** — czysto operacyjne dane (nie ma wpływu na P&L, niezależne od `salary_generator`). Ograniczenie: BILLABLE tylko do projektów, których klient jest już onboardowany i jeszcze nie odszedł (churn) — w przeciwnym razie cały dzień loguje się jako INTERNAL.
+Business meaning: consultant timesheets. **Generates no accounting postings at all** — purely operational data (no effect on the P&L, independent of `salary_generator`). Limitation: BILLABLE only for projects whose customer is already onboarded and hasn't churned yet — otherwise the whole day is logged as INTERNAL.
 
-**Naprawiony bug idempotencji (incydent 2026-09-04, zob. `SESSION_HANDOFF.md`)**: `UNIQUE(date, employee_id, project_id, activity_type)` **nigdy nie chronił wierszy INTERNAL/SICK** (`project_id` zawsze `NULL` — Postgres traktuje `NULL <> NULL`, więc dwa identyczne takie wiersze nie naruszają tego UNIQUE). Dwa nakładające się uruchomienia `run_daily()` dla tego samego dnia (backfill + prawdopodobnie `daily.yml`) naprawdę zduplikowały 12 wpisów na żywej bazie — BILLABLE (`project_id NOT NULL`) poprawnie się odeduplikowały, INTERNAL/SICK nie. Naprawione: częściowy indeks `hour_entries_unique_null_project ON hour_entries (date, employee_id, activity_type) WHERE project_id IS NULL` (`schema.sql`) + `repository._save_hour_entry` zmienione z nazwanego `ON CONFLICT (...)` na `ON CONFLICT DO NOTHING` bez listy kolumn (łapie oba indeksy).
+**A fixed idempotency bug (the 2026-09-04 incident, see `SESSION_HANDOFF.md`)**: `UNIQUE(date, employee_id, project_id, activity_type)` **never protected INTERNAL/SICK rows** (`project_id` is always `NULL` — Postgres treats `NULL <> NULL`, so two identical such rows don't violate this UNIQUE). Two overlapping `run_daily()` runs for the same day (the backfill + probably `daily.yml`) actually duplicated 12 entries in the live database — BILLABLE rows (`project_id NOT NULL`) deduplicated correctly, INTERNAL/SICK didn't. Fixed: a partial index `hour_entries_unique_null_project ON hour_entries (date, employee_id, activity_type) WHERE project_id IS NULL` (`schema.sql`) + `repository._save_hour_entry` changed from a named `ON CONFLICT (...)` to `ON CONFLICT DO NOTHING` with no column list (catches both indexes).
 
-**Faza 6 — dwa modele dzienne wg działu** (`hours_generator.py`, zastępują wzorzec "jeden klient dziennie" z Fazy 4 — realizm danych, bez wpływu na przychód/payroll):
-- **Leveranse (support)** — model ticketowy (`generate_daily_support_hours`): konsultant obsługuje 2-5 klientów dziennie, krótkie bloki godzin proporcjonalne do segmentu (`TICKET_AVG_HOURS`), suma billable dąży do losowego celu 5,5-7,0h.
-- **Teknologi (projekty)** — cykl życia klienta (`client_lifecycle_phase`): pełny dzień (7,5h) u klienta w fazie ONBOARDING (pierwsze 2-6 tygodni od `onboarding_date`, zależnie od segmentu), rozproszona konserwacja (jak model ticketowy) u klientów w fazie MAINTENANCE poza tym. Mały zespół (2 billable Teknologi) prowadzi jeden aktywny projekt wdrożeniowy naraz (`CONCURRENT_ONBOARDING_CAPACITY=1`).
+**Phase 6 — two daily models by department** (`hours_generator.py`, replacing the "one customer per day" pattern from Phase 4 — purely data realism, no effect on revenue/payroll):
+- **Leveranse (support)** — a ticketing model (`generate_daily_support_hours`): a consultant serves 2-5 customers per day, short hour blocks proportional to segment (`TICKET_AVG_HOURS`), the billable total aims for a random target of 5.5-7.0h.
+- **Teknologi (projects)** — a customer lifecycle (`client_lifecycle_phase`): a full day (7.5h) at a customer in the ONBOARDING phase (the first 2-6 weeks from `onboarding_date`, depending on segment), dispersed maintenance (like the ticketing model) for customers in the MAINTENANCE phase otherwise. The small Teknologi team (2 billable staff) runs one active implementation project at a time (`CONCURRENT_ONBOARDING_CAPACITY=1`).
 
 ### projects
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
-| id | SERIAL (PK) | 1-50, `numeric_id("PRJ001")..("PRJ050")` (Faza 4: 1:1 z `customers`, nie 8 ręcznie utrzymywanych wpisów) |
-| number | VARCHAR(20) (UNIQUE) | "PRJ001"-"PRJ050" — ten sam numer co odpowiadający `customer_id` |
-| customer_id | INTEGER (FK) | → customers.id (1:1, dokładnie jeden projekt per klient) |
-| start_date | DATE | **Faza 4**: = `customers.onboarding_date` (naprawione poprzednie mylące ograniczenie — przed Fazą 4 zawsze 2026-01-01/03-01, data założenia rekordu w katalogu, nie data współpracy) |
-| end_date | DATE | Zawsze NULL |
-| status | VARCHAR(20) | Zawsze "ACTIVE" |
+| id | SERIAL (PK) | 1-50, `numeric_id("PRJ001")..("PRJ050")` (Phase 4: 1:1 with `customers`, not 8 manually maintained entries) |
+| number | VARCHAR(20) (UNIQUE) | "PRJ001"-"PRJ050" — the same number as the matching `customer_id` |
+| customer_id | INTEGER (FK) | → customers.id (1:1, exactly one project per customer) |
+| start_date | DATE | **Phase 4**: = `customers.onboarding_date` (fixed a previously misleading limitation — before Phase 4 it was always 2026-01-01/03-01, the date the catalog record was created, not the relationship start date) |
+| end_date | DATE | Always NULL |
+| status | VARCHAR(20) | Always "ACTIVE" |
 
-Znaczenie biznesowe: kontener godzin konsultanckich per klient — używany wyłącznie przez `hour_entries.project_id`, nie ma bezpośredniego związku z fakturowaniem (`orders`). **Faza 4**: rozszerzone z 8 (tylko część klientów, wybranych ręcznie) do 50 (wszystkie, w tym SMB, które wcześniej nie miały żadnego projektu) — niezbędne dla dynamicznego przydziału konsultantów (`hours_generator.assign_customers_to_consultants`), zastępującego statyczny `EMPLOYEE_PROJECT_MAP` sprzed tej fazy.
+Business meaning: a container for consultant hours per customer — used exclusively by `hour_entries.project_id`, has no direct relationship to invoicing (`orders`). **Phase 4**: expanded from 8 (only some customers, manually picked) to 50 (all of them, including SMB, which previously had no project at all) — needed for dynamic consultant assignment (`hours_generator.assign_customers_to_consultants`), replacing the static `EMPLOYEE_PROJECT_MAP` from before this phase.
 
 ---
 
-## Faza 7 — warstwa zdarzeń losowych (life events)
+## Phase 7 — the random life-events layer
 
-Deterministycznie losowa warstwa zdarzeń biznesowych, dodana żeby dane przestały wyglądać zbyt gładko/liniowo między punktami kontrolnymi z poprzednich faz. **To nie jest ML** — to przestrzeń zdarzeń z przypisanymi prawdopodobieństwami, losowana przez `random.Random(string)` (nigdy `hash()`), więc deterministyczna: ten sam seed = ten sam wynik przy każdym powtórnym backfillu. Nie dodaje żadnej nowej kolumny/tabeli w Supabase — cała warstwa żyje w warstwie generatorów (Python), wpływa na już istniejące tabele (`orders`, `order_lines`, `supplier_invoices`, `vouchers`, `hour_entries`) dokładnie tak samo jak każdy inny mechanizm generatora.
+A deterministically random layer of business events, added so the data stops looking too smooth/linear between the checkpoints from previous phases. **This is not ML** — it's a probability space with assigned probabilities, rolled via `random.Random(string)` (never `hash()`), so it's deterministic: the same seed = the same result on every repeated backfill. Adds no new column/table in Supabase — the whole layer lives in the generators (Python) layer, affecting already-existing tables (`orders`, `order_lines`, `supplier_invoices`, `vouchers`, `hour_entries`) exactly like any other generator mechanism.
 
-**Architektura — czysta, memoizowana funkcja stanu, nie mutowalny ledger.** Prompt Fazy 7 (Zadanie 2d) zakładał "stan w pamięci, jeden sekwencyjny przebieg backfillu wystarczy". Sprawdzone i **nietrafne** dla tego repo: backfill to w praktyce DWA osobne procesy uruchamiane po sobie (`run_backfill.py --mode monthly`, potem `--mode daily`), a `--mode daily` i żywy cron (`run_daily.py`, `.github/workflows/daily.yml`) dzielą tę samą funkcję wołaną raz per proces/dzień. Żaden mutowalny obiekt stanu przekazywany z zewnątrz nie przetrwałby między nimi. Zamiast tego: `customer_event_state_asof(customer_number, year, month)` / `company_event_state_asof(year, month)` — czyste funkcje, rekurencyjnie dokładające miesiąc po miesiącu od punktu startowego (onboarding klienta / założenie firmy 2019-01), cache'owane przez `functools.lru_cache`. Dają identyczny wynik niezależnie od tego, który proces/wywołanie o nie zapyta — mocniejsza wersja tego samego wymogu determinizmu, nie jego złamanie. Zob. `SESSION_HANDOFF.md` Faza 7 dla pełnego uzasadnienia.
+**Architecture — a pure, memoized state function, not a mutable ledger.** The Phase 7 prompt (Task 2d) assumed "in-memory state, a single sequential backfill run is enough." Checked and found **not accurate** for this repo: the backfill is in practice TWO separate processes run one after the other (`run_backfill.py --mode monthly`, then `--mode daily`), and `--mode daily` and the live cron (`run_daily.py`, `.github/workflows/daily.yml`) share the same function, called once per process/day. No mutable state object passed in from outside would survive between them. Instead: `customer_event_state_asof(customer_number, year, month)` / `company_event_state_asof(year, month)` — pure functions, recursively advancing month by month from the starting point (the customer's onboarding / the company's 2019-01 founding), cached via `functools.lru_cache`. They give an identical result regardless of which process/call asks for them — a stronger version of the same determinism requirement, not a violation of it. See `SESSION_HANDOFF.md` Phase 7 for the full rationale.
 
-### Zdarzenia na poziomie klienta (`src/norfingen/generators/client_events.py`)
+### Client-level events (`src/norfingen/generators/client_events.py`)
 
-Katalog `CLIENT_LIFE_EVENTS` (5 kodów), losowany co miesiąc per aktywny klient subskrypcyjny (wzorce A/B/C — **K06, jedyny klient wzorca D/consulting bez stałego bundla usług, jest świadomie wykluczony**, zob. plik):
+The `CLIENT_LIFE_EVENTS` catalog (5 codes), rolled every month per active subscription customer (patterns A/B/C — **K06, the only pattern-D/consulting customer with no fixed service bundle, is deliberately excluded**, see the file):
 
-| Kod | Segmenty | Prawdopodobieństwo/mies. | Efekt |
+| Code | Segments | Probability/month | Effect |
 |---|---|---|---|
-| `OFFER_EXPANSION` | Mid-market, SMB | 0,4% | Trwałe dodanie usługi S04 (jedyna z `availability=ALL` — S02/S03 mają ograniczenia segmentowe, które łamałyby wycenę, zob. niżej) |
-| `OFFER_REDUCTION` | Enterprise, Mid-market | 0,3% | Trwałe usunięcie jednej usługi (nigdy S01) |
-| `TEMPORARY_HARDSHIP` | wszystkie | 0,4% | 2-4 miesiące: redukcja 40-60% wolumenu ticketów wsparcia TEGO klienta + podwyższony próg bad-debt (×5, 2%→10%) |
-| `BANKRUPTCY` | SMB | 0,08% | Trwały churn od kolejnego miesiąca; ostatnia faktura miesiąca triggera wymuszona na `WRITTEN_OFF` |
-| `ONE_OFF_LARGE_PROJECT` | Enterprise, Mid-market | 0,5% | Dodatkowe zamówienie S04, 80-200h wg stawki godzinowej (vs standardowe 20-50k NOK ryczałtu `should_generate_extra_consulting` z Fazy 2) |
+| `OFFER_EXPANSION` | Mid-market, SMB | 0.4% | Permanently adds service S04 (the only one with `availability=ALL` — S02/S03 have segment restrictions that would break pricing, see below) |
+| `OFFER_REDUCTION` | Enterprise, Mid-market | 0.3% | Permanently removes one service (never S01) |
+| `TEMPORARY_HARDSHIP` | all | 0.4% | 2-4 months: 40-60% reduction of THIS customer's support ticket volume + a raised bad-debt threshold (x5, 2%→10%) |
+| `BANKRUPTCY` | SMB | 0.08% | Permanent churn starting next month; the trigger month's final invoice is forced to `WRITTEN_OFF` |
+| `ONE_OFF_LARGE_PROJECT` | Enterprise, Mid-market | 0.5% | An extra S04 order, 80-200h at the hourly rate (vs. the standard 20-50k NOK flat fee from Phase 2's `should_generate_extra_consulting`) |
 
-Klient ma co najwyżej jedno "duże" zdarzenie na raz — w trakcie aktywnego okna `TEMPORARY_HARDSHIP` nie losuje się nic nowego; `OFFER_EXPANSION`/`OFFER_REDUCTION` są trwałe (raz zastosowane, nie losują się ponownie).
+A customer has at most one "big" event at a time — while a `TEMPORARY_HARDSHIP` window is active, nothing new is rolled; `OFFER_EXPANSION`/`OFFER_REDUCTION` are permanent (applied once, never rolled again).
 
-**Błąd znaleziony i naprawiony podczas implementacji**: pierwotna mapa ekspansji (SMB→S02, Mid-market→S03) łamała już istniejące ograniczenia `Service.availability` (S02=`ENTERPRISE_MID`, S03=`ENTERPRISE_ONLY`) — brak ceny dla SMB/Mid-market powodował `TypeError`. Oba segmenty ekspandują teraz w S04.
+**A bug found and fixed during implementation**: the original expansion map (SMB→S02, Mid-market→S03) violated the already-existing `Service.availability` constraints (S02=`ENTERPRISE_MID`, S03=`ENTERPRISE_ONLY`) — the missing price for SMB/Mid-market caused a `TypeError`. Both segments now expand into S04.
 
-**Zakres celowo ograniczony do backfillu miesięcznego** (jak istniejący precedens `should_generate_extra_consulting`): efekty przychodowe/kosztowe żyją w `generate_monthly_orders`/`generate_monthly_opex`. `generate_daily_orders` (żywy cron) respektuje TYLKO `event_aware_is_customer_active` (BANKRUPTCY) — inaczej cron wystawiałby faktury klientowi, który już zbankrutował w historii backfillu.
+**Scope deliberately limited to the monthly backfill** (like the existing `should_generate_extra_consulting` precedent): revenue/cost effects live in `generate_monthly_orders`/`generate_monthly_opex`. `generate_daily_orders` (the live cron) only respects `event_aware_is_customer_active` (BANKRUPTCY) — otherwise the cron would keep invoicing a customer that already went bankrupt in the backfill history.
 
-### Zdarzenia na poziomie firmy (`src/norfingen/generators/company_events.py`)
+### Company-level events (`src/norfingen/generators/company_events.py`)
 
-Katalog `COMPANY_LIFE_EVENTS` (3 kody), losowany raz na rok (`roll_company_events` — całą firmą, nie per klient):
+The `COMPANY_LIFE_EVENTS` catalog (3 codes), rolled once a year (`roll_company_events` — for the whole company, not per customer):
 
-| Kod | Prawdopodobieństwo/rok | Efekt |
+| Code | Probability/year | Effect |
 |---|---|---|
-| `EQUIPMENT_INVESTMENT` | 35% | Jednorazowa faktura L05 Sandvik, 80-250k NOK (zawsze > progu kapitalizacji 30k → konto 1200), niezależna od zwykłego harmonogramu L05 (3-5x/rok) |
-| `UNPROFITABLE_QUARTER` | 25% | Realne transakcje przez cały kwartał: redukcja 0,85-0,95× wolumenu ticketów (firmowa, mnoży się z fellesferie) + jednorazowy koszt opex (konto 7790 "Annen driftskostnad", nowe, 40-120k NOK — kwota dobrana samodzielnie, zadanie podało `magnitude_range` tylko dla wolumenu) |
-| `SUPPLIER_RENEGOTIATION` | 30% | Trwała zmiana kosztu jednego z L01-L08 (wylosowanego), -15%..+10%, od wylosowanego miesiąca; kolejne renegocjacje tego samego dostawcy się mnożą |
+| `EQUIPMENT_INVESTMENT` | 35% | A one-off L05 Sandvik invoice, 80-250k NOK (always > the 30k capitalization threshold → account 1200), independent of L05's regular schedule (3-5x/year) |
+| `UNPROFITABLE_QUARTER` | 25% | Real transactions across the whole quarter: a 0.85-0.95x reduction in ticket volume (company-wide, multiplies with fellesferie) + a one-off opex cost (account 7790 "Annen driftskostnad", new, 40-120k NOK — an amount chosen independently, the task only gave a `magnitude_range` for the volume) |
+| `SUPPLIER_RENEGOTIATION` | 30% | A permanent cost change for one of L01-L08 (randomly chosen), -15%..+10%, starting the rolled month; successive renegotiations of the same supplier compound |
 
-### Sezonowość norweskiego B2B (`src/norfingen/generators/seasonality.py`)
+### Norwegian B2B seasonality (`src/norfingen/generators/seasonality.py`)
 
-Czyste mnożniki bez losowości: `fellesferie_activity_multiplier` (lipiec ×0,5 wolumenu ticketów), `q4_budget_flush_multiplier` (listopad/grudzień ×1,4 progu extra-consultingu dla Enterprise/Mid-market), `january_new_initiative_boost` — **napisany, ale świadomie niepodłączony** (brak w kodzie dyskretnego mechanizmu "nowy projekt S02" analogicznego do extra-consultingu).
+Pure multipliers with no randomness: `fellesferie_activity_multiplier` (July x0.5 of ticket volume), `q4_budget_flush_multiplier` (November/December x1.4 of the extra-consulting threshold for Enterprise/Mid-market), `january_new_initiative_boost` — **written, but deliberately not wired up** (there's no discrete "new S02 project" mechanism in the code analogous to extra-consulting).
 
-### Log faktycznie wylosowanych zdarzeń
+### Log of actually-rolled events
 
-`scripts/log_life_events.py` — generuje `docs/faza7_life_events_log.csv` (czysto raportowy, nie dotyka bazy) z pełną listą zdarzeń klienckich i firmowych wraz ze szczegółami (kwoty, wylosowana usługa, dostawca). Uruchom ponownie po każdej zmianie kalibracji tej warstwy.
+`scripts/log_life_events.py` — generates `docs/faza7_life_events_log.csv` (purely reporting, doesn't touch the database) with the full list of client- and company-level events along with their details (amounts, the rolled service, the supplier). Re-run it after any change to this layer's calibration.
 
-### Znany błąd znaleziony i naprawiony (Zadanie 4)
+### A known bug found and fixed (Task 4)
 
-`test_fellesferie_reduces_july_ticket_volume` (testy regresyjne Zadania 4, uruchomione na pełnym pipeline `generate_daily_hours`, nie izolowanym wywołaniu z ręcznym wspólnym seedem) wykazał, że lipiec miał WIĘCEJ ticketów niż czerwiec — odwrotnie niż zamierzone. Przyczyna: mnożniki sezonowe skalowały wyłącznie `target_billable`, który w praktyce prawie nigdy nie jest wiążącym ograniczeniem pętli w `generate_daily_support_hours` (realnym sufitem jest `n_clients_today`, max 5 klientów × ~1h ≈ 5h, już poniżej niepomniejszonego celu 5,5-7h). Naprawione: mnożnik skaluje teraz też `n_clients_today`.
+`test_fellesferie_reduces_july_ticket_volume` (Task 4's regression tests, run against the full `generate_daily_hours` pipeline, not an isolated call with a manually shared seed) showed that July had MORE tickets than June — the opposite of intended. Cause: the seasonal multipliers scaled only `target_billable`, which in practice is almost never the binding constraint of the loop in `generate_daily_support_hours` (the actual ceiling is `n_clients_today`, max 5 customers x ~1h ≈ 5h, already below the unreduced 5.5-7h target). Fixed: the multiplier now also scales `n_clients_today`.
 
 ---
 
-## Dostęp read-only (BI / Power BI, Krok 2)
+## Read-only access (BI / Power BI, Step 2)
 
-Dwie role, warstwowo:
+Two roles, layered:
 
-- **`analyst`** (`NOLOGIN`) — czysto techniczna, definiuje docelowy zestaw uprawnień: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**20/20 tabel z aktywną polityką RLS `USING (true)`** — zob. "Audyt bezpieczeństwa" niżej, wcześniej 6 tabel referencyjnych nie miało RLS w ogóle) + `ALTER DEFAULT PRIVILEGES` (przyszłe tabele automatycznie czytelne, bez ręcznego GRANT-a przy każdej migracji).
-- **`powerbi_reader`** (`LOGIN`, `CONNECTION LIMIT 3`) — realna rola do faktycznego logowania z Power BI (lub dowolnego innego narzędzia BI). Dziedziczy komplet uprawnień/polityk `analyst` przez `GRANT analyst TO powerbi_reader` — nic nie jest duplikowane. Utworzona/rotowana przez `scripts/setup_powerbi_reader.py` (hasło generowane losowo za każdym uruchomieniem, wypisywane TYLKO na stdout, nigdy nie trafia do repo/`.env`).
-- **`demo_reader`** (`LOGIN`, `CONNECTION LIMIT 2`, `statement_timeout=10s`) — publicznie udostępniany dostęp testowy (`docs/API_ACCESS.md`). Osobna rola od `powerbi_reader` (niezależna rotacja/odwołanie), ale ten sam mechanizm dziedziczenia `analyst`. **Od 2026-09-04 to również rola, jako którą łączy się usługa REST API (`api/`)** — jedyna rola używana przez `api/db.py` do zapytań danych, nigdy `service_role`/`postgres`.
-- **`api_key_manager`** (`LOGIN`, `CONNECTION LIMIT 5`, `statement_timeout=10s`, 2026-09-04) — NIE dziedziczy `analyst`, nie ma dostępu do żadnej tabeli poza `api_keys`/`export_requests` (`GRANT SELECT, INSERT, UPDATE` na `api_keys`, `GRANT SELECT, INSERT` na `export_requests`). Używana przez `api/auth.py` (walidacja kluczy + rate limiting), `api/routers/keys.py` (samoobsługowe generowanie kluczy — `INSERT` dodany w sesji portalu self-service) i `api/routers/export.py` (licznik `export_requests`). Zob. `scripts/setup_api_backend.py`.
+- **`analyst`** (`NOLOGIN`) — purely technical, defines the target privilege set: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**20/20 tables with an active RLS policy `USING (true)`** — see "Security audit" below, previously 6 reference tables had no RLS at all) + `ALTER DEFAULT PRIVILEGES` (future tables automatically readable, no manual GRANT needed on each migration).
+- **`powerbi_reader`** (`LOGIN`, `CONNECTION LIMIT 3`) — the real role for actually logging in from Power BI (or any other BI tool). Inherits the full set of `analyst`'s privileges/policies via `GRANT analyst TO powerbi_reader` — nothing is duplicated. Created/rotated by `scripts/setup_powerbi_reader.py` (password generated randomly on every run, printed ONLY to stdout, never lands in the repo/`.env`).
+- **`demo_reader`** (`LOGIN`, `CONNECTION LIMIT 2`, `statement_timeout=10s`) — publicly available test access (`docs/API_ACCESS.md`). A separate role from `powerbi_reader` (independent rotation/revocation), but the same `analyst` inheritance mechanism. **Since 2026-09-04 this is also the role the REST API service (`api/`) connects as** — the only role used by `api/db.py` for data queries, never `service_role`/`postgres`.
+- **`api_key_manager`** (`LOGIN`, `CONNECTION LIMIT 5`, `statement_timeout=10s`, 2026-09-04) — does NOT inherit `analyst`, has no access to any table besides `api_keys`/`export_requests` (`GRANT SELECT, INSERT, UPDATE` on `api_keys`, `GRANT SELECT, INSERT` on `export_requests`). Used by `api/auth.py` (key validation + rate limiting), `api/routers/keys.py` (self-service key generation — `INSERT` added in the self-service portal session), and `api/routers/export.py` (the `export_requests` counter). See `scripts/setup_api_backend.py`.
 
-**Connection string dla Power BI Desktop** (Get Data → PostgreSQL database): host/port/dbname z `DATABASE_URL`, ale **username musi być w formacie poolera Supabase** `powerbi_reader.<project_ref>` (nie sam `powerbi_reader`) — `scripts/setup_powerbi_reader.py` wypisuje gotowy, poprawny username. Wymagane `Encrypt connection` (SSL).
+**Connection string for Power BI Desktop** (Get Data → PostgreSQL database): host/port/dbname from `DATABASE_URL`, but **the username must be in the Supabase pooler format** `powerbi_reader.<project_ref>` (not just `powerbi_reader`) — `scripts/setup_powerbi_reader.py` prints the ready, correct username. `Encrypt connection` (SSL) is required.
 
-Zweryfikowane działanie (nie tylko konfiguracja): połączenie jako `powerbi_reader`/`demo_reader` poprawnie **czyta** tabele RLS i referencyjne, i poprawnie **odrzuca** próbę zapisu (`INSERT` → `InsufficientPrivilege: permission denied for table orders`).
+Verified working (not just configured): connecting as `powerbi_reader`/`demo_reader` correctly **reads** RLS and reference tables, and correctly **rejects** a write attempt (`INSERT` → `InsufficientPrivilege: permission denied for table orders`).
 
-### Audyt bezpieczeństwa (2026-09-04) — dwie luki znalezione i naprawione
+### Security audit (2026-09-04) — two gaps found and fixed
 
-Pełny, czysto diagnostyczny audyt ról/RLS/widoków/kluczy API (osobna sesja) wykrył dwie luki, obie naprawione natychmiast w kolejnej sesji:
+A full, purely diagnostic audit of roles/RLS/views/API keys (a separate session) found two gaps, both fixed immediately in the next session:
 
-1. **6 tabel referencyjnych bez RLS** (`accounts`, `departments`, `employments`, `products`, `salary_specifications`, `vat_types`) — to była świadoma decyzja Kroku 2 (dane katalogowe, nie per-wierszowe), ale w połączeniu z lukę #2 poniżej stanowiła realne ryzyko zapisu. **Naprawione**: RLS włączone na wszystkich 6, polityka `analyst_read_only FOR SELECT TO analyst USING (true)` — identyczna jak pozostałych 14. **Teraz 20/20 tabel ma RLS.**
-2. **Domyślne role Supabase `anon`/`authenticated` miały pełne uprawnienia CRUD** (`INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`, nie tylko `SELECT`) na wszystkich tabelach — automatyczny `ALTER DEFAULT PRIVILEGES` nadawany przez Supabase przy tworzeniu projektu, nigdy świadomie nie odwołany. Dla 14 tabel z RLS był to głównie teoretyczny problem (RLS domyślnie odmawia rolom spoza polityki), ale dla 6 tabel bez RLS (przed naprawą #1) był to **realny, otwarty wektor zapisu/kasowania danych** dla każdego posiadacza publicznego klucza `anon` Supabase (PostgREST jest automatycznie wystawiony dla każdego projektu, niezależnie od tego czy kod go używa). **Naprawione**: `REVOKE ALL ON ALL TABLES/SEQUENCES/FUNCTIONS IN SCHEMA public FROM anon, authenticated` + analogiczny `ALTER DEFAULT PRIVILEGES REVOKE`, żeby przyszłe tabele też nie dziedziczyły tego automatycznie. Ten projekt nie używa (i nigdy nie używał) kluczy Supabase API w swoim kodzie (wyłącznie bezpośrednie połączenie Postgres przez `DATABASE_URL`) — `anon`/`authenticated` nie miały żadnego legalnego powodu do jakichkolwiek uprawnień tutaj.
+1. **6 reference tables with no RLS** (`accounts`, `departments`, `employments`, `products`, `salary_specifications`, `vat_types`) — this was a deliberate Step 2 decision (catalog data, not per-row), but combined with gap #2 below it constituted a real write risk. **Fixed**: RLS enabled on all 6, policy `analyst_read_only FOR SELECT TO analyst USING (true)` — identical to the other 14. **Now 20/20 tables have RLS.**
+2. **The default Supabase roles `anon`/`authenticated` had full CRUD privileges** (`INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`, not just `SELECT`) on all tables — an automatic `ALTER DEFAULT PRIVILEGES` granted by Supabase at project creation, never deliberately revoked. For the 14 tables with RLS this was mostly a theoretical problem (RLS denies roles outside a policy by default), but for the 6 tables without RLS (before fix #1) it was a **real, open write/delete vector** for anyone holding a public Supabase `anon` key (PostgREST is automatically exposed on every project, regardless of whether the code uses it). **Fixed**: `REVOKE ALL ON ALL TABLES/SEQUENCES/FUNCTIONS IN SCHEMA public FROM anon, authenticated` + an analogous `ALTER DEFAULT PRIVILEGES REVOKE`, so future tables don't automatically inherit this either. This project doesn't use (and never has used) Supabase API keys in its code (only a direct Postgres connection via `DATABASE_URL`) — `anon`/`authenticated` had no legitimate reason for any privileges here.
 
-Zweryfikowane po naprawie: `run_daily.py` nadal zapisuje poprawnie (rola `postgres` ma `rolbypassrls=true`, jest właścicielem wszystkich tabel — RLS jej nie dotyczy), `demo_reader`/`powerbi_reader` nadal poprawnie czytają (przez `analyst`), `anon`/`authenticated` (przetestowane przez `SET ROLE`, bo obie są `NOLOGIN` — dostępne tylko przez warstwę PostgREST) dostają teraz `permission denied` na każdej próbie `SELECT`/`INSERT`, na dowolnej tabeli. 233/233 testów bez zmian.
+Verified after the fix: `run_daily.py` still saves correctly (the `postgres` role has `rolbypassrls=true`, owns all the tables — RLS doesn't apply to it), `demo_reader`/`powerbi_reader` still read correctly (through `analyst`), `anon`/`authenticated` (tested via `SET ROLE`, since both are `NOLOGIN` — only reachable through the PostgREST layer) now get `permission denied` on every `SELECT`/`INSERT` attempt, on any table. 233/233 tests unchanged.
 
-### Widoki BI (Krok 2, Zadanie 2)
+### BI views (Step 2, Task 2)
 
-Trzy płaskie widoki (`CREATE OR REPLACE VIEW ... WITH (security_invoker = true)`, PG15+/Supabase PG17) — Power BI dostaje gotowe tabele zamiast pisania JOIN-ów przy każdym raporcie:
+Three flat views (`CREATE OR REPLACE VIEW ... WITH (security_invoker = true)`, PG15+/Supabase PG17) — Power BI gets ready-made tables instead of writing JOINs on every report:
 
-| Widok | Źródło | Uwaga |
+| View | Source | Note |
 |---|---|---|
-| `v_sales_flat` | `orders` JOIN `customers` JOIN `order_lines` | `amount_including_vat_currency` to **alias** kolumny `order_lines.amount_currency` (nie rename — zob. niżej) |
-| `v_pl_monthly` | `orders`/`order_lines` (revenue) FULL OUTER JOIN `vouchers`/`postings` (koszty) | Ten sam wzorzec co `export_queries.PL_miesiecznie` |
-| `v_headcount_monthly` | `hour_entries` | Liczy tylko pracowników **billable** (logujących godziny) — niedoszacowuje prawdziwy headcount o role wspierające (Salg/Økonomi) |
+| `v_sales_flat` | `orders` JOIN `customers` JOIN `order_lines` | `amount_including_vat_currency` is an **alias** of the `order_lines.amount_currency` column (not a rename — see below) |
+| `v_pl_monthly` | `orders`/`order_lines` (revenue) FULL OUTER JOIN `vouchers`/`postings` (costs) | The same pattern as `export_queries.PL_miesiecznie` |
+| `v_headcount_monthly` | `hour_entries` | Counts only **billable** employees (those logging hours) — underestimates the true headcount by the support roles (Salg/Økonomi) |
 
-Wszystkie trzy: `GRANT SELECT ... TO analyst` (dziedziczone przez `powerbi_reader`).
+All three: `GRANT SELECT ... TO analyst` (inherited by `powerbi_reader`).
 
-**Dwa świadome odstępstwa od szkicu SQL z promptu** (nie kopiowane bezrefleksyjnie):
-1. `v_pl_monthly` liczy `revenue` z `orders`/`order_lines`, **nie** z `postings` (`account_number BETWEEN 3000 AND 3999`, jak sugerował szkic) — te postingi nigdy nie istnieją w tej bazie (zweryfikowane: 0 wierszy), zob. nagłówek tego dokumentu. Kopiowanie szkicu 1:1 dałoby widok zawsze zwracający `revenue = NULL`.
-2. `v_sales_flat.amount_including_vat_currency` to alias, nie fizyczny rename `order_lines.amount_currency` — "Koszyk 1" (rename kolumny na zgodną z realnym Tripletex API) był tylko **proponowany**, nigdy jawnie zaakceptowany ani wykonany w generatorach/testach. Widok daje poprawną nazwę w BI już teraz bez ryzykownej zmiany fizycznego schematu.
+**Two deliberate deviations from the prompt's SQL sketch** (not copied blindly):
+1. `v_pl_monthly` computes `revenue` from `orders`/`order_lines`, **not** from `postings` (`account_number BETWEEN 3000 AND 3999`, as the sketch suggested) — these postings never exist in this database (verified: 0 rows), see the header of this document. Copying the sketch verbatim would give a view that always returns `revenue = NULL`.
+2. `v_sales_flat.amount_including_vat_currency` is an alias, not a physical rename of `order_lines.amount_currency` — "Basket 1" (renaming the column to match the real Tripletex API) was only **proposed**, never explicitly accepted or carried out in the generators/tests. The view gives the correct name in BI right now without a risky change to the physical schema.
 
-**`security_invoker = true`** na wszystkich trzech — bez tego widok domyślnie czyta tabele źródłowe z uprawnieniami *właściciela widoku* (`postgres`, który omija RLS), nie roli faktycznie odpytującej. Dziś polityki są `USING (true)` więc nie zmienia to widocznych danych, ale zapobiega cichemu ominięciu RLS przez widok, gdyby ktoś kiedyś dodał faktycznie filtrującą politykę.
+**`security_invoker = true`** on all three — without this, a view by default reads its source tables with the privileges of the *view's owner* (`postgres`, which bypasses RLS), not the role actually querying it. Today the policies are `USING (true)` so this doesn't change the visible data, but it prevents a view from silently bypassing RLS if someone ever adds an actually-filtering policy.
 
-### `api_keys` (2026-09-04, infrastruktura usługi REST API)
+### `api_keys` (2026-09-04, REST API service infrastructure)
 
-| Kolumna | Typ | Opis |
+| Column | Type | Description |
 |---|---|---|
 | id | SERIAL (PK) | |
-| key_hash | TEXT (UNIQUE) | `sha256(surowy_klucz)` — surowy klucz nigdy nie trafia do bazy, tylko na stdout raz przy generowaniu (`api/scripts/generate_api_key.py`) |
-| owner_label | TEXT | Opis/właściciel klucza (np. "demo-curl-test") |
-| rate_limit_per_hour | INT | Limit zapytań/godzinę, domyślnie 100, per-klucz konfigurowalny |
-| revoked | BOOLEAN | Odwołanie klucza bez usuwania wiersza (audyt) |
-| request_count_this_window / window_start | INT / TIMESTAMPTZ | Licznik rate-limitu, atomowo aktualizowany w `api/auth.py` (`SELECT ... FOR UPDATE`) — rozszerzenie ponad szkic z promptu (tam było tylko `last_used_at`), żeby limit przetrwał restart usługi bez trzymania stanu w pamięci procesu |
-| last_used_at | TIMESTAMPTZ | Ostatnie użycie klucza |
-| requester_label | TEXT | Portal self-service (Zadanie 1, `api/routers/keys.py`) — dokładnie to, co użytkownik wpisał w formularzu; duplikuje `owner_label` celowo, żeby móc kiedyś odróżnić klucze self-service od ręcznych bez zgadywania po treści |
-| self_service | BOOLEAN | `true` dla kluczy wygenerowanych przez `POST /api/v1/keys/request`, `false`/`NULL` dla kluczy ręcznych (`api/scripts/generate_api_key.py`) |
-| created_from_ip | TEXT | IP żądającego w momencie generowania — jedyne dane identyfikujące zbierane (świadomie **żadnego adresu e-mail**), używane wyłącznie do limitu 3 kluczy/IP/dobę |
+| key_hash | TEXT (UNIQUE) | `sha256(raw_key)` — the raw key never lands in the database, only on stdout once at generation time (`api/scripts/generate_api_key.py`) |
+| owner_label | TEXT | Description/owner of the key (e.g. "demo-curl-test") |
+| rate_limit_per_hour | INT | Requests/hour limit, default 100, configurable per key |
+| revoked | BOOLEAN | Revokes a key without deleting the row (audit trail) |
+| request_count_this_window / window_start | INT / TIMESTAMPTZ | The rate-limit counter, updated atomically in `api/auth.py` (`SELECT ... FOR UPDATE`) — an extension beyond the prompt's sketch (which only had `last_used_at`), so the limit survives a service restart without holding state in process memory |
+| last_used_at | TIMESTAMPTZ | The key's last use |
+| requester_label | TEXT | Self-service portal (Task 1, `api/routers/keys.py`) — exactly what the user typed into the form; deliberately duplicates `owner_label`, so self-service keys could one day be distinguished from manual ones without guessing from the label's content |
+| self_service | BOOLEAN | `true` for keys generated via `POST /api/v1/keys/request`, `false`/`NULL` for manually issued keys (`api/scripts/generate_api_key.py`) |
+| created_from_ip | TEXT | The requester's IP at generation time — the only identifying data collected (deliberately **no email address**), used solely for the 3 keys/IP/day limit |
 
-RLS włączone, **bez polityki dla `analyst`/`demo_reader`/`powerbi_reader`** — świadomie niewidoczna dla konsumentów danych read-only, tylko `api_key_manager` (polityka `api_key_manager_access FOR ALL USING (true)`) i `postgres` (bypass RLS). Od portalu self-service `api_key_manager` też może `INSERT`-ować nowe klucze (`POST /api/v1/keys/request`) — `api/scripts/generate_api_key.py` (ręczne wydawanie) nadal łączy się jako właściciel, niezależnie. Nie jest częścią żadnej z 20 tabel domenowych liczonych gdzie indziej w tym dokumencie.
+RLS enabled, **with no policy for `analyst`/`demo_reader`/`powerbi_reader`** — deliberately invisible to read-only data consumers, only `api_key_manager` (policy `api_key_manager_access FOR ALL USING (true)`) and `postgres` (RLS bypass). Since the self-service portal, `api_key_manager` can also `INSERT` new keys (`POST /api/v1/keys/request`) — `api/scripts/generate_api_key.py` (manual issuance) still connects as the owner, independently. Not counted among the 20 domain tables tallied elsewhere in this document.
 
-### `export_requests` (portal self-service, eksport na żądanie)
+### `export_requests` (self-service portal, export on demand)
 
-Licznik rate-limitu dla `GET /api/v1/export/{format}` (1 eksport/5 min/IP) — celowo osobna, minimalna tabela (`id`, `ip`, `created_at`) zamiast rozszerzania semantyki `api_keys`, bo eksport nie wymaga klucza API wcale. Ta sama rola `api_key_manager` ją obsługuje (`GRANT SELECT, INSERT`), RLS włączone, polityka analogiczna do `api_keys` (tylko `api_key_manager`/`postgres`).
+The rate-limit counter for `GET /api/v1/export/{format}` (1 export/5 min/IP) — a deliberately separate, minimal table (`id`, `ip`, `created_at`) rather than extending `api_keys`'s semantics, since export doesn't require an API key at all. Handled by the same `api_key_manager` role (`GRANT SELECT, INSERT`), RLS enabled, a policy analogous to `api_keys` (only `api_key_manager`/`postgres`).
 
-## Znane ograniczenia całościowe
+## Known overall limitations
 
-1. **Brak postingów przychodowych** (konta 3000/3100) — zob. nagłówek dokumentu. Przychód wyłącznie w `orders`/`order_lines`.
-2. **`bank_transactions` wymaga ręcznego doreperowania po każdym `TRUNCATE`** — `scripts/fix_outgoing_transactions.py` uzupełnia historyczne OUTGOING, ale trzeba go uruchomić po każdym pełnym resecie danych.
-3. **Metadane Fazy 1** (`customers.segment/onboarding_date/churn_date/price_multiplier`, `services`, `products.service_code`) istniały wcześniej **tylko w Pythonie** (`roster.py`) — teraz są też w Supabase, ale historyczne zapytania/dashboardy pisane przed Fazą 1 mogły je pomijać.
-4. **`projects.start_date` = `customers.onboarding_date` od Fazy 4** (przed Fazą 4 było niezależne, statyczne 2026-01-01/03-01 — ograniczenie NAPRAWIONE, zostawione w historii jako przykład wcześniejszej pomyłki projektowej).
-5. **RLS włączone bez własnych polityk zapisu** — tylko `postgres` (bypass RLS) może pisać; rola `analyst` ma czysty odczyt (SELECT) na **20/20 tabel z aktywnym RLS** (zob. "Dostęp read-only" niżej — do 2026-09-04 6 tabel referencyjnych nie miało RLS w ogóle, naprawione w audycie bezpieczeństwa tamtego dnia). **Krok 2 (2026-07) naprawił lukę z Fazy 1**: same polityki RLS nie wystarczały do odczytu — brakowało bazowego `GRANT SELECT`, więc `analyst` (i dziedzicząca po niej `powerbi_reader`) dostawałaby "permission denied" na każdym zapytaniu mimo poprawnych polityk.
-6. **Brak rotacji kadry** (`employments.end_date` zawsze NULL) i **niski churn klientów** (K09, K15 — oba SMB) — model celowo prosty, nie pełna symulacja dynamiki portfela.
-7. **`services` tabela pokazuje tylko `LEGACY_SERVICES`** (Faza 4) — `SCALE_SERVICES` (ceny dla klientów onboardowanych od 2023-01-01) istnieje tylko w kodzie Python, nie w Supabase. Zob. sekcja `services` i `customers` wyżej.
-8. **Extra-consulting (S04 poza K06) nie działa w trybie dziennym `run_daily.py`** — `should_generate_extra_consulting`/K06-style consulting działają tylko w `generate_monthly_orders` (backfill historyczny), nie w rytmie dziennym produkcyjnym. Zob. `SESSION_HANDOFF.md` (Faza 2).
-9. **Pensja E17 (950 000 NOK/rok)** ustalona pod presją kalibracji budżetu płacowego Fazy 4 (top-down z celu marży) — **nie z analizy rynkowej płac w Norwegii**, zostawiona bez zmian w Fazie 6 (headcount, nie stawka, był dźwignią tamtej korekty). Do ewentualnej rewizji, jeśli ktoś dalej kalibruje model względem realnych stawek.
-10. **Retry/reconnect istnieje dla backfillu** (`run_backfill_daily()`, `terminate_stale_sessions()`) **ale sam proces nie przetrwa faktycznego wyłączenia/uśpienia komputera ani zawieszonego (nie failed-fast) połączenia sieciowego** — w takim wypadku proces wisi bez logowania błędu (obserwowane w Fazie 6: `ps` pokazywał proces żywy, ale bez przyrostu czasu CPU i bez nowych wierszy w bazie przez >30 min) i trzeba go zabić ręcznie oraz wznowić backfill od ostatniego przetworzonego dnia (`SELECT MAX(date) FROM hour_entries`) — sprawdzać żywotność procesu po **realnym postępie w bazie**, nie tylko po tym czy proces nadal istnieje.
-11. **Faza 6 — GitHub Actions `daily.yml` (cron 3x/dzień na `main`) zapisuje do TEJ SAMEJ produkcyjnej bazy Supabase** — podczas backfillu tej fazy cron odpalił się starym (przed-Fazą-6, 38-osobowym) kodem i wstawił skażone `hour_entries`/`bank_transactions` dla bieżącego dnia PO `TRUNCATE`, zanim zauważono problem. Workflow został ręcznie wyłączony w GitHub UI na czas backfillu — **wymaga ponownego włączenia dopiero PO wypchnięciu commitu Fazy 6 na `main`**, inaczej znów odpali się starym kodem. Każdy przyszły reset danych musi najpierw wstrzymać ten workflow.
-12. **`TRUNCATE` celowo pomija tabele referencyjne** (`employees`/`employments`, `customers`, `suppliers` — ten sam wzorzec co Faza 6) **— NAPRAWIONE odkrycie**: `seed_reference_data()` z `ON CONFLICT DO NOTHING` dodaje nowych pracowników, gdy `roster.EMPLOYEES` rośnie, ale nigdy nie usuwał starych, gdy się kurczy. Skutek: 21 osieroconych rekordów (E18-E38) przetrwało w `employees`/`employments` od Fazy 4, mimo że Faza 6 poprawnie zredukowała headcount do 17 we WSZYSTKICH tabelach transakcyjnych (`hour_entries`/`payslips` — zweryfikowane, zawsze były czyste). Wykryte dopiero przez rozjazd z opublikowanym raportem BI (headcount 38 zamiast 17). Naprawione ukierunkowanym `DELETE` + `_prune_orphaned_employees()` w `repository.py` (wywoływane na starcie każdego `seed_reference_data()` — usuwa osierocone rekordy automatycznie, bezpieczne z konstrukcji dzięki brakowi `ON DELETE CASCADE` na FK `employee_id`, więc prawdziwe dane transakcyjne nigdy nie zostaną po cichu skasowane). **Wniosek ogólny**: każda przyszła zmiana rozmiaru `roster.EMPLOYEES`/`CUSTOMERS`/`SUPPLIERS` musi liczyć się z tym samym ryzykiem, jeśli analogiczna funkcja pruningu nie istnieje też dla tamtych tabel (dziś istnieje tylko dla `employees`).
+1. **No revenue postings** (accounts 3000/3100) — see the header of this document. Revenue lives exclusively in `orders`/`order_lines`.
+2. **`bank_transactions` requires manual re-repair after every `TRUNCATE`** — `scripts/fix_outgoing_transactions.py` backfills historical OUTGOING rows, but must be re-run after every full data reset.
+3. **Phase 1 metadata** (`customers.segment/onboarding_date/churn_date/price_multiplier`, `services`, `products.service_code`) previously existed **only in Python** (`roster.py`) — it's now also in Supabase, but historical queries/dashboards written before Phase 1 may have omitted it.
+4. **`projects.start_date` = `customers.onboarding_date` since Phase 4** (before Phase 4 it was independent, a static 2026-01-01/03-01 — a limitation that has been FIXED, kept in the history as an example of an earlier design mistake).
+5. **RLS enabled with no write policies of its own** — only `postgres` (RLS bypass) can write; the `analyst` role has pure read (SELECT) on **20/20 tables with active RLS** (see "Read-only access" below — until 2026-09-04, 6 reference tables had no RLS at all, fixed in that day's security audit). **Step 2 (2026-07) fixed a Phase 1 gap**: RLS policies alone weren't enough for reading — the base `GRANT SELECT` was missing, so `analyst` (and `powerbi_reader`, which inherits from it) would get "permission denied" on every query despite having correct policies.
+6. **No staff turnover** (`employments.end_date` always NULL) and **low customer churn** (K09, K15 — both SMB) — the model is deliberately simple, not a full portfolio-dynamics simulation.
+7. **The `services` table shows only `LEGACY_SERVICES`** (Phase 4) — `SCALE_SERVICES` (prices for customers onboarded from 2023-01-01) exists only in Python code, not in Supabase. See the `services` and `customers` sections above.
+8. **Extra-consulting (S04 beyond K06) doesn't run in `run_daily.py`'s daily mode** — `should_generate_extra_consulting`/K06-style consulting only run in `generate_monthly_orders` (historical backfill), not in the daily production rhythm. See `SESSION_HANDOFF.md` (Phase 2).
+9. **E17's salary (950,000 NOK/year)** was set under the pressure of Phase 4's payroll-budget calibration (top-down from the margin target) — **not from an analysis of real Norwegian salary levels**, left unchanged in Phase 6 (headcount, not the rate, was that correction's lever). A candidate for revision if someone further calibrates the model against real-world pay rates.
+10. **Retry/reconnect exists for the backfill** (`run_backfill_daily()`, `terminate_stale_sessions()`) **but the process itself does not survive an actual computer shutdown/sleep, nor a hung (not fail-fast) network connection** — in that case the process hangs with no error logged (observed in Phase 6: `ps` showed the process alive, but with no CPU-time growth and no new database rows for >30 min) and has to be killed manually, then the backfill resumed from the last processed day (`SELECT MAX(date) FROM hour_entries`) — check whether a process is alive by **actual progress in the database**, not just whether the process still exists.
+11. **Phase 6 — the GitHub Actions `daily.yml` (cron 3x/day on `main`) writes to the SAME production Supabase database** — during this phase's backfill, the cron fired using old (pre-Phase-6, 38-person) code and inserted tainted `hour_entries`/`bank_transactions` for the current day AFTER `TRUNCATE`, before the problem was noticed. The workflow was manually disabled in the GitHub UI for the duration of the backfill — **it must not be re-enabled until AFTER the Phase 6 commit is pushed to `main`**, otherwise it will fire with the old code again. Every future data reset must first pause this workflow.
+12. **`TRUNCATE` deliberately skips reference tables** (`employees`/`employments`, `customers`, `suppliers` — the same pattern as Phase 6) **— a FIXED discovery**: `seed_reference_data()` with `ON CONFLICT DO NOTHING` adds new employees as `roster.EMPLOYEES` grows, but never removed old ones as it shrinks. Result: 21 orphaned records (E18-E38) survived in `employees`/`employments` from Phase 4, even though Phase 6 correctly reduced headcount to 17 in ALL transactional tables (`hour_entries`/`payslips` — verified, always clean). Only detected via a mismatch with the published BI report (headcount 38 instead of 17). Fixed with a targeted `DELETE` + `_prune_orphaned_employees()` in `repository.py` (called at the start of every `seed_reference_data()` — automatically removes orphaned records, safe by construction thanks to the lack of `ON DELETE CASCADE` on the `employee_id` FK, so real transactional data can never be silently deleted). **General takeaway**: any future change to the size of `roster.EMPLOYEES`/`CUSTOMERS`/`SUPPLIERS` carries the same risk unless an analogous pruning function also exists for those tables (today it only exists for `employees`).

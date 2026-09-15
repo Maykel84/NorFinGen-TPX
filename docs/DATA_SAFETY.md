@@ -1,6 +1,6 @@
 # NorFinGen — Data Safety
 
-Ten dokument opisuje decyzje dotyczące realizmu vs bezpieczeństwa nazw firm użytych w generatorze — dwie różne, celowo ODWROTNE logiki dla klientów i dostawców, wynikające z jednej, nadrzędnej zasady poniżej.
+This document describes the decisions around realism vs. safety for company names used in the generator — two different, deliberately OPPOSITE rules for customers and suppliers, stemming from the single overarching principle below.
 
 ## Core rule: direction of the simulated relationship determines what can be real
 
@@ -13,7 +13,7 @@ This rule applies to every future extension of the project (new industries, new 
 
 ## Customer authenticity
 
-Klienci (`roster.CUSTOMERS`, K01-K52) to w pełni fikcyjne firmy — kolizja z nazwą realnej norweskiej firmy byłaby niepożądana (fikcyjny klient nie powinien przypadkowo "być" realną firmą). Zob. też: nazwa własnej symulowanej firmy NorFinGen sama w sobie **nie ma nadanej nazwy** nigdzie w projekcie (ani `roster.py`, ani `docs/DATA_DICTIONARY.md`, ani `raport-site`) — więc nie ma tu żadnej kolizji do sprawdzenia, świadomie i celowo (2026-09, przy okazji audytu dostawców poniżej).
+Customers (`roster.CUSTOMERS`, K01-K52) are entirely fictional companies — a collision with a real Norwegian company's name would be undesirable (a fictional customer shouldn't accidentally "be" a real company). See also: the simulated company's own name, NorFinGen, itself is **never given a formal legal name** anywhere in the project (not in `roster.py`, not in `docs/DATA_DICTIONARY.md`, not in `raport-site`) — so there's no collision to check here at all, deliberately and by design (2026-09, noted in passing during the supplier audit below).
 
 ## Supplier authenticity
 
@@ -34,8 +34,8 @@ Suppliers in this simulation are checked against the public Brønnøysundregistr
 | L07 | Avis Norge AS | Inconclusive — Brreg's `navn` search matches thousands of entities containing the common Norwegian word "avis" (newspaper), making exact confirmation unreliable via this method | Kept as-is (user decision) — Avis is a recognizable global brand regardless of exact local legal-entity confirmation |
 | L08 | ~~Nordic Insurance Partners AS~~ → **Gjensidige Forsikring ASA** | Fully fictional, no match found | **Replaced** with a real, recognizable Norwegian insurer, org.nr 995568217 (user decision) |
 
-Confirmed real-entity org numbers are stored informationally in `roster.SupplierSeed.real_org_number` (Python) and `suppliers.organization_number` (Supabase, existing Tripletex-schema column — no new column needed). **Purely informational — does not affect any pricing, COGS, or financial logic** (Zadanie 1c requirement, verified: no changes to `amount_min`/`amount_max`/`gl_account`/`capitalization_*` for any supplier).
+Confirmed real-entity org numbers are stored informationally in `roster.SupplierSeed.real_org_number` (Python) and `suppliers.organization_number` (Supabase, existing Tripletex-schema column — no new column needed). **Purely informational — does not affect any pricing, COGS, or financial logic** (Task 1c requirement, verified: no changes to `amount_min`/`amount_max`/`gl_account`/`capitalization_*` for any supplier).
 
 ### Known limitation
 
-`scripts/audit_name_collisions.py` (klienci) referenced in the originating prompt as "from a previous session" does not exist in this repository — no trace in git history or `SESSION_HANDOFF.md`. Not created here (out of scope for this session — this session covers suppliers only, per the prompt's own Zadanie 1/2 split). If a client-side collision audit is wanted, it would need its own session/prompt.
+`scripts/audit_name_collisions.py` (customers) referenced in the originating prompt as "from a previous session" does not exist in this repository — no trace in git history or `SESSION_HANDOFF.md`. Not created here (out of scope for this session — this session covers suppliers only, per the prompt's own Task 1/2 split). If a client-side collision audit is wanted, it would need its own session/prompt.

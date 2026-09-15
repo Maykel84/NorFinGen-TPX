@@ -60,7 +60,7 @@ def test_connection_test_script_never_takes_password_as_cli_arg():
 
 def test_powerbi_connection_doc_has_no_hardcoded_password():
     doc = (Path(__file__).resolve().parents[1] / "docs" / "POWERBI_CONNECTION.md").read_text()
-    assert "przekazane bezpiecznie, nie w tym dokumencie" in doc
+    assert "shared securely, not in this document" in doc
     # heurystyka: hasła generowane przez setup_powerbi_reader.py mają charakterystyczne
     # znaki specjalne obok siebie w krótkim tokenie — dokument nie powinien takiego zawierać
     assert not re.search(r"Password.*:\s*\S{20,}", doc)
