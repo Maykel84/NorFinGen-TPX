@@ -25,6 +25,7 @@ class FakeAuthPool:
     def __init__(self):
         self.api_keys: list[dict] = []
         self.export_requests: list[dict] = []
+        self.db_access_requests: list[dict] = []
 
     async def fetchval(self, query, *args):
         if "FROM api_keys" in query:
@@ -36,6 +37,13 @@ class FakeAuthPool:
             ip, window_start = args
             return sum(
                 1 for r in self.export_requests if r["ip"] == ip and r["created_at"] > window_start
+            )
+        if "FROM db_access_requests" in query:
+            ip, window_start = args
+            return sum(
+                1
+                for r in self.db_access_requests
+                if r["requested_from_ip"] == ip and r["requested_at"] > window_start
             )
         raise AssertionError(f"Nieoczekiwane zapytanie w atrapie: {query}")
 
@@ -56,6 +64,15 @@ class FakeAuthPool:
         elif "INSERT INTO export_requests" in query:
             (ip,) = args
             self.export_requests.append({"ip": ip, "created_at": datetime.now(UTC)})
+        elif "INSERT INTO db_access_requests" in query:
+            requester_label, requested_from_ip = args
+            self.db_access_requests.append(
+                {
+                    "requester_label": requester_label,
+                    "requested_from_ip": requested_from_ip,
+                    "requested_at": datetime.now(UTC),
+                }
+            )
         else:
             raise AssertionError(f"Nieoczekiwane zapytanie w atrapie: {query}")
 
@@ -297,3 +314,57 @@ def test_excel_export_produces_valid_workbook_with_expected_sheets():
         "cogs",
         "operating_result",
     ]
+
+
+# --- Portal, ścieżka 3 — żywy dostęp do bazy na żądanie ----------------
+#
+# `test_portal_reader_cannot_write` i `test_portal_reader_statement_timeout_enforced`
+# (nazwy z promptu) wymagają z definicji prawdziwego połączenia do bazy jako
+# `portal_reader` - nie dają się sensownie zamockować bez sprawdzania czegoś
+# innego niż to, co mają sprawdzić (uprawnienia GRANT/RLS i realny
+# `statement_timeout` egzekwowane przez Postgres, nie przez appkę). Zgodnie z
+# konwencją reszty pakietu (offline, zob. nagłówek tego pliku) - te dwa testy
+# żyją jako osobny, ręcznie uruchamiany skrypt (`scripts/verify_portal_reader_readonly.py`),
+# NIE w pytest. Wynik uruchomienia (dokładne komunikaty błędów) jest
+# udokumentowany w docs/SESSION_HANDOFF.md, zgodnie z wymogiem promptu
+# "RĘCZNIE zweryfikowany test... nie tylko test jednostkowy".
+
+
+@pytest.fixture
+def portal_env(monkeypatch):
+    monkeypatch.setenv("PORTAL_DB_HOST", "db.example.supabase.co")
+    monkeypatch.setenv("PORTAL_READER_USERNAME", "portal_reader.testref")
+    monkeypatch.setenv("PORTAL_READER_PASSWORD", "test-password-123")
+
+
+def test_db_access_request_returns_credentials(client, fake_auth_pool, portal_env):
+    """POST /db-access/request zwraca kompletne dane połączenia."""
+    resp = client.post("/api/v1/db-access/request", json={"label": "power-bi-test"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["host"] == "db.example.supabase.co"
+    assert body["port"] == 5432
+    assert body["database"] == "postgres"
+    assert body["username"] == "portal_reader.testref"
+    assert body["password"] == "test-password-123"
+    assert "read-only" in body["message"].lower()
+    assert fake_auth_pool.db_access_requests[0]["requester_label"] == "power-bi-test"
+
+
+def test_db_access_missing_env_returns_503(client, fake_auth_pool, monkeypatch):
+    """Brak skonfigurowanych sekretów -> 503 czytelny, nie 500/KeyError."""
+    monkeypatch.delenv("PORTAL_DB_HOST", raising=False)
+    monkeypatch.delenv("PORTAL_READER_USERNAME", raising=False)
+    monkeypatch.delenv("PORTAL_READER_PASSWORD", raising=False)
+    resp = client.post("/api/v1/db-access/request", json={"label": "no-env-test"})
+    assert resp.status_code == 503
+
+
+def test_db_access_ip_limit_enforced(client, fake_auth_pool, portal_env):
+    """4. żądanie z tego samego IP w ciągu doby zwraca 429."""
+    for i in range(3):
+        resp = client.post("/api/v1/db-access/request", json={"label": f"bi-user-{i}"})
+        assert resp.status_code == 200, resp.text
+
+    resp = client.post("/api/v1/db-access/request", json={"label": "bi-user-4"})
+    assert resp.status_code == 429

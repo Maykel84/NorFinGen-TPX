@@ -149,7 +149,8 @@
     opacity: 0.85;
   }
   section:nth-of-type(2)::before { background: var(--accent); }
-  section:nth-of-type(3)::before { background: var(--blob-3); }
+  section:nth-of-type(3)::before { background: var(--blob-4); }
+  section:nth-of-type(4)::before { background: var(--blob-3); }
   h2 {
     font-family: "Quicksand", "Nunito", sans-serif;
     font-weight: 600;
@@ -218,6 +219,35 @@
     font-size: 0.9rem;
   }
   .key-box code { display: block; margin: 10px 0; padding: 10px 12px; border-radius: 12px; }
+  .db-creds { margin: 10px 0; }
+  .db-creds div { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; font-size: 0.88rem; }
+  .db-creds span.field-label { min-width: 76px; color: var(--muted); flex-shrink: 0; }
+  .db-creds code { flex: 1; }
+  .tabs { margin-top: 18px; }
+  .tab-buttons { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tab-btn {
+    margin: 0;
+    padding: 7px 16px;
+    font-size: 0.85rem;
+    background: var(--card-tint);
+    color: var(--muted);
+    box-shadow: none;
+    border: 1px solid var(--border);
+  }
+  .tab-btn:hover:not(:disabled) { transform: none; background: var(--code-bg); }
+  .tab-btn.active { background: var(--accent2); color: var(--accent-fg); border-color: var(--accent2); }
+  .tab-panel {
+    background: var(--code-bg);
+    border-radius: 16px;
+    padding: 14px 16px;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .tab-panel[hidden] { display: none; }
   .status { font-size: 0.9rem; color: var(--muted); margin-top: 12px; }
   .status.error { color: var(--error); }
   ul.links { list-style: none; padding-left: 0; margin: 0; }
@@ -374,7 +404,39 @@
   </section>
 
   <section>
-    <h2 data-i18n="s3Heading">3. More</h2>
+    <h2 data-i18n="s3Heading">3. Connect for live reports</h2>
+    <p class="subtitle" style="margin-top:0; margin-bottom:16px;" data-i18n="dbAccessIntro">Power BI, any SQL client, or Python — a live, read-only connection that refreshes with every query. No API key needed.</p>
+    <label for="db-label-input" data-i18n="labelText">Your name or course identifier</label>
+    <input type="text" id="db-label-input" data-i18n-placeholder="labelPlaceholder" placeholder="e.g. jane-doe or DATA301-fall26" maxlength="100">
+    <button id="request-db-access-btn" type="button" data-i18n="requestDbAccessBtn">Request connection details</button>
+    <div id="db-access-status" class="status" hidden></div>
+    <div id="db-access-box" class="key-box" hidden>
+      <strong data-i18n="dbAccessBoxStrong">Shared read-only credential — writes are rejected by the database, not just discouraged.</strong>
+      <div class="db-creds">
+        <div><span class="field-label" data-i18n="dbHostLabel">Host</span><code id="db-host"></code></div>
+        <div><span class="field-label" data-i18n="dbPortLabel">Port</span><code id="db-port"></code></div>
+        <div><span class="field-label" data-i18n="dbNameLabel">Database</span><code id="db-name"></code></div>
+        <div><span class="field-label" data-i18n="dbUserLabel">Username</span><code id="db-user"></code></div>
+        <div><span class="field-label" data-i18n="dbPassLabel">Password</span><code id="db-pass"></code></div>
+      </div>
+      <button type="button" id="copy-db-creds-btn" class="secondary" data-i18n="copyBtn">Copy</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab-buttons">
+        <button type="button" class="tab-btn active" id="tab-btn-powerbi" data-tab="powerbi">Power BI</button>
+        <button type="button" class="tab-btn" id="tab-btn-sql" data-tab="sql">SQL</button>
+        <button type="button" class="tab-btn" id="tab-btn-python" data-tab="python">Python</button>
+      </div>
+      <pre class="tab-panel" id="tab-panel-powerbi"><code id="code-powerbi"></code></pre>
+      <pre class="tab-panel" id="tab-panel-sql" hidden><code id="code-sql"></code></pre>
+      <pre class="tab-panel" id="tab-panel-python" hidden><code id="code-python"></code></pre>
+    </div>
+    <p class="status" style="margin-top:14px;"><a href="https://github.com/Maykel84" target="_blank" rel="noopener" data-i18n="linkLiveConnection">Full guide: docs/LIVE_CONNECTION.md</a></p>
+  </section>
+
+  <section>
+    <h2 data-i18n="s4Heading">4. More</h2>
     <ul class="links">
       <li><a href="/docs" data-i18n="linkDocs">Interactive API docs (Swagger)</a></li>
       <li><a href="https://maykel84.github.io/raport" target="_blank" rel="noopener" data-i18n="linkReport">Live analytics report</a></li>
@@ -406,7 +468,19 @@
       toLabel: "To (month)",
       csvBtn: "Download CSV",
       excelBtn: "Download Excel",
-      s3Heading: "3. More",
+      s3Heading: "3. Connect for live reports",
+      dbAccessIntro: "Power BI, any SQL client, or Python — a live, read-only connection that refreshes with every query. No API key needed.",
+      requestDbAccessBtn: "Request connection details",
+      dbAccessBoxStrong: "Shared read-only credential — writes are rejected by the database, not just discouraged.",
+      dbHostLabel: "Host",
+      dbPortLabel: "Port",
+      dbNameLabel: "Database",
+      dbUserLabel: "Username",
+      dbPassLabel: "Password",
+      copyBtn: "Copy",
+      copiedBtn: "Copied!",
+      linkLiveConnection: "Full guide: docs/LIVE_CONNECTION.md",
+      s4Heading: "4. More",
       linkDocs: "Interactive API docs (Swagger)",
       linkReport: "Live analytics report",
       linkEduSuffix: "(using your key from the command line)",
@@ -416,6 +490,8 @@
       generatingExport: "Generating... this can take a few seconds for the full history.",
       exportFailed: function (status) { return "Export failed (" + status + ")"; },
       doneExport: function (filename) { return "Done — " + filename; },
+      generatingDbAccess: "Requesting...",
+      dbAccessFailed: function (status) { return "Request failed (" + status + ")"; },
     },
     pl: {
       pageTitle: "NorFinGen — portal samoobsługowy",
@@ -435,7 +511,19 @@
       toLabel: "Do (miesiąc)",
       csvBtn: "Pobierz CSV",
       excelBtn: "Pobierz Excel",
-      s3Heading: "3. Więcej",
+      s3Heading: "3. Połącz się z żywymi danymi",
+      dbAccessIntro: "Power BI, dowolny klient SQL albo Python - żywe, read-only połączenie, które odświeża się przy każdym zapytaniu. Klucz API niepotrzebny.",
+      requestDbAccessBtn: "Poproś o dane połączenia",
+      dbAccessBoxStrong: "Wspólne hasło read-only - próby zapisu są odrzucane przez bazę, nie tylko odradzane.",
+      dbHostLabel: "Host",
+      dbPortLabel: "Port",
+      dbNameLabel: "Baza",
+      dbUserLabel: "Login",
+      dbPassLabel: "Hasło",
+      copyBtn: "Kopiuj",
+      copiedBtn: "Skopiowano!",
+      linkLiveConnection: "Pełny przewodnik: docs/LIVE_CONNECTION.md",
+      s4Heading: "4. Więcej",
       linkDocs: "Interaktywna dokumentacja API (Swagger)",
       linkReport: "Raport analityczny na żywo",
       linkEduSuffix: "(użycie klucza z linii poleceń)",
@@ -445,6 +533,8 @@
       generatingExport: "Generowanie... może potrwać kilka sekund dla pełnej historii.",
       exportFailed: function (status) { return "Eksport nie powiódł się (" + status + ")"; },
       doneExport: function (filename) { return "Gotowe — " + filename; },
+      generatingDbAccess: "Wysyłanie żądania...",
+      dbAccessFailed: function (status) { return "Żądanie nie powiodło się (" + status + ")"; },
     },
   };
 
@@ -604,6 +694,125 @@
 
   csvBtn.addEventListener("click", function () { downloadExport("csv", csvBtn); });
   excelBtn.addEventListener("click", function () { downloadExport("excel", excelBtn); });
+
+  const tabButtons = document.querySelectorAll(".tab-btn");
+  const tabPanels = {
+    powerbi: document.getElementById("tab-panel-powerbi"),
+    sql: document.getElementById("tab-panel-sql"),
+    python: document.getElementById("tab-panel-python"),
+  };
+  const codeEls = {
+    powerbi: document.getElementById("code-powerbi"),
+    sql: document.getElementById("code-sql"),
+    python: document.getElementById("code-python"),
+  };
+
+  function switchTab(name) {
+    tabButtons.forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-tab") === name);
+    });
+    Object.keys(tabPanels).forEach(function (key) {
+      tabPanels[key].hidden = key !== name;
+    });
+  }
+  tabButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () { switchTab(btn.getAttribute("data-tab")); });
+  });
+
+  function renderDbAccessSnippets(creds) {
+    const host = creds ? creds.host : "<host from response>";
+    const port = creds ? creds.port : 5432;
+    const database = creds ? creds.database : "postgres";
+    const user = creds ? creds.username : "portal_reader.<project_ref>";
+    const password = creds ? creds.password : "<password from response>";
+
+    codeEls.powerbi.textContent =
+      "1. Get Data -> More -> Database -> PostgreSQL database\n" +
+      "2. Server: " + host + ":" + port + "\n" +
+      "   Database: " + database + "\n" +
+      "3. Data Connectivity mode: Import (recommended) or DirectQuery\n" +
+      "4. Username: " + user + "\n" +
+      "   Password: " + password + "\n" +
+      "5. Start with v_pl_monthly, v_sales_flat, v_headcount_monthly";
+
+    codeEls.sql.textContent =
+      "psql \"postgresql://" + user + ":" + password + "@" + host + ":" + port + "/" + database + "\"";
+
+    codeEls.python.textContent =
+      "import psycopg2\n\n" +
+      "conn = psycopg2.connect(\n" +
+      "    host=\"" + host + "\",\n" +
+      "    port=" + port + ", dbname=\"" + database + "\",\n" +
+      "    user=\"" + user + "\",\n" +
+      "    password=\"" + password + "\",\n" +
+      ")";
+  }
+  renderDbAccessSnippets(null);
+
+  const dbLabelInput = document.getElementById("db-label-input");
+  const requestDbAccessBtn = document.getElementById("request-db-access-btn");
+  const dbAccessStatus = document.getElementById("db-access-status");
+  const dbAccessBox = document.getElementById("db-access-box");
+  const dbHostEl = document.getElementById("db-host");
+  const dbPortEl = document.getElementById("db-port");
+  const dbNameEl = document.getElementById("db-name");
+  const dbUserEl = document.getElementById("db-user");
+  const dbPassEl = document.getElementById("db-pass");
+  const copyDbCredsBtn = document.getElementById("copy-db-creds-btn");
+  let lastDbCreds = null;
+
+  requestDbAccessBtn.addEventListener("click", async function () {
+    const label = dbLabelInput.value.trim();
+    if (label.length < 2) {
+      setStatus(dbAccessStatus, T.enterTwoChars, true);
+      return;
+    }
+    requestDbAccessBtn.disabled = true;
+    dbAccessBox.hidden = true;
+    setStatus(dbAccessStatus, T.generatingDbAccess, false);
+    try {
+      const resp = await fetch(API_BASE + "/db-access/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: label }),
+      });
+      const data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) {
+        throw new Error(data.detail || T.dbAccessFailed(resp.status));
+      }
+      lastDbCreds = data;
+      dbHostEl.textContent = data.host;
+      dbPortEl.textContent = data.port;
+      dbNameEl.textContent = data.database;
+      dbUserEl.textContent = data.username;
+      dbPassEl.textContent = data.password;
+      dbAccessBox.hidden = false;
+      renderDbAccessSnippets(data);
+      setStatus(dbAccessStatus, "", false);
+    } catch (err) {
+      setStatus(dbAccessStatus, err.message, true);
+    } finally {
+      requestDbAccessBtn.disabled = false;
+    }
+  });
+
+  copyDbCredsBtn.addEventListener("click", async function () {
+    if (!lastDbCreds) return;
+    const text =
+      "Host: " + lastDbCreds.host + "\n" +
+      "Port: " + lastDbCreds.port + "\n" +
+      "Database: " + lastDbCreds.database + "\n" +
+      "Username: " + lastDbCreds.username + "\n" +
+      "Password: " + lastDbCreds.password;
+    try {
+      await navigator.clipboard.writeText(text);
+      const original = copyDbCredsBtn.textContent;
+      copyDbCredsBtn.textContent = T.copiedBtn;
+      setTimeout(function () { copyDbCredsBtn.textContent = original; }, 1500);
+    } catch (err) {
+      /* clipboard API blocked (np. kontekst bez HTTPS) - ignorujemy, wartości są widoczne/zaznaczalne i tak */
+    }
+  });
 })();
 </script>
 </body>

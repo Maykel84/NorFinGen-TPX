@@ -77,6 +77,21 @@ CREATE TABLE IF NOT EXISTS export_requests (
 );
 """
 
+# Log audytowy dla POST /api/v1/db-access/request (żywy dostęp do bazy,
+# hasło wspólne `portal_reader` - zob. scripts/setup_portal_reader.py) - NIE
+# mechanizm kontroli dostępu, tylko dziennik kto/kiedy/z jakiego IP poprosił.
+# Ta sama rola `api_key_manager` (SELECT do liczenia limitu 3/IP/dobę,
+# INSERT do logowania), świadomie bez polityki dla analyst/demo_reader/
+# powerbi_reader - log żądań nie powinien być czytelny dla konsumentów danych.
+CREATE_DB_ACCESS_REQUESTS_SQL = """
+CREATE TABLE IF NOT EXISTS db_access_requests (
+    id SERIAL PRIMARY KEY,
+    requester_label TEXT NOT NULL,
+    requested_at TIMESTAMPTZ DEFAULT now(),
+    requested_from_ip TEXT
+);
+"""
+
 
 def generate_password(length: int = PASSWORD_LENGTH) -> str:
     return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(length))
@@ -91,6 +106,8 @@ def setup_api_backend() -> str:
         cur.execute(ALTER_TABLE_SELF_SERVICE_SQL)
         cur.execute(CREATE_EXPORT_REQUESTS_SQL)
         cur.execute("ALTER TABLE export_requests ENABLE ROW LEVEL SECURITY;")
+        cur.execute(CREATE_DB_ACCESS_REQUESTS_SQL)
+        cur.execute("ALTER TABLE db_access_requests ENABLE ROW LEVEL SECURITY;")
 
         cur.execute(
             """
@@ -144,6 +161,26 @@ def setup_api_backend() -> str:
                     WHERE tablename = 'export_requests' AND policyname = 'api_key_manager_access'
                 ) THEN
                     CREATE POLICY api_key_manager_access ON export_requests
+                        FOR ALL TO api_key_manager USING (true) WITH CHECK (true);
+                END IF;
+            END
+            $$;
+            """
+        )
+
+        cur.execute("GRANT SELECT, INSERT ON db_access_requests TO api_key_manager;")
+        cur.execute(
+            "GRANT USAGE, SELECT ON SEQUENCE db_access_requests_id_seq TO api_key_manager;"
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT FROM pg_policies
+                    WHERE tablename = 'db_access_requests' AND policyname = 'api_key_manager_access'
+                ) THEN
+                    CREATE POLICY api_key_manager_access ON db_access_requests
                         FOR ALL TO api_key_manager USING (true) WITH CHECK (true);
                 END IF;
             END

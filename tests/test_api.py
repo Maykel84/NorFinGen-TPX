@@ -149,11 +149,13 @@ def test_api_read_only_no_write_endpoints():
     """Żaden endpoint DANYCH FINANSOWYCH nie dopuszcza POST/PUT/PATCH/DELETE -
     usługa jest strukturalnie read-only (dane płyną z demo_reader, który sam
     odrzuca zapis na poziomie bazy, ale API nie powinno nawet wystawiać
-    takiej trasy). Jedyny świadomy wyjątek: `POST /api/v1/keys/request`
-    (Zadanie 1 self-service) - nie dotyka demo_reader/danych finansowych
-    wcale, pisze wyłącznie do wąskiej tabeli `api_keys` przez `api_key_manager`."""
+    takiej trasy). Świadome wyjątki: `POST /api/v1/keys/request` (Zadanie 1
+    self-service) i `POST /api/v1/db-access/request` (żywy dostęp do bazy na
+    żądanie) - żaden nie dotyka `demo_reader`/danych finansowych, oba piszą
+    wyłącznie do wąskich tabel audytowych (`api_keys`/`db_access_requests`)
+    przez `api_key_manager`."""
     forbidden_methods = {"POST", "PUT", "PATCH", "DELETE"}
-    allowed_write_paths = {"/api/v1/keys/request"}
+    allowed_write_paths = {"/api/v1/keys/request", "/api/v1/db-access/request"}
     for route in main.app.routes:
         if getattr(route, "path", None) in allowed_write_paths:
             continue

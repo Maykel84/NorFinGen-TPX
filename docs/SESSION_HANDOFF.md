@@ -862,3 +862,78 @@ Wykonane w tej kolejności, wszystkie na **żywym** `https://norfingen-api.fly.d
 6. **Czas generowania pełnej historii zmierzony empirycznie** (zob. Zadanie 3c) — 4,85s end-to-end przez `curl` na żywym endpoincie, 0,07-0,34s per zapytanie bezpośrednio na bazie — oba **daleko poniżej progu 30s z promptu**, brak potrzeby zatrzymywania się/eskalacji do kolejek w tle.
 
 **Deploy**: `fly deploy -a norfingen-api` (build zdalny, obraz 59 MB, rolling update obu maszyn HA) — sukces. `daily.yml` **niedotknięty w tej sesji** (nie było TRUNCATE/resetu danych transakcyjnych — czysto warstwa API/infrastruktury), nie wymagał wstrzymania.
+
+## Sesja ciągła (2026-09-15, dalszy ciąg) — poprawki po feedbacku, motyw jasny/ciemny, ikony, i18n
+
+Kilka mniejszych iteracji nad portalem w tym samym dniu:
+
+- **Design organiczny/pastelowy** — rozmyte plamy w tle, zaokrąglone karty, pigułkowe przyciski, paleta koral/mięta/lawenda/brzoskwinia (`Quicksand`/`Nunito`, Google Fonts).
+- **Ikona portalu** — dwukrotnie zmieniana na życzenie (odtworzona ręcznie jako inline SVG wg załączników użytkownika — nie było możliwości pobrania oryginalnych plików PNG, więc odtworzone z pamięci wizualnej): najpierw monitor+lupa+wykresy, potem (finalna wersja) niebieski monitor bez lupy z wykresem kołowym/słupkowym/listą/strzałką trendu. Nazwa rozwinięta o tagline "Synthetic financial data platform".
+- **Przełącznik PL/EN** — pełne tłumaczenie UI przez atrybuty `data-i18n` + słownik w JS, auto-detekcja `navigator.language`, zapamiętane w `localStorage`. Komunikaty błędów z backendu zostają po polsku niezależnie od wybranego języka (poza zakresem — wymagałoby i18n API).
+- **Przełącznik jasny/ciemny motyw** — ręczny toggle obok automatycznego `prefers-color-scheme`; jawny wybór (`data-theme` na `<html>`, `localStorage`) nadpisuje wykrywanie systemowe w obie strony.
+- **Naprawiony błąd bezpieczeństwa, znaleziony dzięki pytaniu użytkownika** ("czy już wykorzystałem limit 3 kluczy/IP?"): `request.client.host` na Fly.io zwraca wewnętrzny adres proxy fly-proxy (RFC1918, np. `172.16.x.x`), **nie prawdziwy adres klienta** — limity per-IP (3 klucze/dobę, 1 eksport/5min, globalny 300/h) faktycznie nie rozróżniały realnych odwiedzających. Naprawione: `api/rate_limit.get_client_ip()` czyta nagłówek `Fly-Client-IP` (wstawiany przez Fly Proxy, nie do podrobienia przez klienta), fallback `X-Forwarded-For` → `request.client.host`. Zweryfikowane na żywo (nowy klucz miał realny adres publiczny zamiast `172.16.x.x`). 2 nowe testy regresyjne.
+
+Wszystkie zmiany deployowane na bieżąco (`fly deploy` po każdej iteracji), **254/254 testów** po tej serii poprawek.
+
+## Portal, ścieżka 3 — żywy dostęp do bazy na żądanie (Power BI / SQL / Python), 2026-09-15
+
+Trzecia ścieżka dostępu do danych obok kluczy API i eksportu na żądanie — bezpośrednie, żywe połączenie Postgres (Power BI DirectQuery/Import, dowolny klient SQL, Python), bez pliku do pobrania i bez klucza API.
+
+### Decyzja bezpieczeństwa (ustalona z użytkownikiem, dwuetapowa)
+
+1. **Jedno wspólne, read-only hasło** (`portal_reader`), nie osobna rola per-osoba — akceptowalne bo dane syntetyczne, dostęp wyłącznie SELECT (dziedziczy `analyst`), `CONNECTION LIMIT 10`/`statement_timeout=15s` ograniczają nadużycie niezależnie od liczby odbiorców hasła.
+2. **Hasło NIE jest wystawione na stałe na stronie** — wydawane na żądanie przez `POST /api/v1/db-access/request`, tym samym wzorcem co `/keys/request` (limit 3/dzień/IP + log audytowy `db_access_requests` — **log, nie mechanizm kontroli dostępu**, hasło zostaje wspólne dla wszystkich, którzy o nie poproszą).
+
+### Zadanie 1 — rola `portal_reader`
+
+`scripts/setup_portal_reader.py` (nowy, ten sam wzorzec co `setup_demo_reader.py`/`setup_powerbi_reader.py`): `LOGIN`, hasło losowe 32 znaki (rotowane przy każdym uruchomieniu, wypisywane tylko na stdout), `CONNECTION LIMIT 10` (wyżej niż `demo_reader`=2/`powerbi_reader`=3 — hasło jest świadomie wspólne, więc wielu odbiorców może łączyć się naraz), `statement_timeout=15s`, `GRANT analyst TO portal_reader` (dziedziczy politykę RLS `SELECT`-only na 20/20 tabelach, zero duplikacji polityk).
+
+**Zadanie 1b — RĘCZNA weryfikacja braku zapisu, nie założenie** (`scripts/verify_portal_reader_readonly.py`, uruchomiony na żywo przeciw prawdziwej bazie jako `portal_reader`, **dokładne komunikaty błędów Postgresa**):
+
+| Operacja | Wynik |
+|---|---|
+| `SELECT COUNT(*) FROM customers` | ✅ działa — `50` |
+| `DELETE FROM customers WHERE id=1` | ❌ odrzucone — `permission denied for table customers` |
+| `UPDATE orders SET invoice_date=invoice_date WHERE id=1` | ❌ odrzucone — `permission denied for table orders` |
+| `DROP TABLE customers` | ❌ odrzucone — `must be owner of table customers` |
+| `SELECT pg_sleep(20)` (limit 15s) | ❌ przerwane po **15,0s** — `canceling statement due to statement timeout` |
+
+Wszystkie pięć zgodne z oczekiwaniem z promptu — GRANT/RLS i `statement_timeout` faktycznie egzekwowane przez Postgres, nie tylko zakładane.
+
+### Zadanie 2 — endpoint `POST /api/v1/db-access/request`
+
+`api/routers/db_access.py` — zwraca `host`/`port`/`database`/`username`/`password` z sekretów usługi (`PORTAL_DB_HOST`/`PORTAL_READER_USERNAME`/`PORTAL_READER_PASSWORD`, `fly secrets set`, nigdy w repo) po przejściu limitu 3 żądań/IP/dobę + logu do `db_access_requests`. Rate limit `5/minute` na sam endpoint (slowapi, jak `/keys/request`).
+
+**Refaktoryzacja `enforce_ip_signup_limit`** (Zadanie 2b promptu: "Reużyj/rozszerz... ten sam wzorzec limitu, inna tabela źródłowa") — wydzielona z `keys.py` do współdzielonego `api/ip_limit.py`, sparametryzowana `table`/`ip_column`/`timestamp_column` (kolumny `db_access_requests` to `requested_from_ip`/`requested_at`, nie `created_from_ip`/`created_at` jak w `api_keys`) + allowlista nazw tabel jako defense-in-depth (nazwa tabeli nigdy nie pochodzi z żądania użytkownika, ale i tak). Przy okazji naprawiony drobny, wcześniej niegroźny bug: `max_per_day` było domyślną wartością parametru (wiązaną raz przy definicji funkcji) zamiast odczytywane z modułu przy każdym wywołaniu — monkeypatch `IP_SIGNUP_MAX_PER_DAY` w teście nie miałby żadnego efektu, mimo że test i tak przechodził (luźniejsza asercja pokrywała oba scenariusze). Teraz `max_per_day` jest jawnym argumentem czytanym przy wywołaniu.
+
+**Migracja** (`scripts/setup_api_backend.py`, rozszerzony): nowa tabela `db_access_requests` (`requester_label`, `requested_at`, `requested_from_ip`), `GRANT SELECT, INSERT` dla `api_key_manager`, RLS bez polityki dla `analyst`/`demo_reader`/`powerbi_reader` (log żądań nie powinien być czytelny dla konsumentów danych). **Efekt uboczny** (znany z poprzedniej sesji, powtórzony świadomie): ponowne uruchomienie tego skryptu **zawsze rotuje hasło `api_key_manager`** — naprawione natychmiast tej samej sesji (`fly secrets set` + `fly deploy`), zweryfikowane że `/keys/request` nadal działa po rotacji.
+
+### Zadanie 3 — sekcja na portalu
+
+Nowa sekcja "3. Connect for live reports" / "3. Połącz się z żywymi danymi" w `api/static/portal/index.html`, między "Download the data" a "More" (które stało się sekcją 4). Własne pole etykiety + przycisk → `POST /db-access/request` → wynik w karcie (host/port/baza/login/hasło) + przycisk "Copy" (`navigator.clipboard`, cichy fallback jeśli API zablokowane). Zakładki **Power BI / SQL / Python** renderują gotowe fragmenty (instrukcje/connection string/kod Python) — **przed** żądaniem z placeholderami, **po** z realnymi wartościami wstawionymi przez JS (`renderDbAccessSnippets`). Link do `docs/LIVE_CONNECTION.md` pod zakładkami (ten sam wzorzec placeholder-link co istniejący `docs/EDU_ACCESS.md` — repo prywatne, brak publicznego URL do pliku, link do profilu GitHub). W pełni zintegrowana z i18n (PL/EN) i motywem jasny/ciemny — bez dodatkowej pracy, bo używa tych samych mechanizmów co reszta portalu.
+
+### Zadanie 4 — `docs/LIVE_CONNECTION.md`
+
+Nowy plik, treść zgodna ze szkicem z promptu + dodatkowa tabela porównawcza trzech ścieżek dostępu (klucz API / eksport na żądanie / żywe połączenie) na końcu — własna inicjatywa, żeby ktoś czytający ten dokument w oderwaniu od portalu rozumiał gdzie to pasuje względem pozostałych dwóch. `README.md` zaktualizowany (link w sekcji "Explore it").
+
+### Zadanie 5 — testy
+
+`tests/test_api_keys_export.py` rozszerzony: `FakeAuthPool` obsługuje teraz też `db_access_requests`. 3 nowe testy offline: `test_db_access_request_returns_credentials`, `test_db_access_missing_env_returns_503` (własna inicjatywa — brak skonfigurowanych sekretów musi dać czytelne 503, nie 500/KeyError), `test_db_access_ip_limit_enforced`.
+
+**`test_portal_reader_cannot_write`/`test_portal_reader_statement_timeout_enforced` (nazwy z promptu) świadomie NIE w pytest** — wymagają z definicji prawdziwego połączenia jako `portal_reader`, sprawdzają uprawnienia GRANT/RLS i `statement_timeout` egzekwowane przez Postgres, nie logikę aplikacji; zamockowanie sprawdzałoby coś innego niż to, co mają sprawdzić. Zgodnie z konwencją reszty pakietu (offline, zero połączeń do prawdziwej bazy) żyją jako osobny, ręcznie uruchamiany skrypt `scripts/verify_portal_reader_readonly.py` — wynik uruchomienia (dokładne komunikaty błędów) udokumentowany wyżej (Zadanie 1b), zgodnie z wymogiem promptu "RĘCZNIE zweryfikowany test... nie tylko test jednostkowy".
+
+`tests/test_api.py::test_api_read_only_no_write_endpoints` rozszerzony o drugi świadomy wyjątek (`/api/v1/db-access/request`).
+
+**257/257 testów offline.**
+
+### Po implementacji — wszystkie kroki wykonane i zweryfikowane
+
+1. **257/257 testów przechodzi** (w tym 6 nowych: 3 self-service DB-access + 2 regresyjne Fly-Client-IP z wcześniejszej części tej sesji + korekta istniejącego).
+2. **Zadanie 1b ręcznie zweryfikowane na żywej bazie** — zob. tabela wyżej, dokładne komunikaty Postgresa.
+3. **End-to-end na żywo** (`https://norfingen-api.fly.dev`): `POST /db-access/request` → pełne dane połączenia; 3× 200, 4. żądanie → `429`; regresja `/keys/request` po rotacji `api_key_manager` → nadal działa; portal w przeglądarce (sekcja 3, zakładki, formularz) → poprawnie renderuje i poprawnie pokazuje błąd 429 (limit już wyczerpany testami curl).
+4. **Power BI Desktop** — niedostępny w tym środowisku (brak GUI/Windows/macOS Power BI w kontenerze sesji) — nieprzetestowane bezpośrednio, poza zakresem tej sesji technicznie możliwym do wykonania. Connection string zweryfikowany end-to-end przez `psql`-ekwiwalent (`psycopg2`, `scripts/verify_portal_reader_readonly.py`) z tymi samymi parametrami, jakie zwraca endpoint.
+5. **Komendy do `git push`** — podane użytkownikowi w czacie (repo prywatne, hasła NIGDY w commitach — sprawdzone `git diff` przed każdym `git add`).
+
+### Sekrety Fly.io dodane w tej sesji
+
+`PORTAL_DB_HOST`, `PORTAL_READER_USERNAME`, `PORTAL_READER_PASSWORD` (`fly secrets set`, nigdy w repo) — obok istniejących `DEMO_READER_DATABASE_URL`/`API_KEY_MANAGER_DATABASE_URL`. Wszystkie istniejące role (`analyst`, `demo_reader`, `powerbi_reader`, `api_key_manager`) **bez zmian** poza rozszerzeniem `api_key_manager` o `db_access_requests` (ten sam wzorzec co `export_requests` z poprzedniej sesji).

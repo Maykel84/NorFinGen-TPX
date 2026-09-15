@@ -21,7 +21,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from api.db import auth_pool, close_pools, data_pool, init_pools
 from api.models import HealthStatus
 from api.rate_limit import limiter
-from api.routers import customers, events, export, financials, keys, payroll
+from api.routers import customers, db_access, events, export, financials, keys, payroll
 
 _PORTAL_DIR = Path(__file__).resolve().parent / "static" / "portal"
 
@@ -54,6 +54,7 @@ app.include_router(payroll.router, prefix="/api/v1")
 app.include_router(events.router, prefix="/api/v1")
 app.include_router(keys.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
+app.include_router(db_access.router, prefix="/api/v1")
 
 # Portal samoobsługowy (Zadanie 2) - statyczny HTML/CSS/JS, brak frameworka.
 # Zamontowany tylko jeśli katalog istnieje - w testach offline (tests/test_api.py)

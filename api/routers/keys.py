@@ -15,49 +15,22 @@ podana przez użytkownika (imię/kurs), tak jak w treści zadania.
 
 import hashlib
 import secrets
-from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 from api.db import auth_pool
+from api.ip_limit import enforce_ip_signup_limit
 from api.models import KeyRequest, KeyResponse
 from api.rate_limit import get_client_ip, limiter
 
 router = APIRouter(prefix="/keys", tags=["keys"])
 
 SELF_SERVICE_RATE_LIMIT = 60
-IP_SIGNUP_WINDOW = timedelta(hours=24)
 IP_SIGNUP_MAX_PER_DAY = 3
 
 
 def _hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
-
-
-async def enforce_ip_signup_limit(ip: str, max_per_day: int = IP_SIGNUP_MAX_PER_DAY) -> None:
-    """Odrzuca 4. i kolejne żądanie klucza z tego samego IP w ciągu doby.
-
-    Liczy `api_keys.created_from_ip` (nie osobną tabelę) - to jest dokładnie
-    to pole istnieje po to, żeby ten limit mógł działać bez dodatkowego stanu.
-    """
-    pool = auth_pool()
-    window_start = datetime.now(UTC) - IP_SIGNUP_WINDOW
-    count = await pool.fetchval(
-        """
-        SELECT COUNT(*) FROM api_keys
-        WHERE created_from_ip = $1 AND created_at > $2
-        """,
-        ip,
-        window_start,
-    )
-    if count >= max_per_day:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"Zbyt wiele kluczy z tego IP w ciągu ostatnich 24h (limit {max_per_day}). "
-                "Spróbuj ponownie jutro."
-            ),
-        )
 
 
 @router.post("/request", response_model=KeyResponse)
@@ -67,7 +40,7 @@ async def request_key(body: KeyRequest, request: Request) -> KeyResponse:
     odpowiedzi - baza trzyma wyłącznie jego SHA-256 (ten sam wzorzec co
     `api/scripts/generate_api_key.py`)."""
     client_ip = get_client_ip(request)
-    await enforce_ip_signup_limit(client_ip)
+    await enforce_ip_signup_limit(client_ip, table="api_keys", max_per_day=IP_SIGNUP_MAX_PER_DAY)
 
     raw_key = f"nfg_edu_{secrets.token_urlsafe(24)}"
     key_hash = _hash_key(raw_key)

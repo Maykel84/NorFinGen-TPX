@@ -92,3 +92,18 @@ class KeyResponse(BaseModel):
     api_key: str
     rate_limit_per_hour: int
     message: str
+
+
+class DbAccessRequest(BaseModel):
+    label: str = Field(
+        min_length=2, max_length=100, description="Twoje imię lub identyfikator kursu"
+    )
+
+
+class DbAccessResponse(BaseModel):
+    host: str
+    port: int
+    database: str
+    username: str
+    password: str
+    message: str
