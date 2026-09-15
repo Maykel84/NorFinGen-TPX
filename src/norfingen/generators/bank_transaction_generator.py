@@ -195,7 +195,7 @@ def generate_payroll_bank_transaction(
 
     `transaction.id` MUSI być już prawdziwym ID z bazy (nie None) — wołający
     ustawia je po `save_salary()` (zob. `run_daily.py`) albo po ręcznym
-    dociągnięciu z bazy (zob. `scripts/fix_missing_payroll_transactions.py`).
+    dociągnięciu z bazy (zob. `scripts/archive/fix_missing_payroll_transactions.py`).
 
     Zwraca None jeśli w `vouchers` nie ma żadnego postingu zobowiązaniowego
     (nie powinno się zdarzyć dla prawdziwej listy płac — zabezpieczenie na
