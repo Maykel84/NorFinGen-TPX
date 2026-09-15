@@ -1,15 +1,15 @@
-"""Faza 7b — szok makroekonomiczny 2020 (COVID-19).
+"""Phase 7b — the 2020 macroeconomic shock (COVID-19).
 
-RÓŻNICA ARCHITEKTONICZNA względem client_events.py/company_events.py/
-seasonality.py: to zdarzenie jest **DETERMINISTYCZNIE WSTAWIONE na konkretny
-rok**, nie losowane. `random.Random(string)` NIE jest tu w ogóle używane —
-nie ma czego losować, bo to jest świadomie zaszyty fakt historyczny
-(realny szok COVID-19 w Norwegii, marzec-czerwiec 2020), nie przestrzeń
-prawdopodobieństw. Zamierzone rozróżnienie od reszty katalogu Fazy 7 —
-zob. też SESSION_HANDOFF.md, Faza 7b.
+ARCHITECTURAL DIFFERENCE relative to client_events.py/company_events.py/
+seasonality.py: this event is **DETERMINISTICALLY PLANTED in a specific
+year**, not rolled. `random.Random(string)` is NOT used here at all —
+there's nothing to roll, because this is a deliberately hardcoded historical
+fact (the real COVID-19 shock in Norway, March-June 2020), not a probability
+space. A deliberate distinction from the rest of the Phase 7 catalog — see
+also SESSION_HANDOFF.md, Phase 7b.
 
-Zakres świadomie ograniczony do 2020 — nie dotyka lat dojrzałych
-(2023-2026, próg bezpieczeństwa 5,5-9%) w żaden sposób."""
+The scope is deliberately limited to 2020 — it does not touch the mature
+years (2023-2026, the 5.5-9% safety threshold) in any way."""
 
 from __future__ import annotations
 
@@ -32,20 +32,21 @@ def _is_covid_window(year: int, month: int) -> bool:
 
 
 def apply_macro_shock_multiplier(year: int, month: int, base_multiplier: float) -> float:
-    """Zadanie 1b — nakłada szok makro na już istniejące mnożniki (fellesferie,
-    UNPROFITABLE_QUARTER), mnożnikowo, nie zastępując. Dotyczy WSZYSTKICH
-    aktywnych klientów jednocześnie (nie per-klient losowanie jak
-    TEMPORARY_HARDSHIP) — kluczowa różnica: MACRO_SHOCK to szok rynkowy,
-    nie sytuacja pojedynczej firmy."""
+    """Task 1b — applies the macro shock on top of already-existing
+    multipliers (fellesferie, UNPROFITABLE_QUARTER), multiplicatively, not
+    replacing them. Applies to ALL active customers simultaneously (not a
+    per-customer roll like TEMPORARY_HARDSHIP) — the key difference:
+    MACRO_SHOCK is a market-wide shock, not a single company's situation."""
     if _is_covid_window(year, month):
         return base_multiplier * MACRO_SHOCK_EVENTS["COVID_2020"]["ticket_volume_multiplier"]
     return base_multiplier
 
 
 def extra_consulting_shock_multiplier(year: int, month: int) -> float:
-    """Zadanie 1d — tłumienie should_generate_extra_consulting (Faza 2) w
-    oknie COVID: próg × 0.3 (tylko 30% zwykłej szansy). 1.0 poza oknem —
-    mnoży się z q4_budget_flush_multiplier (Faza 7a), nie zastępuje."""
+    """Task 1d — suppresses should_generate_extra_consulting (Phase 2)
+    within the COVID window: threshold x 0.3 (only 30% of the usual
+    chance). 1.0 outside the window — multiplies with
+    q4_budget_flush_multiplier (Phase 7a), does not replace it."""
     if _is_covid_window(year, month):
         return MACRO_SHOCK_EVENTS["COVID_2020"]["extra_consulting_suppression"]
     return 1.0
@@ -53,18 +54,20 @@ def extra_consulting_shock_multiplier(year: int, month: int) -> float:
 
 def payment_delay_adjusted_bad_debt(base_probability: float, base_written_off_share: float,
                                      year: int, month: int) -> tuple[float, float]:
-    """Zadanie 1e — podnosi prawdopodobieństwo OVERDUE (payment_delay_multiplier),
-    ale zachowuje ABSOLUTNE prawdopodobieństwo WRITTEN_OFF dokładnie na
-    normalnym poziomie (opóźnienie płatności ≠ fala bankructw). Zwraca
-    (bad_debt_probability, written_off_share) do przekazania bezpośrednio
-    do order_generator.determine_order_status.
+    """Task 1e — raises the probability of OVERDUE (payment_delay_multiplier),
+    but keeps the ABSOLUTE probability of WRITTEN_OFF exactly at its normal
+    level (payment delay != a wave of bankruptcies). Returns
+    (bad_debt_probability, written_off_share) to pass straight into
+    order_generator.determine_order_status.
 
-    Matematyka: normalny P(WRITTEN_OFF) = base_probability * base_written_off_share
-    zostaje NIETKNIĘTY; tylko P(OVERDUE) = base_probability*(1-base_written_off_share)
-    rośnie ×payment_delay_multiplier. Oba przeliczone z powrotem na
-    (bad_debt_probability, written_off_share), bo determine_order_status
-    operuje w tej parametryzacji (jeden rng.random() < bad_debt_probability,
-    potem drugi rng.random() < written_off_share)."""
+    The math: the normal P(WRITTEN_OFF) = base_probability *
+    base_written_off_share stays UNTOUCHED; only P(OVERDUE) =
+    base_probability*(1-base_written_off_share) grows by
+    xpayment_delay_multiplier. Both are converted back into
+    (bad_debt_probability, written_off_share), because
+    determine_order_status operates in that parametrization (one
+    rng.random() < bad_debt_probability, then a second
+    rng.random() < written_off_share)."""
     if not _is_covid_window(year, month):
         return base_probability, base_written_off_share
 

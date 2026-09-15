@@ -1,23 +1,25 @@
-"""Generator miesięcznej listy płac (Warstwa 2 + Warstwa 3).
+"""Monthly payroll run generator (Layer 2 + Layer 3).
 
-Każdy miesiąc (w tym czerwiec): Voucher 1 (lista płac: DR 5000 / CR 2710 /
+Every month (including June): Voucher 1 (payroll: DR 5000 / CR 2710 /
 CR 2740) + Voucher 2 (AGA: DR 5400 / CR 2700).
 
-Czerwiec — feriepenger ZASTĘPUJE normalną pensję, nie dodaje się do niej (zob.
-norfingen.seed.payroll.calc_june_salary). Standardowo (feriepenger >= bieżąca
-pensja) normalna pensja czerwcowa = 0, cały brutto tego miesiąca to
-nieopodatkowane feriepenger. Dla pracowników z <1 rok stażu różnica dopłacana
-jest jako zwykła, opodatkowana pensja. AGA liczone jednolicie od total_brutto
-(pensja + feriepenger) — bez osobnego, podwajającego wolucheru.
+June — feriepenger REPLACES the normal salary, it is not added on top of it
+(see norfingen.seed.payroll.calc_june_salary). Normally (feriepenger >=
+current salary) the normal June salary = 0, that month's entire gross
+amount is untaxed feriepenger. For employees with <1 year of tenure the
+difference is paid out as a regular, taxed salary. AGA is calculated
+uniformly on total_brutto (salary + feriepenger) — no separate, duplicate
+voucher.
 
-Podstawa feriepenger per pracownik = suma calc_brutto_with_raises(e, rok, miesiąc)
-za miesiące, w których pracownik był aktywny w roku poprzednim (zob.
-brutto_earned_in_year) — kluczowe dla pracowników z fazy merger (E11-E16,
-aktywni od 2022-09): ich podstawa za 2022 to 4 miesiące, nie 12.
+The feriepenger basis per employee = the sum of
+calc_brutto_with_raises(e, year, month) for the months the employee was
+active in the previous year (see brutto_earned_in_year) — critical for
+merger-phase employees (E11-E16, active since 2022-09): their 2022 basis is
+4 months, not 12.
 
-Podwyżki: +3% rocznie w lipcu, pierwsza w roku po zatrudnieniu (zob.
-norfingen.seed.payroll.calc_brutto_with_raises) — stosowane zarówno do brutto
-bieżącego miesiąca, jak i do podstawy feriepenger za rok poprzedni.
+Raises: +3% per year in July, the first one in the year after hiring (see
+norfingen.seed.payroll.calc_brutto_with_raises) — applied both to the
+current month's gross pay and to the previous year's feriepenger basis.
 """
 
 from __future__ import annotations
@@ -52,14 +54,15 @@ MONTH_NAMES_NO = [
 
 
 def brutto_earned_in_year(employee: EmployeeSeed, year: int) -> float:
-    """Suma brutto zarobionego przez pracownika w danym roku kalendarzowym —
-    respektuje startDate (pracownik nieaktywny przed startem ma podstawę 0
-    za te miesiące). Faza 5 — porównanie do first_working_day_of_month(),
-    NIE date(year, month, 1): skoro EMPLOYEES.start_date jest teraz zawsze
-    pierwszym dniem roboczym miesiąca (może to być 2. lub 3. dzień
-    kalendarzowy, jeśli 1. wypada w weekend), porównanie do sztywnego
-    kalendarzowego dnia 1 błędnie wykluczałoby pracownika z jego własnego
-    miesiąca startu (np. start_date=2022-10-03 > date(2022,10,1))."""
+    """The total gross earned by an employee in a given calendar year —
+    respects startDate (an employee not yet active before their start has a
+    basis of 0 for those months). Phase 5 — compared against
+    first_working_day_of_month(), NOT date(year, month, 1): since
+    EMPLOYEES.start_date is now always the first working day of the month
+    (which can be the 2nd or 3rd calendar day if the 1st falls on a
+    weekend), comparing against a fixed calendar day 1 would wrongly
+    exclude an employee from their own start month (e.g.
+    start_date=2022-10-03 > date(2022,10,1))."""
     return sum(
         calc_brutto_with_raises(employee, year, month)
         for month in range(1, 13)
@@ -68,8 +71,8 @@ def brutto_earned_in_year(employee: EmployeeSeed, year: int) -> float:
 
 
 def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, list[Voucher]]:
-    # first_working_day_of_month(), nie date(year, month, 1) — zob. docstring
-    # brutto_earned_in_year() wyżej, ten sam powód.
+    # first_working_day_of_month(), not date(year, month, 1) — see the
+    # brutto_earned_in_year() docstring above, same reason.
     active = active_employees(first_working_day_of_month(year, month))
     pay_date = last_working_day(year, month)
     june = is_june(month)

@@ -1,32 +1,33 @@
-"""Sezonowe wzorce norweskiego B2B (Faza 7, Zadanie 1) — poziom całej firmy.
+"""Norwegian B2B seasonal patterns (Phase 7, Task 1) — company-wide level.
 
-Czyste mnożniki bez losowości (deterministyczne funkcje miesiąca/segmentu),
-używane przez inne generatory żeby modulować już istniejącą losowość
-(hours_generator.generate_daily_support_hours, order_generator.
-should_generate_extra_consulting) zamiast dodawać równoległe mechanizmy.
+Pure multipliers with no randomness (deterministic functions of
+month/segment), used by other generators to modulate already-existing
+randomness (hours_generator.generate_daily_support_hours,
+order_generator.should_generate_extra_consulting) instead of adding parallel
+mechanisms.
 
-Nie są tu żadnego stanu ani RNG — te funkcje same w sobie nic nie losują,
-tylko skalują istniejące progi/zakresy w miejscu wywołania. Dzięki temu
-determinizm (random.Random(string) w wywołującym kodzie) jest zachowany bez
-zmian."""
+There is no state or RNG here — these functions don't roll anything
+themselves, they only scale existing thresholds/ranges at the call site.
+This preserves determinism (random.Random(string) in the calling code)
+unchanged."""
 
 from __future__ import annotations
 
 
 def fellesferie_activity_multiplier(month: int) -> float:
-    """Lipiec: ~50% normalnego wolumenu nowych ticketów wsparcia i tempa
-    decyzji zakupowych. Nie wpływa na już podpisane subskrypcje
-    S01/S02/S03 (fakturują się normalnie — patrz order_generator,
-    subskrypcje A/B/C nie są w ogóle skalowane tym mnożnikiem)."""
+    """July: ~50% of the normal volume of new support tickets and pace of
+    purchasing decisions. Does not affect already-signed S01/S02/S03
+    subscriptions (they invoice normally — see order_generator, A/B/C
+    subscriptions are not scaled by this multiplier at all)."""
     if month == 7:
         return 0.5
     return 1.0
 
 
 def q4_budget_flush_multiplier(month: int, customer_segment: str) -> float:
-    """Listopad-grudzień: podwyższone prawdopodobieństwo dodatkowych
-    zamówień S04 dla Enterprise/Mid-market, ponad standardową sezonowość
-    już istniejącą w extra-consulting z Fazy 2 (Q2/Q4 w
+    """November-December: elevated probability of extra S04 orders for
+    Enterprise/Mid-market, on top of the standard seasonality already
+    present in the Phase 2 extra-consulting mechanism (Q2/Q4 in
     order_generator.EXTRA_CONSULTING_MONTHS)."""
     if month in (11, 12) and customer_segment in ("Enterprise", "Mid-market"):
         return 1.4
@@ -34,14 +35,13 @@ def q4_budget_flush_multiplier(month: int, customer_segment: str) -> float:
 
 
 def january_new_initiative_boost(month: int) -> float:
-    """Styczeń: nieznacznie podwyższone prawdopodobieństwo nowych projektów
-    S02 (nowe inicjatywy IT na nowy rok budżetowy).
+    """January: a slightly elevated probability of new S02 projects (new IT
+    initiatives for the new budget year).
 
-    UWAGA — świadomie NIEPODŁĄCZONE na razie (Faza 7, Zadanie 1c): w
-    kodzie nie istnieje obecnie żaden dyskretny mechanizm "nowy projekt
-    S02" analogiczny do should_generate_extra_consulting (S02 jest
-    sprzedawany wyłącznie jako część stałego bundla segmentowego —
-    roster.get_customer_services — nie jako osobne zamówienie). Podłączenie
-    tego mnożnika wymagałoby najpierw zaprojektowania takiego mechanizmu,
-    co wykracza poza zakres Zadania 1 — zob. SESSION_HANDOFF.md."""
+    NOTE — deliberately NOT WIRED UP yet (Phase 7, Task 1c): the codebase
+    currently has no discrete "new S02 project" mechanism analogous to
+    should_generate_extra_consulting (S02 is sold exclusively as part of the
+    fixed segment bundle — roster.get_customer_services — not as a separate
+    order). Wiring up this multiplier would first require designing such a
+    mechanism, which is out of scope for Task 1 — see SESSION_HANDOFF.md."""
     return 1.2 if month == 1 else 1.0

@@ -1,13 +1,13 @@
-"""Faza 7, Zadanie 3 — zdarzenia losowe na poziomie firmy.
+"""Phase 7, Task 3 — random company-level events.
 
-Ten sam wzorzec co client_events.py (Zadanie 2): stan jako czysta,
-memoizowana funkcja (rok, miesiąc) -> skumulowany stan, nie mutowalny
-ledger — z tych samych powodów (backfill to dwa osobne procesy, żywy cron
-to trzeci, zob. docstring client_events.py). Tu jedyny element, który
-faktycznie wymaga pamięci ponad jeden miesiąc, to SUPPLIER_RENEGOTIATION
-("trwale od tego miesiąca") — EQUIPMENT_INVESTMENT i UNPROFITABLE_QUARTER
-są w pełni wyprowadzalne z samego roll_company_events(year) (Zadanie 3b),
-bez żadnego stanu."""
+The same pattern as client_events.py (Task 2): state as a pure, memoized
+function (year, month) -> cumulative state, not a mutable ledger — for the
+same reasons (the backfill is two separate processes, the live cron is a
+third, see the client_events.py docstring). Here the only element that
+actually needs memory beyond one month is SUPPLIER_RENEGOTIATION
+("permanent from this month on") — EQUIPMENT_INVESTMENT and
+UNPROFITABLE_QUARTER are both fully derivable from roll_company_events(year)
+alone (Task 3b), with no state at all."""
 
 from __future__ import annotations
 
@@ -39,18 +39,18 @@ COMPANY_LIFE_EVENTS: dict[str, dict] = {
     },
 }
 
-# "jednorazowy wzrost kosztu opex" (Zadanie 3c) — kwota nie podana w zadaniu
-# (tylko magnitude_range przypisany do ticketów/wolumenu, zob. niżej),
-# skalibrowana samodzielnie: rząd wielkości jednego "trudnego miesiąca"
-# nietypowego kosztu, nie destabilizujący marży rocznej (~2,2M NOK opex/rok
-# na ~9 kont — zob. SESSION_HANDOFF.md).
+# "a one-off opex cost increase" (Task 3c) — no amount was given in the task
+# (only a magnitude_range assigned to tickets/volume, see below), calibrated
+# independently: the order of magnitude of one "rough month" of an unusual
+# cost, not destabilizing to annual margin (~2.2M NOK opex/year across ~9
+# accounts — see SESSION_HANDOFF.md).
 UNPROFITABLE_QUARTER_COST_SPIKE_MIN = 40_000.0
 UNPROFITABLE_QUARTER_COST_SPIKE_MAX = 120_000.0
-ACCOUNT_UNEXPECTED_COST = 7790  # NS4102 "Annen driftskostnad" — nowe konto, nieużywane dotąd w tym repo
+ACCOUNT_UNEXPECTED_COST = 7790  # NS4102 "Annen driftskostnad" — a new account, unused elsewhere in this repo
 
 
 def roll_company_events(year: int) -> list[dict]:
-    """Zadanie 3b — dokładnie wg podanego pseudokodu."""
+    """Task 3b — exactly per the given pseudocode."""
     rng = random.Random(f"COMPANY-{year}-events")
     triggered = []
     for event_code, event_def in COMPANY_LIFE_EVENTS.items():
@@ -62,9 +62,9 @@ def roll_company_events(year: int) -> list[dict]:
 
 @lru_cache(maxsize=None)
 def _year_triggers(year: int) -> dict[str, int]:
-    """code -> miesiąc (1-12), memoizowany wrapper wokół roll_company_events —
-    unika ponownego losowania (i przez to niepotrzebnej pracy) przy każdym
-    zapytaniu o pojedynczy miesiąc tego roku."""
+    """code -> month (1-12), a memoized wrapper around roll_company_events —
+    avoids re-rolling (and the resulting unnecessary work) on every query
+    for a single month of this year."""
     return {ev["code"]: ev["month"] for ev in roll_company_events(year)}
 
 
@@ -74,10 +74,11 @@ def _prev_month(year: int, month: int) -> tuple[int, int]:
 
 @dataclass(frozen=True)
 class CompanyEventState:
-    """supplier_number -> skumulowany mnożnik kosztu (1.0 = bez zmian) po
-    wszystkich SUPPLIER_RENEGOTIATION do (year, month) włącznie. Kolejne
-    renegocjacje TEGO SAMEGO dostawcy w różnych latach się mnożą (kolejne
-    negocjacje kontraktu) — świadomy wybór, zadanie nie precyzuje."""
+    """supplier_number -> cumulative cost multiplier (1.0 = unchanged) after
+    all SUPPLIER_RENEGOTIATION events through (year, month) inclusive.
+    Successive renegotiations of the SAME supplier in different years
+    compound (successive contract negotiations) — a deliberate choice, the
+    task doesn't specify."""
 
     supplier_multipliers: dict[str, float] = field(default_factory=dict)
 
@@ -108,15 +109,15 @@ def company_event_state_asof(year: int, month: int) -> CompanyEventState:
 
 
 def supplier_cost_multiplier(supplier_number: str, year: int, month: int) -> float:
-    """Zadanie 3c — mnożnik kosztu dostawcy po ewentualnych renegocjacjach
-    (1.0 = bez zmian). Podłączane w supplier_invoice_generator PRZED
-    zaokrągleniem kwoty netto."""
+    """Task 3c — a supplier's cost multiplier after any renegotiations
+    (1.0 = unchanged). Wired into supplier_invoice_generator BEFORE the net
+    amount is rounded."""
     return company_event_state_asof(year, month).supplier_multipliers.get(supplier_number, 1.0)
 
 
 def equipment_investment_trigger(year: int, month: int) -> Optional[float]:
-    """Zadanie 3c — zwraca wylosowaną kwotę (80k-250k) jeśli EQUIPMENT_INVESTMENT
-    wystrzeliło w (year, month) tego roku, inaczej None."""
+    """Task 3c — returns the rolled amount (80k-250k) if EQUIPMENT_INVESTMENT
+    fired in (year, month) of this year, otherwise None."""
     if _year_triggers(year).get("EQUIPMENT_INVESTMENT") != month:
         return None
     rng = random.Random(f"COMPANY-{year}-EQUIPMENT_INVESTMENT-effect")
@@ -125,9 +126,9 @@ def equipment_investment_trigger(year: int, month: int) -> Optional[float]:
 
 
 def unprofitable_quarter_ticket_multiplier(year: int, month: int) -> float:
-    """Zadanie 3c — mnożnik wolumenu ticketów (hours_generator), aktywny przez
-    CAŁY kwartał zawierający wylosowany miesiąc UNPROFITABLE_QUARTER (nie tylko
-    ten jeden miesiąc) — 1.0 poza oknem."""
+    """Task 3c — the ticket-volume multiplier (hours_generator), active for
+    the WHOLE quarter containing the rolled UNPROFITABLE_QUARTER month (not
+    just that one month) — 1.0 outside the window."""
     triggered_month = _year_triggers(year).get("UNPROFITABLE_QUARTER")
     if triggered_month is None:
         return 1.0
@@ -140,10 +141,10 @@ def unprofitable_quarter_ticket_multiplier(year: int, month: int) -> float:
 
 
 def unprofitable_quarter_cost_spike(year: int, month: int) -> Optional[float]:
-    """Zadanie 3c — "jednorazowy wzrost kosztu opex": zwraca wylosowaną kwotę
-    (UNPROFITABLE_QUARTER_COST_SPIKE_MIN..MAX) jeśli (year, month) to
-    DOKŁADNIE wylosowany miesiąc triggera (nie cały kwartał — to jest
-    jednorazowe, w przeciwieństwie do redukcji ticketów), inaczej None."""
+    """Task 3c — "a one-off opex cost increase": returns the rolled amount
+    (UNPROFITABLE_QUARTER_COST_SPIKE_MIN..MAX) if (year, month) is EXACTLY
+    the rolled trigger month (not the whole quarter — this is one-off,
+    unlike the ticket reduction), otherwise None."""
     if _year_triggers(year).get("UNPROFITABLE_QUARTER") != month:
         return None
     rng = random.Random(f"COMPANY-{year}-UNPROFITABLE_QUARTER-cost-spike")
