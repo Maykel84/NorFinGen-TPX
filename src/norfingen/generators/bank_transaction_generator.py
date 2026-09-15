@@ -1,41 +1,42 @@
-"""BankTransaction + Voucher (typ BANK) — Warstwa 3, Etap 4.
+"""BankTransaction + Voucher (type BANK) — Layer 3, Tier 4.
 
-Modeluje faktyczny wpływ/wypływ gotówki, przesunięty w czasie względem
-wystawienia dokumentu źródłowego (Order/SupplierInvoice) o payment_terms /
-payment_due_date — w przeciwieństwie do Vouchera INVOICE/INCOMING_INVOICE,
-który księguje się w dniu wystawienia faktury.
+Models the actual cash in/outflow, time-shifted relative to the issuance of
+the source document (Order/SupplierInvoice) by payment_terms /
+payment_due_date — unlike the INVOICE/INCOMING_INVOICE Voucher, which is
+booked on the day the invoice is issued.
 
-Wzorce DR/CR:
-  Płatność przychodząca (klient płaci Order):
-    DR 1910 Bankinnskudd driftskonto  +kwota
-    CR 1500 Kundefordringer          -kwota
-    date = invoice_date + payment_terms dni (+90 dni jeśli Order.status == OVERDUE;
-           brak płatności wcale jeśli Order.status == WRITTEN_OFF — bad debt, zob.
-           order_generator.determine_order_status)
+DR/CR patterns:
+  Incoming payment (customer pays an Order):
+    DR 1910 Bankinnskudd driftskonto  +amount
+    CR 1500 Kundefordringer          -amount
+    date = invoice_date + payment_terms days (+90 days if Order.status ==
+           OVERDUE; no payment at all if Order.status == WRITTEN_OFF — bad
+           debt, see order_generator.determine_order_status)
 
-  Płatność wychodząca (firma płaci SupplierInvoice):
-    DR 2400 Leverandørgjeld           +kwota
-    CR 1910 Bankinnskudd driftskonto -kwota
+  Outgoing payment (company pays a SupplierInvoice):
+    DR 2400 Leverandørgjeld           +amount
+    CR 1910 Bankinnskudd driftskonto -amount
     date = payment_due_date
 
-  Wypłata payrollu (Krok 2 — naprawa luki: payroll nigdy nie generował
-  transakcji bankowej, od Tier 2, nie regresja Fazy 6):
-    DR 2710 Skyldig lønn               +netto pracowników
-    DR 2740 Skyldig skattetrekk        +skattetrekk (jeśli >0, nie zawsze — np.
-                                          długoletni pracownicy w czerwcu mają 0)
+  Payroll payout (Step 2 — gap fix: payroll never generated a bank
+  transaction, since Tier 2, not a Phase 6 regression):
+    DR 2710 Skyldig lønn               +employees' net pay
+    DR 2740 Skyldig skattetrekk        +tax withholding (if >0, not always —
+                                          e.g. long-tenured employees have 0 in June)
     DR 2700 Skyldig arbeidsgiveravgift +AGA
-    CR 1910 Bankinnskudd driftskonto   -suma
-    date = salary_transaction.date (dzień wypłaty = dzień odpływu z banku,
-           w przeciwieństwie do faktur nie ma tu osobnego terminu płatności)
+    CR 1910 Bankinnskudd driftskonto   -total
+    date = salary_transaction.date (payout day = the day cash leaves the
+           bank, unlike invoices there's no separate payment term here)
 
-    Świadome uproszczenie (jak dopuszczał prompt Kroku 2): JEDNA
-    zagregowana transakcja/miesiąc (netto+skattetrekk+AGA razem), nie trzy
-    osobne do trzech różnych odbiorców (pracownicy / Skatteetaten x2) — to
-    właściwe rozliczenie wymagałoby też modelowania przesuniętego w czasie
-    terminu przekazania skattetrekk/AGA do urzędu (w Norwegii zwykle 15.
-    dnia miesiąca NASTĘPUJĄCEGO po wypłacie, nie tego samego dnia), co
-    wykracza poza zakres tej naprawy (ona dotyczy TEGO, że transakcja w
-    ogóle nie istniała, nie precyzyjnego rozbicia w czasie).
+    A deliberate simplification (as allowed by the Step 2 prompt): ONE
+    aggregated transaction/month (net pay+tax withholding+AGA together),
+    not three separate ones to three different recipients (employees /
+    Skatteetaten x2) — a fully accurate accounting would also need to model
+    the time-shifted deadline for remitting tax withholding/AGA to the tax
+    authority (in Norway typically the 15th of the month FOLLOWING the
+    payout, not the same day), which is beyond the scope of this fix (which
+    addresses the fact that the transaction didn't exist at all, not a
+    precise time-based breakdown).
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ ACCOUNT_SKYLDIG_SKATTETREKK = 2740
 ACCOUNT_SKYLDIG_AGA = 2700
 PAYROLL_LIABILITY_ACCOUNTS = (ACCOUNT_SKYLDIG_LONN, ACCOUNT_SKYLDIG_SKATTETREKK, ACCOUNT_SKYLDIG_AGA)
 
-OVERDUE_PAYMENT_DELAY_DAYS = 90  # OVERDUE płaci payment_terms + 90 dni, nie na czas
+OVERDUE_PAYMENT_DELAY_DAYS = 90  # OVERDUE pays payment_terms + 90 days, not on time
 
 
 def _order_gross_amount(order: Order) -> float:
@@ -66,8 +67,8 @@ def _order_gross_amount(order: Order) -> float:
 
 
 def _incoming_payment_date(order: Order, payment_terms: int) -> Optional[date]:
-    """None jeśli WRITTEN_OFF — bad debt, nigdy nie zapłacone. OVERDUE płaci
-    z opóźnieniem OVERDUE_PAYMENT_DELAY_DAYS względem normalnego terminu."""
+    """None if WRITTEN_OFF — bad debt, never paid. OVERDUE pays with a delay
+    of OVERDUE_PAYMENT_DELAY_DAYS relative to the normal due date."""
     if order.status == OrderStatus.WRITTEN_OFF:
         return None
     base = order.invoiceDate + timedelta(days=payment_terms)
@@ -77,11 +78,12 @@ def _incoming_payment_date(order: Order, payment_terms: int) -> Optional[date]:
 
 
 def build_incoming_payment(order: Order, payment_terms: int) -> Optional[tuple[BankTransaction, Voucher]]:
-    """Klient płaci fakturę sprzedaży (Order) — wpływ na konto bankowe.
-    date = order.invoiceDate + payment_terms dni (net 14/30/45 per klient, zob.
-    roster.CustomerSeed.payment_terms), skorygowane o Order.status (zob.
-    _incoming_payment_date). Zwraca None dla WRITTEN_OFF — brak płatności."""
-    assert order.invoiceDate is not None, "Order bez invoiceDate nie generuje płatności"
+    """A customer pays a sales invoice (Order) — a bank account inflow.
+    date = order.invoiceDate + payment_terms days (net 14/30/45 per
+    customer, see roster.CustomerSeed.payment_terms), adjusted for
+    Order.status (see _incoming_payment_date). Returns None for
+    WRITTEN_OFF — no payment."""
+    assert order.invoiceDate is not None, "An Order without invoiceDate does not generate a payment"
     payment_date = _incoming_payment_date(order, payment_terms)
     if payment_date is None:
         return None
@@ -118,20 +120,20 @@ def generate_daily_bank_transactions(
     orders: list[Order],
     supplier_invoices: list[SupplierInvoice],
 ) -> list[tuple[BankTransaction, Voucher]]:
-    """Generuje płatności bankowe wypadające dokładnie na dany dzień —
-    dopasowuje wśród `orders`/`supplier_invoices` z poprzednich miesięcy
-    (zapłata przychodzi z opóźnieniem payment_terms/payment_due_date, nie
-    w miesiącu wystawienia faktury), więc wywołujący musi przekazać dokumenty
-    z odpowiednio długiej historii wstecz (max payment_terms = 45 dni + bufor
-    na miesiące o różnej długości).
+    """Generates bank payments falling exactly on a given day — matches
+    among the `orders`/`supplier_invoices` from previous months (payment
+    arrives delayed by payment_terms/payment_due_date, not in the month the
+    invoice was issued), so the caller must pass in documents from a
+    sufficiently long history back (max payment_terms = 45 days + a buffer
+    for months of different lengths).
 
-    Zwraca pary (BankTransaction, Voucher) — w przeciwieństwie do
-    generate_monthly_orders()/generate_monthly_supplier_invoices() (które
-    zwracają same dokumenty, a Voucher buduje osobno wołający), tu para jest
-    nierozłączna: BankTransaction bez odpowiadającego Vouchera nie ma sensu
-    księgowo, a policzenie Vouchera bez ponownego przeliczania payment_date
-    byłoby niepotrzebnym powielaniem logiki z build_incoming_payment/
-    build_outgoing_payment."""
+    Returns (BankTransaction, Voucher) pairs — unlike
+    generate_monthly_orders()/generate_monthly_supplier_invoices() (which
+    return only the documents, with the Voucher built separately by the
+    caller), here the pair is inseparable: a BankTransaction without its
+    matching Voucher makes no accounting sense, and computing the Voucher
+    without recomputing payment_date would be an unnecessary duplication of
+    the logic already in build_incoming_payment/build_outgoing_payment."""
     today = date(year, month, day)
     results: list[tuple[BankTransaction, Voucher]] = []
 
@@ -151,9 +153,9 @@ def generate_daily_bank_transactions(
 
 
 def build_outgoing_payment(invoice: SupplierInvoice) -> tuple[BankTransaction, Voucher]:
-    """Firma płaci fakturę zakupu (SupplierInvoice) — wypływ z konta bankowego.
-    date = invoice.paymentDueDate."""
-    assert invoice.paymentDueDate is not None, "SupplierInvoice bez paymentDueDate nie generuje płatności"
+    """The company pays a purchase invoice (SupplierInvoice) — a bank
+    account outflow. date = invoice.paymentDueDate."""
+    assert invoice.paymentDueDate is not None, "A SupplierInvoice without paymentDueDate does not generate a payment"
     amount = round(invoice.amountCurrency, 2)
     payment_date = invoice.paymentDueDate
 
@@ -184,23 +186,24 @@ def build_outgoing_payment(invoice: SupplierInvoice) -> tuple[BankTransaction, V
 def generate_payroll_bank_transaction(
     transaction: SalaryTransaction, vouchers: list[Voucher]
 ) -> Optional[tuple[BankTransaction, Voucher]]:
-    """Firma wypłaca listę płac — wypływ z konta bankowego (Krok 2, naprawa
-    luki: payroll nigdy nie generował BankTransaction, zob. moduł-level
-    docstring). Kwoty NIE liczone od nowa — wyciągnięte z postingów
-    zobowiązaniowych (2710/2740/2700) `vouchers` zwróconych przez
-    `salary_generator.generate_monthly_salary()` (te same dwa vouchery co
-    zawsze: lista płac + AGA), żeby wypłata gwarantowanie zgadzała się co
-    do grosza z tym, co faktycznie zaksięgowano jako zobowiązanie — nie ma
-    ryzyka rozjazdu przez duplikowanie logiki obliczeniowej.
+    """The company pays out payroll — a bank account outflow (Step 2, gap
+    fix: payroll never generated a BankTransaction, see the module-level
+    docstring). Amounts are NOT recomputed from scratch — they're pulled
+    from the liability postings (2710/2740/2700) of the `vouchers` returned
+    by `salary_generator.generate_monthly_salary()` (the same two vouchers
+    as always: payroll + AGA), so the payout is guaranteed to match, down
+    to the øre, what was actually booked as a liability — no risk of drift
+    from duplicating the calculation logic.
 
-    `transaction.id` MUSI być już prawdziwym ID z bazy (nie None) — wołający
-    ustawia je po `save_salary()` (zob. `run_daily.py`) albo po ręcznym
-    dociągnięciu z bazy (zob. `scripts/archive/fix_missing_payroll_transactions.py`).
+    `transaction.id` MUST already be a real ID from the database (not
+    None) — the caller sets it after `save_salary()` (see `run_daily.py`)
+    or after manually pulling it from the database (see
+    `scripts/archive/fix_missing_payroll_transactions.py`).
 
-    Zwraca None jeśli w `vouchers` nie ma żadnego postingu zobowiązaniowego
-    (nie powinno się zdarzyć dla prawdziwej listy płac — zabezpieczenie na
-    pusty/zerowy miesiąc)."""
-    assert transaction.id is not None, "generate_payroll_bank_transaction: transaction.id musi być ustawione (prawdziwe ID z bazy)"
+    Returns None if `vouchers` contains no liability posting at all
+    (shouldn't happen for a real payroll run — a safeguard for an
+    empty/zero month)."""
+    assert transaction.id is not None, "generate_payroll_bank_transaction: transaction.id must be set (a real ID from the database)"
 
     owed_by_account: dict[int, float] = {}
     for voucher in vouchers:
