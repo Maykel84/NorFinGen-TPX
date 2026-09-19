@@ -1012,3 +1012,31 @@ grep -rlP '[ąćęłńóśźż]' --include="*.py" --include="*.md" --include="*.
 Pokazuje wyłącznie pliki świadomie poza zakresem tej sesji (`SESSION_HANDOFF.md`, `api/`, `scripts/` poza archiwum, `tests/`, root) + jeden zamierzony wyjątek danych (`supplier_invoice_generator.py`, `MICROSOFT_COST_LINES`) — zgodnie z oczekiwaniem, nic pominiętego przypadkiem w ustalonym zakresie.
 
 **Nie wypchnięte na `origin/main`** — 8 commitów tłumaczenia + 3 z wcześniejszego porządkowania repo tej samej sesji czekają na `git push` (decyzja użytkownika o samodzielnym pushowaniu, ustalona wcześniej w tej sesji).
+
+---
+
+## Konwencja: commit messages w pełni po angielsku (2026-09-19)
+
+Użytkownik zauważył, że widok listy plików na GitHub pokazuje ostatni commit message dotykający każdego pliku/folderu — większość z nich była po polsku (prefiks `feat:`/`fix:`/`docs:` po angielsku, reszta treści po polsku, zgodnie z językiem roboczym całej dotychczasowej współpracy). Przepisanie istniejącej historii (rebase + force-push na publicznym repo, 65+ commitów) zostało świadomie odrzucone jako zbyt ryzykowne/destrukcyjne.
+
+**Ustalona zasada (wiążąca od teraz, wszystkie przyszłe sesje):** każdy nowy commit message w tym repo jest w całości po angielsku — temat i treść, nie tylko prefiks. Historia istniejących commitów zostaje bez zmian, żadnego rebase/force-push. Zapisane też w pamięci sesji Claude (`feedback_english_commit_messages.md`), żeby zasada przenosiła się między sesjami automatycznie.
+
+## Przebudowa treści portalu — jasność "co to jest i po co" (2026-09-19)
+
+Realny feedback użytkownika testującego `norfingen-api.fly.dev/portal` po raz pierwszy: strona zakładała, że odwiedzający już wie czym jest NorFinGen/API/klucz — klasyczna "klątwa wiedzy". Zadanie: przebudować TREŚĆ strony (nie backend — żaden endpoint się nie zmienił), zachowując istniejący design system (pastelowe/organiczne UI, przełącznik PL/EN, jasny/ciemny motyw).
+
+### Co zmieniono w `api/static/portal/index.html`
+
+1. **Nowa warstwa hero** — dwa zdania przed czymkolwiek technicznym: czym to jest (żywy zbiór danych fikcyjnej firmy) i po co (do przeglądania/analizy/budowania, bez instalacji).
+2. **Nowa sekcja "What can I do with this?"** — 4 karty, każda dla innego poziomu zaangażowania, każda z jasnym "dla kogo"/"co dostaniesz" i jednym CTA prowadzącym do istniejącej funkcjonalności: raport analityczny (link zewnętrzny), pobranie danych (`#section-export`), żywe połączenie (`#section-db`), klucz API (`#section-key`). To najważniejsza zmiana tej sesji — bezpośrednia odpowiedź na feedback.
+3. **Statyczny wykres-próbka** ("Here's a taste of what's inside") — mały SVG sparkline + podpis (8 lat historii, 47 klientów, fuzja/pandemia/utracony kontrakt/odbicie) — konkret przed decyzją, którą ścieżkę wybrać.
+4. **Sekcje techniczne przeniesione niżej i przenumerowane** (1. Download → 2. Connect → 3. API key → 4. More, zgodnie z rosnącym poziomem zaangażowania), każda z 1-2 zdaniami kontekstu PRZED formularzem (np. sekcja klucza API: czym jest API/klucz, kto go potrzebuje, kto NIE — odsyła do prostszych ścieżek wyżej).
+5. **Żargon wyjaśniony inline przy pierwszym użyciu**: "API" (sposób w jaki programy wymieniają dane), connection string/host/port ("szczegóły techniczne — wystarczy skopiować dokładnie"), rate limit ("limit bezpieczeństwa liczby zapytań, żeby usługa działała szybko dla wszystkich" — dodane jako `.hint` pod polem rate limit w key-box).
+
+Obie wersje językowe (PL/EN) kompletne — nowe klucze w słowniku `I18N` w JS (m.in. `heroP1/2`, `pathsHeading`, `path1-4Title/Desc/Cta`, `tasteHeading/Caption`, `exportIntro`, `dbAccessJargonNote`, `keyIntro`, `rateLimitHint`).
+
+### Weryfikacja
+
+Zweryfikowane w przeglądarce (desktop + mobile 375px + ciemny motyw + oba języki): hero czytelne bez kontekstu z wcześniejszych sesji, wszystkie 4 CTA prowadzą do działających sekcji (żaden martwy link — `href="#section-export"`/`#section-db"`/`#section-key"` sprawdzone przez `find`, link do raportu to prawdziwy zewnętrzny URL), grid kart 2×2 składa się do jednej kolumny na mobile. "Download the data" da się kliknąć i użyć bez rozumienia czym jest API/klucz/baza — sekcja pobierania nie wymaga niczego poza kliknięciem.
+
+Zmiana czysto frontendowa/treściowa — brak zmian w `api/routers/*`, `api/export_data.py`, `api/rate_limit.py`. Nie testowano end-to-end na żywym Fly (nie było takiej potrzeby — logika request/response niezmieniona).
