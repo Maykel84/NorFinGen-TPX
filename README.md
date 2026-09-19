@@ -43,9 +43,9 @@ day — this is not a static dataset.
 
 ## Explore it
 
-- **Live analytics report:** [maykel84.github.io/raport](https://maykel84.github.io/raport)
-  — revenue, profitability, customers, headcount, cash flow, forecasts,
-  and a full timeline of the business events behind the numbers
+- **Live analytics report:** [norfingen-analytics.streamlit.app](https://norfingen-analytics.streamlit.app/)
+  — revenue, cost, profit, margin, client coverage, and history, reading
+  live from the same database (EN/PL/NO)
 - **Try the data yourself:** a [REST API](https://norfingen-api.fly.dev/docs)
   with an API key (Tripletex-style `GET` + key), or read-only test access
   via Power BI/Tableau/direct SQL — see [docs/API_ACCESS.md](docs/API_ACCESS.md)

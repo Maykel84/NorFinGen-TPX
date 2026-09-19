@@ -1040,3 +1040,13 @@ Obie wersje językowe (PL/EN) kompletne — nowe klucze w słowniku `I18N` w JS 
 Zweryfikowane w przeglądarce (desktop + mobile 375px + ciemny motyw + oba języki): hero czytelne bez kontekstu z wcześniejszych sesji, wszystkie 4 CTA prowadzą do działających sekcji (żaden martwy link — `href="#section-export"`/`#section-db"`/`#section-key"` sprawdzone przez `find`, link do raportu to prawdziwy zewnętrzny URL), grid kart 2×2 składa się do jednej kolumny na mobile. "Download the data" da się kliknąć i użyć bez rozumienia czym jest API/klucz/baza — sekcja pobierania nie wymaga niczego poza kliknięciem.
 
 Zmiana czysto frontendowa/treściowa — brak zmian w `api/routers/*`, `api/export_data.py`, `api/rate_limit.py`. Nie testowano end-to-end na żywym Fly (nie było takiej potrzeby — logika request/response niezmieniona).
+
+## Nowy link do raportu analitycznego: Streamlit zamiast statycznego GitHub Pages (2026-09-19)
+
+Stary link "Live analytics report" (`maykel84.github.io/raport`) prowadził do osobnego repo (`raport-site`), ręcznie regenerowanego jednorazowym skryptem po każdej większej zmianie danych — ze znaną historią rozjazdów (zob. sekcje wyżej: headcount 38 vs 17, sekcja prognozy świadomie nieodświeżana). Użytkownik wskazał nowy adres: **`https://norfingen-analytics.streamlit.app/`** — działająca aplikacja Streamlit (zweryfikowana w przeglądarce: revenue/cost/profit/margin/clients, wykres historii, mapa pokrycia klientów, przełącznik EN/PL/NO), prawdopodobnie czytająca live z tej samej bazy zamiast statycznego snapshotu.
+
+Zaktualizowane odwołania (tylko link, żadna logika/dane w tym repo się nie zmieniły):
+- `api/static/portal/index.html` — karta "View the analytics report" (ścieżka 1) + link w sekcji "4. More"
+- `README.md` — sekcja "Explore it", opis skrócony do tego co dashboard faktycznie pokazuje (revenue/cost/profit/margin/client coverage/history), bez wymieniania funkcji (np. "forecasts") niepotwierdzonych w nowej aplikacji
+
+Stare wpisy w tym pliku odnoszące się do `maykel84.github.io/raport`/`raport-site` **celowo pozostawione bez zmian** — to log historyczny tamtej (już nieaktualnej) integracji, nie dokumentacja obecnego stanu. Kod aplikacji Streamlit żyje poza tym repo (analogicznie jak poprzedni `raport-site`) — brak wglądu w jej źródło/pipeline z tej sesji.
