@@ -312,8 +312,11 @@
   @media (max-width: 480px) {
     .top-controls { top: 14px; right: 14px; }
   }
-  .hero-p { color: var(--muted); margin: 0 0 14px; max-width: 58ch; }
+  .hero-p { color: var(--muted); margin: 0 0 14px; padding-left: 68px; max-width: 58ch; }
   .hero-p:last-of-type { margin-bottom: 32px; }
+  @media (max-width: 480px) {
+    .hero-p { padding-left: 0; }
+  }
   .paths-heading {
     font-family: "Quicksand", "Nunito", sans-serif;
     font-weight: 600;
