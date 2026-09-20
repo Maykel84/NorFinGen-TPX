@@ -35,6 +35,7 @@ from datetime import date, timedelta
 
 from norfingen.generators.client_events import event_aware_is_customer_active, hardship_ticket_multiplier_for
 from norfingen.generators.company_events import unprofitable_quarter_ticket_multiplier
+from norfingen.generators.leave_events import active_leave_period
 from norfingen.generators.macro_shock import apply_macro_shock_multiplier
 from norfingen.generators.seasonality import fellesferie_activity_multiplier
 from norfingen.models.hours import ActivityType, HourEntry
@@ -55,7 +56,13 @@ LEVERANSE_DEPARTMENT = 2
 TEKNOLOGI_DEPARTMENT = 3
 
 FULL_WORKDAY_HOURS = 7.5
-SICK_PROBABILITY = 0.05
+SICK_PROBABILITY = 0.05  # short, self-certified single-day sick leave
+
+LEAVE_DESCRIPTIONS = {
+    ActivityType.SICK: "Sykefravær",
+    ActivityType.MATERNITY_LEAVE: "Foreldrepermisjon",
+    ActivityType.PATERNITY_LEAVE: "Foreldrepermisjon (fedrekvote)",
+}
 
 BASE_YEAR = 2019
 ROTATION_PERIOD_QUARTERS = 5  # ~15 months (the 12-18 range from the task)
@@ -267,8 +274,12 @@ def generate_daily_support_hours(
 def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: list[int]) -> list[HourEntry]:
     """Generates hour entries for a specific working day.
 
-    Logic (Phase 6, Tasks 3/4):
-    - Every active billable employee: ~5% chance of sick leave (0h billable,
+    Logic (Phase 6, Tasks 3/4; leave periods added later, see leave_events.py):
+    - Every active billable employee first checked against
+      leave_events.active_leave_period — if they're inside a precomputed
+      long-term SICK/MATERNITY_LEAVE/PATERNITY_LEAVE block, that's the whole
+      day (0h billable, one entry), nothing else below applies to them.
+    - Otherwise: ~5% chance of a short, self-certified sick day (0h billable,
       a SICK entry).
     - Leveranse: the ticketing model (generate_daily_support_hours) over a
       portfolio covering all active customers.
@@ -313,12 +324,22 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
     maintenance_assignment = assign_customers_to_consultants(maintenance_customers, teknologi_employees, year, month)
 
     for emp_id in billable_ids:
+        leave = active_leave_period(emp_id, d)
+        if leave is not None:
+            entries.append(HourEntry(
+                date=d, employee_id=emp_id,
+                activity_type=leave.activity_type,
+                hours=0.0,
+                description=LEAVE_DESCRIPTIONS[leave.activity_type],
+            ))
+            continue
+
         if rng.random() < SICK_PROBABILITY:
             entries.append(HourEntry(
                 date=d, employee_id=emp_id,
                 activity_type=ActivityType.SICK,
                 hours=0.0,
-                description="Sykefravær",
+                description=LEAVE_DESCRIPTIONS[ActivityType.SICK],
             ))
             continue
 

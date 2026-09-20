@@ -16,7 +16,10 @@ from pydantic import BaseModel, ConfigDict
 class ActivityType(str, Enum):
     BILLABLE = "BILLABLE"  # billable — assigned to a customer project
     INTERNAL = "INTERNAL"  # internal — meetings, admin
-    SICK = "SICK"  # sick leave
+    SICK = "SICK"  # sick leave — both short self-certified days (hours_generator's
+    # daily coin flip) and longer certified blocks (see generators/leave_events.py)
+    MATERNITY_LEAVE = "MATERNITY_LEAVE"  # foreldrepermisjon, primary-caregiver leave (~30-49 weeks)
+    PATERNITY_LEAVE = "PATERNITY_LEAVE"  # foreldrepermisjon, secondary-caregiver/"fedrekvote" leave (~10-15 weeks)
 
 
 class HourEntry(BaseModel):

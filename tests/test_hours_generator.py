@@ -56,6 +56,9 @@ def test_generate_daily_hours_respects_active_employee_filter():
     assert entry_employee_ids.issubset({2, 3})
 
 
+ZERO_HOUR_TYPES = {ActivityType.SICK, ActivityType.MATERNITY_LEAVE, ActivityType.PATERNITY_LEAVE}
+
+
 def test_billable_and_internal_sum_to_full_workday():
     entries = generate_daily_hours(2024, 1, 8, ALL_EMPLOYEE_IDS)
     by_employee: dict[int, list] = {}
@@ -64,7 +67,7 @@ def test_billable_and_internal_sum_to_full_workday():
 
     for emp_id, emp_entries in by_employee.items():
         types = {e.activity_type for e in emp_entries}
-        if ActivityType.SICK in types:
+        if types & ZERO_HOUR_TYPES:
             assert len(emp_entries) == 1
             assert emp_entries[0].hours == 0.0
             assert emp_entries[0].project_id is None
@@ -125,6 +128,17 @@ def test_deterministic_across_calls():
     b = generate_daily_hours(2024, 3, 12, ALL_EMPLOYEE_IDS)
     assert [(e.employee_id, e.activity_type, e.hours, e.project_id) for e in a] == \
            [(e.employee_id, e.activity_type, e.hours, e.project_id) for e in b]
+
+
+def test_employee_on_leave_logs_a_single_zero_hour_entry():
+    # E04 is deterministically on PATERNITY_LEAVE 2019-09-15..2019-12-19
+    # (see test_leave_events.py) — a Tuesday well inside that window.
+    entries = generate_daily_hours(2019, 10, 1, [4])
+    assert len(entries) == 1
+    assert entries[0].employee_id == 4
+    assert entries[0].activity_type == ActivityType.PATERNITY_LEAVE
+    assert entries[0].hours == 0.0
+    assert entries[0].project_id is None
 
 
 def test_fellesferie_reduces_july_billable_ticket_hours():

@@ -1050,3 +1050,31 @@ Zaktualizowane odwołania (tylko link, żadna logika/dane w tym repo się nie zm
 - `README.md` — sekcja "Explore it", opis skrócony do tego co dashboard faktycznie pokazuje (revenue/cost/profit/margin/client coverage/history), bez wymieniania funkcji (np. "forecasts") niepotwierdzonych w nowej aplikacji
 
 Stare wpisy w tym pliku odnoszące się do `maykel84.github.io/raport`/`raport-site` **celowo pozostawione bez zmian** — to log historyczny tamtej (już nieaktualnej) integracji, nie dokumentacja obecnego stanu. Kod aplikacji Streamlit żyje poza tym repo (analogicznie jak poprzedni `raport-site`) — brak wglądu w jej źródło/pipeline z tej sesji.
+
+## Dłuższe nieobecności: zwolnienia lekarskie (długoterminowe) i urlopy rodzicielskie (2026-09-20)
+
+Prośba użytkownika: dodać do danych o zatrudnieniu informacje o zwolnieniach lekarskich i urlopach macierzyńskich/tacierzyńskich w Norwegii, tak żeby były widoczne w raporcie. `hour_entries` już miało krótkoterminowe `SICK` (5% szans dziennie, losowane osobno każdego dnia, `hours_generator.SICK_PROBABILITY`) — to modelowało tylko jednodniowe, samodeklarowane absencje ("egenmelding"), nie dłuższe, zaświadczone nieobecności ani urlop rodzicielski, którego w ogóle nie było.
+
+### Co dodano
+
+Nowy moduł `src/norfingen/generators/leave_events.py`, ten sam wzorzec co `client_events.py`/`company_events.py` — czysta, memoizowana funkcja `employee_leave_periods(employee_id) -> tuple[LeavePeriod, ...]`, deterministyczna wyłącznie na podstawie `employee_id` i daty startu zatrudnienia (bez zależności od "dziś" — bezpieczne przy wielu niezależnych procesach backfillu). Dla każdego pracownika, z pewnym prawdopodobieństwem, w losowym momencie kariery:
+- **długie, zaświadczone zwolnienie lekarskie** (`SICK`, ~3-12 tygodni, 12% szans na wystąpienie w całym stażu),
+- **urlop rodzicielski** (`foreldrepermisjon`, 18% szans): **`MATERNITY_LEAVE`** (dłuższy, opiekun główny, ~30-49 tygodni) albo **`PATERNITY_LEAVE`** (`fedrekvote`, krótszy, opiekun dodatkowy, ~10-15 tygodni), wybierane 50/50.
+
+**Świadomie bez pola płci** — `EmployeeSeed` go nie ma, a dodawanie go tylko pod tę jedną funkcję byłoby nieproporcjonalne. Oba typy urlopu rodzicielskiego są losowane symetrycznie dla każdego pracownika, nie przypisane do konkretnej (fikcyjnej) płci.
+
+`hours_generator.generate_daily_hours()` sprawdza teraz `leave_events.active_leave_period()` na początku pętli po pracownikach billable — jeśli dany dzień wypada w takim okresie, cały dzień to jeden wpis 0h danego typu (bez BILLABLE/INTERNAL), analogicznie do istniejącego wzorca SICK. Wynagrodzenie (`salary_generator`) pozostaje niezależne od godzin — jak dotychczas, bez zmian — co zresztą odpowiada rzeczywistości: w Norwegii pracodawca nadal wypłaca pensję w trakcie zwolnienia/urlopu (i część odzyskuje z NAV).
+
+### Zakres — tylko pracownicy billable
+
+Tak jak cały mechanizm `hour_entries`, obejmuje wyłącznie pracowników działów Leveranse/Teknologi (ci sami, którzy w ogóle logują godziny — patrz istniejące ograniczenie `v_headcount_monthly` w `DATA_DICTIONARY.md`). Dział Salg/Økonomi nadal nie ma żadnego śledzenia na poziomie godzin — rozszerzenie o nich byłoby osobną, większą zmianą architektoniczną, nie zrobione w tej sesji.
+
+### Zmiany
+
+- `src/norfingen/models/hours.py` — `ActivityType` + `MATERNITY_LEAVE`, `PATERNITY_LEAVE` (obok istniejącego `SICK`); brak zmian w schemacie bazy (`activity_type VARCHAR(20)`, bez `CHECK` — nowe wartości mieszczą się bez migracji)
+- `src/norfingen/generators/leave_events.py` — nowy plik
+- `src/norfingen/generators/hours_generator.py` — integracja + `LEAVE_DESCRIPTIONS` (DRY z istniejącym opisem "Sykefravær")
+- `docs/DATA_DICTIONARY.md` — sekcja `hour_entries` rozszerzona o nowe wartości i opis mechanizmu
+- `tests/test_leave_events.py` (nowy, 7 testów) + 2 nowe/zmienione testy w `tests/test_hours_generator.py` — **265/265 testów zielone** (było 257)
+
+Nie dotknięto: `salary_generator.py`, `payroll.py`, żadnej logiki księgowej/P&L — `hour_entries` generuje zero postingów, więc to czysto operacyjna zmiana, bez wpływu na wynik finansowy. Nie backfillowano historii na nowo (przeszłe dni w bazie Supabase zostają jak są) — nowa logika zacznie działać przy najbliższym uruchomieniu `daily.yml` / kolejnym backfillu.

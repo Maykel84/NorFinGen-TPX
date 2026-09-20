@@ -302,11 +302,13 @@ Business meaning: the actual movement on the bank account, time-shifted relative
 | id | SERIAL (PK) | |
 | date | DATE | A working day (Mon-Fri) |
 | employee_id | INTEGER (FK) | Only 12 of 17 employees log hours (Leveranse/Teknologi departments, excluding E05) |
-| project_id | INTEGER (FK) | NULL for INTERNAL/SICK |
-| activity_type | VARCHAR(20) | BILLABLE / INTERNAL / SICK |
-| hours | NUMERIC(4,1) | Hours, BILLABLE+INTERNAL sum = 7.5/day (or SICK=0) |
+| project_id | INTEGER (FK) | NULL for INTERNAL/SICK/MATERNITY_LEAVE/PATERNITY_LEAVE |
+| activity_type | VARCHAR(20) | BILLABLE / INTERNAL / SICK / MATERNITY_LEAVE / PATERNITY_LEAVE |
+| hours | NUMERIC(4,1) | Hours, BILLABLE+INTERNAL sum = 7.5/day (or 0 for SICK/MATERNITY_LEAVE/PATERNITY_LEAVE) |
 
-Business meaning: consultant timesheets. **Generates no accounting postings at all** — purely operational data (no effect on the P&L, independent of `salary_generator`). Limitation: BILLABLE only for projects whose customer is already onboarded and hasn't churned yet — otherwise the whole day is logged as INTERNAL.
+Business meaning: consultant timesheets. **Generates no accounting postings at all** — purely operational data (no effect on the P&L, independent of `salary_generator`; salary keeps being paid through sick/parental leave exactly as through any other day, matching how it actually works in Norway). Limitation: BILLABLE only for projects whose customer is already onboarded and hasn't churned yet — otherwise the whole day is logged as INTERNAL.
+
+**Long-absence periods (`generators/leave_events.py`)**: on top of the ~5% per-day chance of a short, self-certified SICK day (rolled independently every day), each billable employee also has a small, one-time-per-tenure chance of a longer, *certified* absence block — long-term SICK (~3-12 weeks), or one parental-leave event (Norwegian-style `foreldrepermisjon`): either a long primary-caregiver **MATERNITY_LEAVE** (~30-49 weeks) or a shorter secondary-caregiver **PATERNITY_LEAVE** (`fedrekvote`, ~10-15 weeks), picked 50/50 — deliberately not tied to gender, since `EmployeeSeed` has no gender field. These periods are precomputed deterministically per `employee_id` (`employee_leave_periods()`, memoized like `client_events.py`/`company_events.py` — pure function, no "today" input, safe across the backfill's separate OS processes) and, while active, replace that whole day with a single 0h entry of the matching type — no BILLABLE/INTERNAL logged for that employee that day. Scope: billable employees only (the only ones with any hour-level tracking in this project already — see the `v_headcount_monthly` limitation noted below).
 
 **A fixed idempotency bug (the 2026-09-04 incident, see `SESSION_HANDOFF.md`)**: `UNIQUE(date, employee_id, project_id, activity_type)` **never protected INTERNAL/SICK rows** (`project_id` is always `NULL` — Postgres treats `NULL <> NULL`, so two identical such rows don't violate this UNIQUE). Two overlapping `run_daily()` runs for the same day (the backfill + probably `daily.yml`) actually duplicated 12 entries in the live database — BILLABLE rows (`project_id NOT NULL`) deduplicated correctly, INTERNAL/SICK didn't. Fixed: a partial index `hour_entries_unique_null_project ON hour_entries (date, employee_id, activity_type) WHERE project_id IS NULL` (`schema.sql`) + `repository._save_hour_entry` changed from a named `ON CONFLICT (...)` to `ON CONFLICT DO NOTHING` with no column list (catches both indexes).
 
