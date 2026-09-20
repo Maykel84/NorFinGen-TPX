@@ -18,8 +18,9 @@ class ActivityType(str, Enum):
     INTERNAL = "INTERNAL"  # internal — meetings, admin
     SICK = "SICK"  # sick leave — both short self-certified days (hours_generator's
     # daily coin flip) and longer certified blocks (see generators/leave_events.py)
-    MATERNITY_LEAVE = "MATERNITY_LEAVE"  # foreldrepermisjon, primary-caregiver leave (~30-49 weeks)
-    PATERNITY_LEAVE = "PATERNITY_LEAVE"  # foreldrepermisjon, secondary-caregiver/"fedrekvote" leave (~10-15 weeks)
+    VACATION = "VACATION"  # ferie — the statutory 25 days/year (see generators/vacation.py)
+    PARENTAL_LEAVE = "PARENTAL_LEAVE"  # foreldrepermisjon (~20-49 weeks) — not gender-assigned, see leave_events.py
+    WELFARE_LEAVE = "WELFARE_LEAVE"  # velferdspermisjon — short, occasional (1-3 days)
 
 
 class HourEntry(BaseModel):
@@ -28,7 +29,7 @@ class HourEntry(BaseModel):
     id: Optional[int] = None
     date: date
     employee_id: int
-    project_id: Optional[int] = None  # None for INTERNAL/SICK
+    project_id: Optional[int] = None  # None for anything but BILLABLE
     activity_type: ActivityType
     hours: float  # 0.5 - 7.5
     description: Optional[str] = None

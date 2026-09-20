@@ -1078,3 +1078,66 @@ Tak jak cały mechanizm `hour_entries`, obejmuje wyłącznie pracowników dział
 - `tests/test_leave_events.py` (nowy, 7 testów) + 2 nowe/zmienione testy w `tests/test_hours_generator.py` — **265/265 testów zielone** (było 257)
 
 Nie dotknięto: `salary_generator.py`, `payroll.py`, żadnej logiki księgowej/P&L — `hour_entries` generuje zero postingów, więc to czysto operacyjna zmiana, bez wpływu na wynik finansowy. Nie backfillowano historii na nowo (przeszłe dni w bazie Supabase zostają jak są) — nowa logika zacznie działać przy najbliższym uruchomieniu `daily.yml` / kolejnym backfillu.
+
+## Realny model godzin: 4 typy nieobecności + wszystkie działy (2026-09-20)
+
+Kolejny, dużo bardziej szczegółowy prompt na ten sam temat co powyżej — feedback użytkownika: wykres "Godziny" wygląda płasko, brakuje realnych norweskich typów nieobecności (urlop, urlop rodzicielski), Salg/Økonomi nie mają w ogóle śledzenia godzin. Ten prompt **zastępuje** poprzedni mechanizm `MATERNITY_LEAVE`/`PATERNITY_LEAVE` (z sekcji wyżej) jednym typem `PARENTAL_LEAVE`, losowanym co roku (nie raz na cały staż) — patrz Zadanie 1c poniżej, świadoma konsolidacja zgodnie z jawnym, szczegółowym pseudokodem tego promptu.
+
+### Ustalenie zakresu — potwierdzone bez pytania
+
+`salary_transactions` liczone są z `employments`/etatów, NIE z `hour_entries` (zweryfikowane: `salary_generator.py` nigdy nie importuje `hours_generator`/`leave_events`/`vacation`, zero wzmianek o `hour_entries` w źródle — `test_salary_generator_module_does_not_import_hours_at_all`). To ograniczało ryzyko do jednego pytania: czy więcej dni nieobecności obniża godziny BILLABLE (które napędzają przychód w modelu ticketowym Fazy 6) na tyle, żeby to miało znaczenie — stąd bezpiecznik w Zadaniu 4b.
+
+Założenie promptu o `activity_type="INTERNAL"` dla Salg zweryfikowane jako bezpieczne: `order_generator.py` (przychód) ma zero zależności od `hour_entries`/`hours_generator` — nie trzeba było pytać.
+
+### Co dodano/zmieniono
+
+**`ActivityType`** (`models/hours.py`): `MATERNITY_LEAVE`/`PATERNITY_LEAVE` **usunięte**, zastąpione przez `VACATION`, `PARENTAL_LEAVE` (pojedynczy typ), `WELFARE_LEAVE`. `SICK` bez zmian znaczenia. Bez migracji bazy (`VARCHAR(20)` bez `CHECK`).
+
+**`generators/leave_events.py`** (przepisany): trzy niezależne, deterministyczne mechanizmy per `employee_id`, każdy z osobnym stringowym seedem:
+- długie, zaświadczone `SICK` (~3-12 tyg., 12% szans raz na cały staż — bez zmian z poprzedniej sesji),
+- `PARENTAL_LEAVE` (`foreldrepermisjon`, 20-49 tyg.) — **losowane co roku** (6%/rok, ~1 przypadek/rok na 17-osobowy zespół, zgodnie z pseudokodem promptu), z 2-letnim cooldownem po wystąpieniu; **świadomie bez przypisania płci** — `EmployeeSeed` nie ma takiego pola, więc każdy pracownik ma symetryczną szansę,
+- `WELFARE_LEAVE` (1-3 dni, 15%/rok, bez cooldownu — może się powtarzać).
+
+**`generators/vacation.py`** (nowy): `employee_vacation_days(employee_id, year)` — twardo 25 dni/rok (norweskie ustawowe minimum), proporcjonalnie dla niepełnego roku (pracownik zatrudniony w trakcie roku; `EmployeeSeed` nie ma daty zwolnienia, więc to jedyny przypadek proporcjonalności). Rozkład: ~15-dniowy ciągły blok w lipcu (fellesferie), 2-4-dniowe skupiska wokół Wielkanocy (dokładna data liczona algorytmem computus) i Bożego Narodzenia, reszta rozproszona. Omija dni już zajęte przez `leave_events` dla tego pracownika — jeśli ktoś większość roku spędza na `PARENTAL_LEAVE`, faktycznie umieszczonych dni urlopu wychodzi mniej niż 25 (brak miejsca w kalendarzu, świadomie zaakceptowane, nie obchodzone dalej).
+
+**`hours_generator.py`**: pętla generująca rozszerzona na WSZYSTKICH aktywnych pracowników (poza E05 — jedynym stałym, świadomym wyjątkiem sprzed Fazy 4, teraz wykluczonym z całego śledzenia godzin, nie tylko z billable). Kolejność per pracownik: `leave_events.active_leave_period` → `vacation.is_vacation_day` → 5% szans na krótkotrwałe `SICK` → dopiero potem logika działowa:
+- Leveranse/Teknologi: bez zmian (model ticketowy/onboardingowy Fazy 6),
+- **Salg** (`generate_salg_daily_hours`, nowy): nieregularne, ~40% dni roboczych, 1,5-4h, `INTERNAL`,
+- **Økonomi** (`generate_okonomi_daily_hours`, nowy): regularne 6,5-7,5h, z mnożnikiem 1,3x (limit 9h) w ostatnich 3 dniach roboczych miesiąca (`is_month_end_closing_period`).
+
+**Ważna decyzja architektoniczna**: przydział portfela klient-konsultant (`assign_customers_to_consultants`) dla Leveranse/Teknologi **celowo NIE filtruje** listy konsultantów po tym, kto akurat jest nieobecny danego dnia — filtrowanie dziennie rozbiłoby stabilną, ~15-miesięczną rotację (Zadanie 5c z Fazy 6) za każdym razem, gdy ktoś weźmie jeden dzień chorobowego. Nieobecni pracownicy są po prostu pomijani w finalnej pętli emitującej wpisy, portfel liczony jest zawsze z pełnej listy billable.
+
+### Bezpiecznik z Zadania 4b — WYNIK: PASS
+
+Policzone offline (bez zapisu do bazy), suma godzin BILLABLE Leveranse/Teknologi za 2025:
+- **przed tą zmianą** (stan z poprzedniego commitu, tylko długie SICK + stary `MATERNITY_LEAVE`/`PATERNITY_LEAVE`): **9603,1h**
+- **po tej zmianie** (+ VACATION + coroczny `PARENTAL_LEAVE` + `WELFARE_LEAVE` + nowe działy): **9018,6h**
+- **spadek: 6,09%** — poniżej progu 15% z promptu → kontynuacja bez zatrzymywania się i pytania.
+
+Metoda: `git stash` (bez utraty zmian) → przełączenie working tree na poprzedni commit → uruchomienie `generate_daily_hours` dla każdego dnia roboczego 2025 z pełną listą aktywnych pracowników → suma `BILLABLE` → `git stash pop` → to samo na nowym kodzie.
+
+### Testy (Zadanie 5)
+
+`tests/test_leave_events.py` (przepisany pod nowy `PARENTAL_LEAVE`), `tests/test_vacation.py` (nowy — w tym `test_annual_vacation_days_equals_25` na deterministycznym przypadku E01/2023, `test_easter_sunday_matches_known_dates`), `tests/test_hours_generator.py` (nowe: `test_salg_hours_irregular`, `test_okonomi_month_end_spike`, `test_employee_on_vacation_logs_a_single_zero_hour_entry`, przepisane: `test_generate_daily_hours_excludes_only_e05` zamiast starego "only billable"), `tests/test_salary_generator.py` (nowe: `test_payroll_unaffected_by_hours_changes` — pełny miesiąc `hour_entries` wygenerowany między dwoma wywołaniami `generate_monthly_salary`, wynik identyczny; `test_salary_generator_module_does_not_import_hours_at_all` — strażnik architektoniczny na przyszłość). **280/280 testów zielone** (było 265).
+
+### Dodatkowa, świadoma korzyść uboczna
+
+`v_headcount_monthly` (widok BI, `schema.sql`) liczy `COUNT(DISTINCT employee_id) FROM hour_entries` — udokumentowane wcześniej ograniczenie ("zaniża prawdziwy headcount, bo Salg/Økonomi nigdy nie logowały godzin") **znika samo z siebie** po tej zmianie, bo teraz te działy też logują — widok zacznie pokazywać prawdziwy headcount minus E05, gdy tylko backfill dla nowego kodu się odbędzie. Zaktualizowano komentarz w `schema.sql` i opis w `DATA_DICTIONARY.md`.
+
+### Zadanie 4c (TRUNCATE + backfill na żywej bazie) — NIE WYKONANE przeze mnie, jak zawsze w tym projekcie
+
+Zgodnie z ustalonym, wielokrotnie powtórzonym wzorcem tej współpracy (Faza 6, Faza 7b, audyt sekretów — zob. sekcje wyżej: "13g", "TRUNCATE + backfill na żywej bazie — NIE WYKONANE przeze mnie") **trwałe usuwanie danych z produkcyjnej bazy nigdy nie jest czymś, co wykonuję samodzielnie**, niezależnie od tego, że prompt opisuje to jako "standardową procedurę" tego projektu. Bezpiecznik (warunek wstępny z Zadania 4b) jest zrobiony i pozytywny — reszta czeka na Ciebie:
+
+```bash
+# 1. Wyłącz daily.yml w GitHub UI (Actions -> daily -> ... -> Disable workflow)
+# 2. TRUNCATE tylko hour_entries (żadna inna tabela nie jest tym promptem dotknięta):
+psql "$DATABASE_URL" -c "TRUNCATE hour_entries RESTART IDENTITY;"
+# 3. Backfill dzienny (jedyny tryb, który dotyka hour_entries) x2, dla pewności idempotencji:
+python run_backfill.py --mode daily --start 2019-01-01
+python run_backfill.py --mode daily --start 2019-01-01
+# 4. Włącz daily.yml z powrotem
+```
+
+**Uwaga o czasie**: dokumentacja `run_backfill.py` mówi wprost — tryb `daily` woła `run_daily()` raz na każdy dzień roboczy od 2019 (~1800+ dni), **czas rzędu godzin**. To jedyny powód, dla którego backfill dzienny (w przeciwieństwie do TRUNCATE, które jest natychmiastowe) nie jest czymś, co dałoby się bezpiecznie odpalić i zostawić bez nadzoru w ramach jednej sesji — ten sam wzorzec (retry/reconnect na zerwane połączenie) co przy poprzednich backfillach w tym projekcie.
+
+**Nie wykonano też `git tag v5.26-realistic-hours`** — zgodnie z konwencją tego projektu tagi wersji oznaczają stan PO potwierdzonym backfillu na żywej bazie (zob. `v5.25-portal-clarity` — tam backfill nie był potrzebny, bo to była zmiana czysto frontendowa). Tag do dodania po Twoim backfillu, albo mogę go dodać od razu po pushu kodu, jeśli wolisz — do ustalenia.

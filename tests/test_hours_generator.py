@@ -1,11 +1,14 @@
 import random
-from datetime import date
+from datetime import date, timedelta
 
 from norfingen.generators.hours_generator import (
     assign_customers_to_consultants,
     generate_daily_hours,
     generate_daily_support_hours,
+    generate_okonomi_daily_hours,
+    generate_salg_daily_hours,
     is_billable_employee,
+    is_month_end_closing_period,
     is_working_day,
 )
 from norfingen.models.hours import ActivityType
@@ -24,16 +27,20 @@ def test_generate_daily_hours_empty_on_weekend():
     assert generate_daily_hours(2024, 1, 6, ALL_EMPLOYEE_IDS) == []
 
 
-def test_generate_daily_hours_only_billable_employees():
-    entries = generate_daily_hours(2024, 1, 8, ALL_EMPLOYEE_IDS)
-    entry_employee_ids = {e.employee_id for e in entries}
-    assert all(is_billable_employee(eid) for eid in entry_employee_ids)
-    # E01 (Salg), E05 (Teknologi, jawny wyjątek), E06/E16 (Økonomi), E11 (Salg) nigdy nie logują.
-    assert 1 not in entry_employee_ids
-    assert 5 not in entry_employee_ids
-    assert 6 not in entry_employee_ids
-    assert 11 not in entry_employee_ids
-    assert 16 not in entry_employee_ids
+def test_generate_daily_hours_excludes_only_e05():
+    """Po rozszerzeniu na wszystkie działy (Salg/Okonomi) jedynym stale
+    wykluczonym pracownikiem jest E05 (jawny wyjątek, NON_BILLABLE_OVERRIDES).
+    Salg loguje nieregularnie (~40% dni), więc sprawdzamy obecność w skali
+    miesiąca, nie jednego dnia."""
+    seen: set[int] = set()
+    d = date(2024, 1, 1)
+    while d < date(2024, 2, 1):
+        entries = generate_daily_hours(d.year, d.month, d.day, ALL_EMPLOYEE_IDS)
+        seen.update(e.employee_id for e in entries)
+        d += timedelta(days=1)
+
+    assert 5 not in seen  # jawny wyjątek, nigdy nie loguje
+    assert seen == set(ALL_EMPLOYEE_IDS) - {5}  # E01/E06/E11/E16 (Salg/Okonomi) też logują
 
 
 def test_is_billable_employee_department_rule():
@@ -56,13 +63,16 @@ def test_generate_daily_hours_respects_active_employee_filter():
     assert entry_employee_ids.issubset({2, 3})
 
 
-ZERO_HOUR_TYPES = {ActivityType.SICK, ActivityType.MATERNITY_LEAVE, ActivityType.PATERNITY_LEAVE}
+ZERO_HOUR_TYPES = {ActivityType.SICK, ActivityType.VACATION, ActivityType.PARENTAL_LEAVE, ActivityType.WELFARE_LEAVE}
 
 
 def test_billable_and_internal_sum_to_full_workday():
+    """Ten pełny-dzień-workday invariant dotyczy tylko Leveranse/Teknologi —
+    Salg loguje niepełne, epizodyczne godziny z założenia (Zadanie 2a)."""
     entries = generate_daily_hours(2024, 1, 8, ALL_EMPLOYEE_IDS)
+    billable_entries = [e for e in entries if is_billable_employee(e.employee_id)]
     by_employee: dict[int, list] = {}
-    for e in entries:
+    for e in billable_entries:
         by_employee.setdefault(e.employee_id, []).append(e)
 
     for emp_id, emp_entries in by_employee.items():
@@ -131,14 +141,66 @@ def test_deterministic_across_calls():
 
 
 def test_employee_on_leave_logs_a_single_zero_hour_entry():
-    # E04 is deterministically on PATERNITY_LEAVE 2019-09-15..2019-12-19
+    # E03 is deterministically on PARENTAL_LEAVE 2021-04-22..2021-09-15
     # (see test_leave_events.py) — a Tuesday well inside that window.
-    entries = generate_daily_hours(2019, 10, 1, [4])
+    entries = generate_daily_hours(2021, 6, 1, [3])
     assert len(entries) == 1
-    assert entries[0].employee_id == 4
-    assert entries[0].activity_type == ActivityType.PATERNITY_LEAVE
+    assert entries[0].employee_id == 3
+    assert entries[0].activity_type == ActivityType.PARENTAL_LEAVE
     assert entries[0].hours == 0.0
     assert entries[0].project_id is None
+
+
+def test_employee_on_vacation_logs_a_single_zero_hour_entry():
+    # E01, 2023 — deterministically 25/25 VACATION days placed (see
+    # test_vacation.py), including a fellesferie block in July.
+    entries = generate_daily_hours(2023, 7, 12, [1])
+    assert len(entries) == 1
+    assert entries[0].employee_id == 1
+    assert entries[0].activity_type == ActivityType.VACATION
+    assert entries[0].hours == 0.0
+    assert entries[0].project_id is None
+
+
+def test_salg_hours_irregular():
+    """Dział Salg (E01) NIE loguje godzin każdego dnia roboczego — w skali
+    miesiąca powinny być zarówno dni z wpisem, jak i bez."""
+    logged_days = 0
+    total_days = 0
+    d = date(2024, 1, 1)
+    while d < date(2024, 4, 1):
+        if is_working_day(d):
+            total_days += 1
+            entries = generate_salg_daily_hours(1, d, random.Random(f"test-{d.isoformat()}"))
+            if entries:
+                logged_days += 1
+        d += timedelta(days=1)
+    assert 0 < logged_days < total_days
+
+
+def test_salg_hours_are_internal_and_within_declared_range():
+    rng = random.Random("salg-range-test")
+    for _ in range(200):
+        entries = generate_salg_daily_hours(1, date(2024, 3, 4), rng)
+        for e in entries:
+            assert e.activity_type == ActivityType.INTERNAL
+            assert 1.5 <= e.hours <= 4.0
+            assert e.project_id is None
+
+
+def test_okonomi_month_end_spike():
+    """Ostatnie dni miesiąca mają wyższe godziny Okonomi niż środek miesiąca."""
+    def avg_hours(d: date, n: int) -> float:
+        rng = random.Random(f"okonomi-test-{d.isoformat()}")
+        total = 0.0
+        for _ in range(n):
+            entries = generate_okonomi_daily_hours(6, d, rng)
+            total += sum(e.hours for e in entries)
+        return total / n
+
+    assert is_month_end_closing_period(date(2024, 1, 31)) is True
+    assert is_month_end_closing_period(date(2024, 1, 15)) is False
+    assert avg_hours(date(2024, 1, 31), 100) > avg_hours(date(2024, 1, 15), 100)
 
 
 def test_fellesferie_reduces_july_billable_ticket_hours():

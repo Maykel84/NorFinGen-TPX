@@ -1,7 +1,5 @@
-"""Long-absence periods per employee — certified (long) sick leave and
-parental leave, Norwegian-style (foreldrepermisjon: a longer
-primary-caregiver leave plus a shorter "fedrekvote" secondary-caregiver
-quota).
+"""Long-absence periods per employee — certified (long) sick leave, parental
+leave, and welfare/occasional leave, Norwegian-style.
 
 Same pattern as client_events.py/company_events.py: state as a pure,
 memoized function (employee_id) -> a fixed tuple of periods, not a mutable
@@ -10,25 +8,21 @@ cron is a third, none of which share memory, so the result must be
 identical every time it's (re)computed from the same input (see the
 client_events.py docstring for the full rationale).
 
-Deliberately NOT gender-based: EmployeeSeed carries no gender field (and
-adding one just to pick "maternity vs paternity" would be adding a whole
-new dimension of data for one feature). Instead, every employee has an
-independent, symmetric chance of drawing either leave archetype — this
-models the two real Norwegian leave shapes (a long primary-caregiver leave,
-a short secondary-caregiver quota) without asserting anything about a
-specific (fictional) person's gender.
+PARENTAL_LEAVE is deliberately NOT gender-based: EmployeeSeed carries no
+gender field (and adding one just to pick "maternity vs paternity" would be
+a whole new dimension of data for one feature). Every employee has the same
+independent, symmetric chance of the event each year they're employed.
 
-This only affects hour_entries (via hours_generator.generate_daily_hours)
-for BILLABLE employees — the only ones who log hours at all (see
-hours_generator.py's module docstring). Non-billable staff (Salg/Økonomi)
-have no hour-level tracking in this project already; extending that is a
-separate, bigger change, not attempted here.
+This only affects hour_entries for employees who log hours at all — see
+hours_generator.py's NON_BILLABLE_OVERRIDES (E05 stays fully excluded, as
+before this feature existed) and, since the "all departments" prompt,
+Salg/Okonomi too (vacation.py + hours_generator.py wire this up).
 
 Salary is untouched by any of this — salary_generator computes pay from
 annual_salary/employment status only, independent of hours (see
-hours_generator.py's Phase 6 note), which matches Norwegian practice:
-the employer keeps paying salary through sick leave and parental leave
-(and reclaims part of it from NAV) rather than the employee going unpaid."""
+hours_generator.py's Phase 6 note), which matches Norwegian practice: the
+employer keeps paying salary through sick leave and parental leave (and
+reclaims part of it from NAV) rather than the employee going unpaid."""
 
 from __future__ import annotations
 
@@ -40,27 +34,37 @@ from functools import lru_cache
 from norfingen.models.hours import ActivityType
 from norfingen.seed.roster import employee_by_id
 
-# Chance a given employee experiences one long-term *certified* sick-leave
-# block at some point during their tenure (on top of the short, self-certified
-# single-day chance already rolled per-day in hours_generator.SICK_PROBABILITY).
+# Long-term *certified* sick leave (on top of hours_generator.SICK_PROBABILITY,
+# which models short, self-certified single-day absences) — rolled once over
+# an employee's whole tenure horizon, not per year (a certified long absence
+# is rare enough that "at most one in ~8 years" is a reasonable model; the
+# per-day short-absence roll already covers the common case).
 LONG_SICK_LEAVE_PROBABILITY = 0.12
 LONG_SICK_LEAVE_MIN_DAYS = 21  # ~3 weeks
 LONG_SICK_LEAVE_MAX_DAYS = 84  # ~12 weeks
 
-# Chance of one parental-leave event during tenure. Real-world uptake over a
-# multi-year window for a small, mixed-age workforce is roughly this order of
-# magnitude — not fitted to any specific statistic, just plausible.
-PARENTAL_LEAVE_PROBABILITY = 0.18
-MATERNITY_LEAVE_MIN_DAYS = 30 * 7  # ~30 weeks
-MATERNITY_LEAVE_MAX_DAYS = 49 * 7  # ~49 weeks (100% dekningsgrad default)
-PATERNITY_LEAVE_MIN_DAYS = 10 * 7  # ~10 weeks
-PATERNITY_LEAVE_MAX_DAYS = 15 * 7  # ~15 weeks (fedrekvote)
+# Parental leave (foreldrepermisjon) — rolled independently EVERY year an
+# employee is active, not once per tenure, per the spec ("~1 case/year across
+# a 17-person team"). A 2-year cooldown after a triggered event prevents the
+# same employee going on leave again immediately.
+PARENTAL_LEAVE_ANNUAL_PROBABILITY = 0.06
+PARENTAL_LEAVE_MIN_WEEKS = 20
+PARENTAL_LEAVE_MAX_WEEKS = 49
+PARENTAL_LEAVE_COOLDOWN_YEARS = 2
 
-# Don't place a leave block in an employee's first ~3 months (unrealistic to
-# go on long leave immediately after starting), and cap how far into the
-# future we place one so it stays within a plausible planning horizon.
+# Welfare/occasional leave (velferdspermisjon — a death in the family, a
+# house move, a child's first day of school, etc.) — short, and unlike
+# parental leave, can recur most years without a cooldown.
+WELFARE_LEAVE_ANNUAL_PROBABILITY = 0.15
+WELFARE_LEAVE_MIN_DAYS = 1
+WELFARE_LEAVE_MAX_DAYS = 3
+
+# Don't place any leave block in an employee's first ~3 months (unrealistic
+# to go on long leave immediately after starting). How far into the future
+# we precompute periods for — a plausible planning horizon, not tied to
+# "today" (see module docstring for why: no wall-clock input allowed here).
 MIN_TENURE_BEFORE_LEAVE_DAYS = 90
-TENURE_HORIZON_DAYS = 365 * 8
+TENURE_HORIZON_YEARS = 8
 
 
 @dataclass(frozen=True)
@@ -75,38 +79,75 @@ class LeavePeriod:
 
 @lru_cache(maxsize=None)
 def employee_leave_periods(employee_id: int) -> tuple[LeavePeriod, ...]:
-    """Deterministically derives 0-2 long-absence periods for one employee
-    from their start_date alone (no wall-clock/"today" input — see module
-    docstring for why). Seeded via random.Random(f"LEAVE-{employee_id}")
-    (string seed, never hash() — see roster.py/company_events.py convention)."""
+    """Deterministically derives an employee's long-absence periods (long
+    SICK, PARENTAL_LEAVE, WELFARE_LEAVE) from their start_date alone — no
+    wall-clock/"today" input (see module docstring). Every roll uses its own
+    string-seeded random.Random (never hash() — see roster.py/
+    company_events.py convention), so periods can be added to this function
+    later without disturbing already-decided ones."""
     employee = employee_by_id(employee_id)
-    rng = random.Random(f"LEAVE-{employee_id}")
-
-    window_start = employee.start_date + timedelta(days=MIN_TENURE_BEFORE_LEAVE_DAYS)
-    window_end = employee.start_date + timedelta(days=TENURE_HORIZON_DAYS)
-    if window_start >= window_end:
-        return ()
-
     periods: list[LeavePeriod] = []
 
+    tenure_start = employee.start_date + timedelta(days=MIN_TENURE_BEFORE_LEAVE_DAYS)
+    horizon_end = employee.start_date + timedelta(days=365 * TENURE_HORIZON_YEARS)
+
+    _roll_long_sick_leave(employee_id, tenure_start, horizon_end, periods)
+    _roll_parental_leave(employee_id, tenure_start, horizon_end, periods)
+    _roll_welfare_leave(employee_id, employee.start_date, horizon_end, periods)
+
+    return tuple(sorted(periods, key=lambda p: p.start))
+
+
+def _roll_long_sick_leave(
+    employee_id: int, tenure_start: date, horizon_end: date, periods: list[LeavePeriod]
+) -> None:
+    if tenure_start >= horizon_end:
+        return
+    rng = random.Random(f"LEAVE-SICK-{employee_id}")
     if rng.random() < LONG_SICK_LEAVE_PROBABILITY:
         length = rng.randint(LONG_SICK_LEAVE_MIN_DAYS, LONG_SICK_LEAVE_MAX_DAYS)
-        start = _random_start(rng, window_start, window_end, length)
+        start = _random_start(rng, tenure_start, horizon_end, length, periods)
         if start is not None:
             periods.append(LeavePeriod(start, start + timedelta(days=length - 1), ActivityType.SICK))
 
-    if rng.random() < PARENTAL_LEAVE_PROBABILITY:
-        if rng.random() < 0.5:
-            activity_type = ActivityType.MATERNITY_LEAVE
-            length = rng.randint(MATERNITY_LEAVE_MIN_DAYS, MATERNITY_LEAVE_MAX_DAYS)
-        else:
-            activity_type = ActivityType.PATERNITY_LEAVE
-            length = rng.randint(PATERNITY_LEAVE_MIN_DAYS, PATERNITY_LEAVE_MAX_DAYS)
-        start = _random_start(rng, window_start, window_end, length, avoid=periods)
-        if start is not None:
-            periods.append(LeavePeriod(start, start + timedelta(days=length - 1), activity_type))
 
-    return tuple(sorted(periods, key=lambda p: p.start))
+def _roll_parental_leave(
+    employee_id: int, tenure_start: date, horizon_end: date, periods: list[LeavePeriod]
+) -> None:
+    last_start_year: int | None = None
+    for year in range(tenure_start.year, horizon_end.year + 1):
+        year_start = max(date(year, 1, 1), tenure_start)
+        year_end = min(date(year, 12, 31), horizon_end)
+        if year_start > year_end:
+            continue
+        if last_start_year is not None and year - last_start_year < PARENTAL_LEAVE_COOLDOWN_YEARS:
+            continue
+
+        rng = random.Random(f"LEAVE-PARENTAL-{employee_id}-{year}")
+        if rng.random() < PARENTAL_LEAVE_ANNUAL_PROBABILITY:
+            weeks = rng.randint(PARENTAL_LEAVE_MIN_WEEKS, PARENTAL_LEAVE_MAX_WEEKS)
+            length = weeks * 7
+            start = _random_start(rng, year_start, year_end, length, periods)
+            if start is not None:
+                periods.append(LeavePeriod(start, start + timedelta(days=length - 1), ActivityType.PARENTAL_LEAVE))
+                last_start_year = year
+
+
+def _roll_welfare_leave(
+    employee_id: int, employee_start: date, horizon_end: date, periods: list[LeavePeriod]
+) -> None:
+    for year in range(employee_start.year, horizon_end.year + 1):
+        year_start = max(date(year, 1, 1), employee_start)
+        year_end = min(date(year, 12, 31), horizon_end)
+        if year_start > year_end:
+            continue
+
+        rng = random.Random(f"LEAVE-WELFARE-{employee_id}-{year}")
+        if rng.random() < WELFARE_LEAVE_ANNUAL_PROBABILITY:
+            length = rng.randint(WELFARE_LEAVE_MIN_DAYS, WELFARE_LEAVE_MAX_DAYS)
+            start = _random_start(rng, year_start, year_end, length, periods)
+            if start is not None:
+                periods.append(LeavePeriod(start, start + timedelta(days=length - 1), ActivityType.WELFARE_LEAVE))
 
 
 def _random_start(
@@ -114,7 +155,7 @@ def _random_start(
     window_start: date,
     window_end: date,
     length: int,
-    avoid: list[LeavePeriod] = (),
+    avoid: list[LeavePeriod],
 ) -> date | None:
     """Picks a start date for a `length`-day block inside [window_start,
     window_end], retrying a few times if it collides with an already-placed

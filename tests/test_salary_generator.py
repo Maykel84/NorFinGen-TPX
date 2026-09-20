@@ -1,5 +1,8 @@
+import inspect
 from datetime import date
 
+from norfingen.generators import salary_generator
+from norfingen.generators.hours_generator import generate_daily_hours
 from norfingen.generators.salary_generator import brutto_earned_in_year, generate_monthly_salary
 from norfingen.seed.payroll import (
     active_employees,
@@ -142,3 +145,39 @@ def test_june_no_double_cost():
         jul_cost = _posting(jul_v[0], 5000).amount
         neighbor_avg = (may_cost + jul_cost) / 2
         assert jun_cost <= neighbor_avg * 1.5, f"{year}: czerwiec={jun_cost} > 150% sąsiadów={neighbor_avg}"
+
+
+def test_salary_generator_module_does_not_import_hours_at_all():
+    """Architectural guard for the "realistic hours model" feature
+    (VACATION/PARENTAL_LEAVE/WELFARE_LEAVE/all-departments): salary_generator
+    must never come to depend on hour_entries — pay is computed from
+    annual_salary/employment status only."""
+    source = inspect.getsource(salary_generator)
+    assert "hours_generator" not in source
+    assert "leave_events" not in source
+    assert "vacation" not in source
+    assert "hour_entries" not in source
+
+
+def test_payroll_unaffected_by_hours_changes():
+    """salary_transactions for a given month are identical whether or not
+    hour_entries were generated first for that same period — hours and
+    payroll are two independent generators over the same roster."""
+    from datetime import timedelta
+
+    year, month = 2025, 6
+
+    before_txn, before_vouchers = generate_monthly_salary(year, month)
+
+    # Generate a full month of hour_entries (including leave/vacation logic)
+    # for every active employee, in between the two payroll calls.
+    active_ids = [int(e.number[1:]) for e in active_employees(date(year, month, 15))]
+    day = date(year, month, 1)
+    while day.month == month:
+        generate_daily_hours(day.year, day.month, day.day, active_ids)
+        day += timedelta(days=1)
+
+    after_txn, after_vouchers = generate_monthly_salary(year, month)
+
+    assert before_txn.model_dump() == after_txn.model_dump()
+    assert [v.model_dump() for v in before_vouchers] == [v.model_dump() for v in after_vouchers]

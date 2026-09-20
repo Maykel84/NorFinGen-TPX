@@ -503,15 +503,18 @@ SELECT TO_CHAR(COALESCE(r.month_start, c.month_start), 'YYYY-MM') AS month,
 FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month_start = c.month_start
 ORDER BY 1;
 
--- v_headcount_monthly counts ONLY billable employees who actually log
--- hour_entries (Leveranse/Teknologi, excluding E05 — see hours_generator.py)
--- — Salg/Økonomi (5 of 17 FTEs in Phase 6) never have hour entries, so this
--- view UNDERESTIMATES the company's true headcount. Left as per the
--- prompt's sketch (correct SQL, matching column names) — this is a
--- deliberate tradeoff named "active_employees" (hour-active), not
--- "headcount" in the HR sense; if a true HR headcount is needed, the
--- correct source is employments.start_date (like roster.active_employees()
--- in Python), not hour_entries.
+-- v_headcount_monthly counts DISTINCT employee_id in hour_entries for the
+-- month. Historically this UNDERESTIMATED the company's true headcount,
+-- because only billable employees (Leveranse/Teknologi) ever had any
+-- hour_entries at all. As of the "realistic hours model" feature
+-- (hours_generator.py/leave_events.py/vacation.py), ALL departments log
+-- hours (Salg/Okonomi included) — only E05 (the one deliberate, permanent
+-- exception) is still excluded — so this view now tracks the true headcount
+-- minus that one person, once the backfill for the new code has run. Still
+-- named "active_employees" (hour-active), not "headcount" in the strict HR
+-- sense; if an exact HR headcount including E05 is ever needed, the correct
+-- source is employments.start_date (like roster.active_employees() in
+-- Python), not hour_entries.
 CREATE OR REPLACE VIEW v_headcount_monthly WITH (security_invoker = true) AS
 SELECT TO_CHAR(date, 'YYYY-MM') AS month, COUNT(DISTINCT employee_id) AS active_employees
 FROM hour_entries GROUP BY 1 ORDER BY 1;

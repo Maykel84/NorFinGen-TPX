@@ -1,8 +1,17 @@
 """HourEntry — daily timesheet generator (Layer 2/3, Tier 4).
 
-Logs hours only for employees in the Leveranse/Teknologi departments
-(billable — see is_billable_employee), except E05 (System Architect — a
-technical/architectural role, never billable, set before Phase 4).
+Logs hours for every active employee except E05 (System Architect — a
+technical/architectural role, deliberately excluded from ALL hour tracking,
+set before Phase 4 — see NON_BILLABLE_OVERRIDES). Department-dependent model:
+  - Leveranse/Teknologi (billable — see is_billable_employee): the Phase 6
+    ticketing/project model below.
+  - Salg (generate_salg_daily_hours): irregular, episodic — only logs on
+    ~40% of working days, when there's an actual customer-facing activity.
+  - Okonomi (generate_okonomi_daily_hours): regular full days, with a
+    month-end closing spike.
+All four departments also carry the same absence types (SICK, VACATION,
+PARENTAL_LEAVE, WELFARE_LEAVE — see leave_events.py/vacation.py), checked
+before any department-specific logic runs.
 
 Phase 6, Tasks 3/4 — replaces the "one customer per day" pattern (Phase 4)
 with two department-dependent models, because in a small (17-person) team
@@ -19,7 +28,9 @@ multiple customers per day:
 This change is PURELY about hour_entries realism — it has no effect on
 revenue (order_generator) or payroll (salary_generator, independent of
 hours), so it does not change the result of the offline margin sanity-check
-(see SESSION_HANDOFF.md, Phase 6).
+(see SESSION_HANDOFF.md, Phase 6) — confirmed again for the "all
+departments + absence types" extension (see SESSION_HANDOFF.md's safety-net
+note for the measured before/after BILLABLE-hours comparison).
 
 The customer-consultant portfolio is still assigned by
 assign_customers_to_consultants(), rotating every ~15 months (see
@@ -30,6 +41,7 @@ select_active_onboarding_clients)."""
 
 from __future__ import annotations
 
+import calendar
 import random
 from datetime import date, timedelta
 
@@ -38,6 +50,7 @@ from norfingen.generators.company_events import unprofitable_quarter_ticket_mult
 from norfingen.generators.leave_events import active_leave_period
 from norfingen.generators.macro_shock import apply_macro_shock_multiplier
 from norfingen.generators.seasonality import fellesferie_activity_multiplier
+from norfingen.generators.vacation import is_vacation_day
 from norfingen.models.hours import ActivityType, HourEntry
 from norfingen.seed.roster import (
     CustomerSeed,
@@ -51,17 +64,30 @@ from norfingen.seed.roster import (
 )
 
 BILLABLE_DEPARTMENTS = {2, 3}  # Leveranse, Teknologi
-NON_BILLABLE_OVERRIDES = {5}  # E05 System Architect — never billable (set before Phase 4)
+NON_BILLABLE_OVERRIDES = {5}  # E05 System Architect — excluded from ALL hour tracking (set before Phase 4)
+SALG_DEPARTMENT = 1
 LEVERANSE_DEPARTMENT = 2
 TEKNOLOGI_DEPARTMENT = 3
+OKONOMI_DEPARTMENT = 4
 
 FULL_WORKDAY_HOURS = 7.5
 SICK_PROBABILITY = 0.05  # short, self-certified single-day sick leave
 
+SALG_ACTIVITY_PROBABILITY_PER_DAY = 0.4
+SALG_HOURS_MIN = 1.5
+SALG_HOURS_MAX = 4.0
+
+OKONOMI_HOURS_MIN = 6.5
+OKONOMI_HOURS_MAX = 7.5
+OKONOMI_MONTH_END_MULTIPLIER = 1.3
+OKONOMI_MONTH_END_CAP_HOURS = 9.0
+OKONOMI_MONTH_END_WORKING_DAYS = 3  # the last N working days of the month
+
 LEAVE_DESCRIPTIONS = {
     ActivityType.SICK: "Sykefravær",
-    ActivityType.MATERNITY_LEAVE: "Foreldrepermisjon",
-    ActivityType.PATERNITY_LEAVE: "Foreldrepermisjon (fedrekvote)",
+    ActivityType.VACATION: "Ferie",
+    ActivityType.PARENTAL_LEAVE: "Foreldrepermisjon",
+    ActivityType.WELFARE_LEAVE: "Velferdspermisjon",
 }
 
 BASE_YEAR = 2019
@@ -103,6 +129,19 @@ CONCURRENT_ONBOARDING_CAPACITY = 1
 def is_working_day(d: date) -> bool:
     """Mon-Fri, without Norwegian holidays (simplified)."""
     return d.weekday() < 5
+
+
+def is_month_end_closing_period(d: date) -> bool:
+    """Whether `d` is one of the last OKONOMI_MONTH_END_WORKING_DAYS working
+    days of its month (regnskapsavslutning — month-end close)."""
+    if not is_working_day(d):
+        return False
+    last_day_of_month = calendar.monthrange(d.year, d.month)[1]
+    working_days = [
+        day for day in range(1, last_day_of_month + 1)
+        if is_working_day(date(d.year, d.month, day))
+    ]
+    return d.day in working_days[-OKONOMI_MONTH_END_WORKING_DAYS:]
 
 
 def is_billable_employee(employee_id: int) -> bool:
@@ -271,24 +310,67 @@ def generate_daily_support_hours(
     return entries
 
 
-def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: list[int]) -> list[HourEntry]:
-    """Generates hour entries for a specific working day.
+def generate_salg_daily_hours(employee_id: int, on_date: date, rng: random.Random) -> list[HourEntry]:
+    """Sales does NOT log a full 7.5h day — only when there's an actual
+    customer-facing activity (a meeting, a proposal, an onboarding
+    handoff), on ~SALG_ACTIVITY_PROBABILITY_PER_DAY of working days.
+    Logged as INTERNAL — order_generator.py (which drives revenue) has no
+    dependency on hour_entries at all, so this can't affect revenue."""
+    if rng.random() > SALG_ACTIVITY_PROBABILITY_PER_DAY:
+        return []
+    hours = round(rng.uniform(SALG_HOURS_MIN, SALG_HOURS_MAX) * 4) / 4  # rounded to 0.25h
+    return [HourEntry(
+        date=on_date, employee_id=employee_id,
+        activity_type=ActivityType.INTERNAL,
+        hours=hours,
+        description="Salg — kundemøte / tilbud",
+    )]
 
-    Logic (Phase 6, Tasks 3/4; leave periods added later, see leave_events.py):
-    - Every active billable employee first checked against
-      leave_events.active_leave_period — if they're inside a precomputed
-      long-term SICK/MATERNITY_LEAVE/PATERNITY_LEAVE block, that's the whole
-      day (0h billable, one entry), nothing else below applies to them.
-    - Otherwise: ~5% chance of a short, self-certified sick day (0h billable,
-      a SICK entry).
-    - Leveranse: the ticketing model (generate_daily_support_hours) over a
-      portfolio covering all active customers.
-    - Teknologi: a full day (7.5h billable) at a customer in active
-      onboarding (see select_active_onboarding_clients,
-      DEVELOPERS_PER_ONBOARDING determines which consultants are assigned),
-      otherwise the ticketing model over the portfolio of customers in the
-      MAINTENANCE phase.
-    - Deterministic per year+month+day (a local random.Random)."""
+
+def generate_okonomi_daily_hours(employee_id: int, on_date: date, rng: random.Random) -> list[HourEntry]:
+    """Finance logs a regular, near-full day every working day, with a
+    higher-hours spike in the last few working days of the month
+    (regnskapsavslutning — month-end close)."""
+    hours = rng.uniform(OKONOMI_HOURS_MIN, OKONOMI_HOURS_MAX)
+    if is_month_end_closing_period(on_date):
+        hours = min(hours * OKONOMI_MONTH_END_MULTIPLIER, OKONOMI_MONTH_END_CAP_HOURS)
+    return [HourEntry(
+        date=on_date, employee_id=employee_id,
+        activity_type=ActivityType.INTERNAL,
+        hours=round(hours, 2),
+        description="Økonomi — driftsoppgaver",
+    )]
+
+
+def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: list[int]) -> list[HourEntry]:
+    """Generates hour entries for a specific working day, for every active
+    employee except E05 (NON_BILLABLE_OVERRIDES — excluded entirely).
+
+    Logic, in order, for each eligible employee:
+    1. leave_events.active_leave_period — a precomputed long-term SICK,
+       PARENTAL_LEAVE, or WELFARE_LEAVE block. If inside one, that's the
+       whole day (a single 0h entry), nothing else below applies.
+    2. vacation.is_vacation_day — one of this employee's (up to) 25
+       VACATION days for the year. Same shape as #1.
+    3. ~5% chance of a short, self-certified SICK day.
+    4. Department-specific generation for whoever's left (not absent today):
+       - Leveranse: the ticketing model (generate_daily_support_hours) over
+         a portfolio covering all active customers.
+       - Teknologi: a full day (7.5h billable) at a customer in active
+         onboarding (DEVELOPERS_PER_ONBOARDING determines which consultants
+         are assigned), otherwise the ticketing model over the portfolio of
+         customers in the MAINTENANCE phase.
+       - Salg: generate_salg_daily_hours (irregular, ~40% of days).
+       - Okonomi: generate_okonomi_daily_hours (regular, month-end spike).
+
+    The Leveranse/Teknologi customer-consultant PORTFOLIO ASSIGNMENT
+    (assign_customers_to_consultants) deliberately uses the full billable
+    roster, NOT filtered by who happens to be absent today — filtering it
+    daily would reshuffle a stable, ~15-month rotation every time one
+    consultant takes a single sick day (see _rotation_id/Task 5c). Absent
+    billable employees are just skipped in the final emission loop instead.
+
+    Deterministic per year+month+day (a local random.Random)."""
     d = date(year, month, day)
     if not is_working_day(d):
         return []
@@ -296,9 +378,54 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
     entries: list[HourEntry] = []
     rng = random.Random(year * 10000 + month * 100 + day)
 
-    billable_ids = [eid for eid in active_employee_ids if is_billable_employee(eid)]
-    if not billable_ids:
+    eligible_ids = [eid for eid in active_employee_ids if eid not in NON_BILLABLE_OVERRIDES]
+    if not eligible_ids:
         return []
+
+    absent_ids: set[int] = set()
+    for emp_id in eligible_ids:
+        leave = active_leave_period(emp_id, d)
+        if leave is not None:
+            entries.append(HourEntry(
+                date=d, employee_id=emp_id,
+                activity_type=leave.activity_type,
+                hours=0.0,
+                description=LEAVE_DESCRIPTIONS[leave.activity_type],
+            ))
+            absent_ids.add(emp_id)
+            continue
+
+        if is_vacation_day(emp_id, d):
+            entries.append(HourEntry(
+                date=d, employee_id=emp_id,
+                activity_type=ActivityType.VACATION,
+                hours=0.0,
+                description=LEAVE_DESCRIPTIONS[ActivityType.VACATION],
+            ))
+            absent_ids.add(emp_id)
+            continue
+
+        if rng.random() < SICK_PROBABILITY:
+            entries.append(HourEntry(
+                date=d, employee_id=emp_id,
+                activity_type=ActivityType.SICK,
+                hours=0.0,
+                description=LEAVE_DESCRIPTIONS[ActivityType.SICK],
+            ))
+            absent_ids.add(emp_id)
+
+    present_ids = [eid for eid in eligible_ids if eid not in absent_ids]
+
+    for emp_id in present_ids:
+        department = employee_by_id(emp_id).department_number
+        if department == SALG_DEPARTMENT:
+            entries.extend(generate_salg_daily_hours(emp_id, d, rng))
+        elif department == OKONOMI_DEPARTMENT:
+            entries.extend(generate_okonomi_daily_hours(emp_id, d, rng))
+
+    billable_ids = [eid for eid in eligible_ids if is_billable_employee(eid)]
+    if not billable_ids:
+        return entries
 
     billable_employees = [employee_by_id(eid) for eid in billable_ids]
     # Phase 7, Task 2c — active_customers() only knows the static churn_date;
@@ -324,23 +451,7 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
     maintenance_assignment = assign_customers_to_consultants(maintenance_customers, teknologi_employees, year, month)
 
     for emp_id in billable_ids:
-        leave = active_leave_period(emp_id, d)
-        if leave is not None:
-            entries.append(HourEntry(
-                date=d, employee_id=emp_id,
-                activity_type=leave.activity_type,
-                hours=0.0,
-                description=LEAVE_DESCRIPTIONS[leave.activity_type],
-            ))
-            continue
-
-        if rng.random() < SICK_PROBABILITY:
-            entries.append(HourEntry(
-                date=d, employee_id=emp_id,
-                activity_type=ActivityType.SICK,
-                hours=0.0,
-                description=LEAVE_DESCRIPTIONS[ActivityType.SICK],
-            ))
+        if emp_id in absent_ids:
             continue
 
         employee = employee_by_id(emp_id)
