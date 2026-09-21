@@ -1124,20 +1124,20 @@ Metoda: `git stash` (bez utraty zmian) → przełączenie working tree na poprze
 
 `v_headcount_monthly` (widok BI, `schema.sql`) liczy `COUNT(DISTINCT employee_id) FROM hour_entries` — udokumentowane wcześniej ograniczenie ("zaniża prawdziwy headcount, bo Salg/Økonomi nigdy nie logowały godzin") **znika samo z siebie** po tej zmianie, bo teraz te działy też logują — widok zacznie pokazywać prawdziwy headcount minus E05, gdy tylko backfill dla nowego kodu się odbędzie. Zaktualizowano komentarz w `schema.sql` i opis w `DATA_DICTIONARY.md`.
 
-### Zadanie 4c (TRUNCATE + backfill na żywej bazie) — NIE WYKONANE przeze mnie, jak zawsze w tym projekcie
+### Zadanie 4c (TRUNCATE + backfill na żywej bazie) — WYKONANE, 2026-09-21
 
-Zgodnie z ustalonym, wielokrotnie powtórzonym wzorcem tej współpracy (Faza 6, Faza 7b, audyt sekretów — zob. sekcje wyżej: "13g", "TRUNCATE + backfill na żywej bazie — NIE WYKONANE przeze mnie") **trwałe usuwanie danych z produkcyjnej bazy nigdy nie jest czymś, co wykonuję samodzielnie**, niezależnie od tego, że prompt opisuje to jako "standardową procedurę" tego projektu. Bezpiecznik (warunek wstępny z Zadania 4b) jest zrobiony i pozytywny — reszta czeka na Ciebie:
+`TRUNCATE hour_entries` wykonany przez użytkownika (zgodnie z ustaloną zasadą tej współpracy — trwałe usuwanie danych produkcyjnych nigdy nie jest czymś, co wykonuję samodzielnie, niezależnie od tego że prompt opisuje to jako "standardową procedurę"; `daily.yml` wyłączony w GitHub UI przed TRUNCATE, potwierdzone przez użytkownika). Backfill dzienny (`run_backfill.py --mode daily --start 2019-01-01`) wykonany przeze mnie w tle, dwukrotnie, zgodnie z ustaloną sekwencją:
 
-```bash
-# 1. Wyłącz daily.yml w GitHub UI (Actions -> daily -> ... -> Disable workflow)
-# 2. TRUNCATE tylko hour_entries (żadna inna tabela nie jest tym promptem dotknięta):
-psql "$DATABASE_URL" -c "TRUNCATE hour_entries RESTART IDENTITY;"
-# 3. Backfill dzienny (jedyny tryb, który dotyka hour_entries) x2, dla pewności idempotencji:
-python run_backfill.py --mode daily --start 2019-01-01
-python run_backfill.py --mode daily --start 2019-01-01
-# 4. Włącz daily.yml z powrotem
-```
+- **Przejście 1**: 10:21-11:34 (2026-09-21), **2015 dni roboczych, zero błędów**, exit code 0.
+- **Przejście 2**: padło w trakcie na 2025-02-27 — `could not receive data from server: No route to host` / DNS `could not translate host name "aws-1-eu-central-1.pooler.supabase.com"`, ~17 min, 3 próby retry wyczerpane, proces przerwany (`ERROR ... przerywam`). **Ten sam, wcześniej już udokumentowany w tym projekcie wzorzec** (sieć/DNS po uśpieniu maszyny) — nie regresja kodu, żaden dzień nie został zapisany połowicznie (błąd padł na etapie łączenia z bazą, przed jakimkolwiek zapisem). Wznowiony od `--start 2025-02-27` (zamiast pełnego restartu — szybciej, bezpiecznie dzięki `ON CONFLICT DO NOTHING`), dokończony 13:47, 408 dni roboczych, exit code 0.
 
-**Uwaga o czasie**: dokumentacja `run_backfill.py` mówi wprost — tryb `daily` woła `run_daily()` raz na każdy dzień roboczy od 2019 (~1800+ dni), **czas rzędu godzin**. To jedyny powód, dla którego backfill dzienny (w przeciwieństwie do TRUNCATE, które jest natychmiastowe) nie jest czymś, co dałoby się bezpiecznie odpalić i zostawić bez nadzoru w ramach jednej sesji — ten sam wzorzec (retry/reconnect na zerwane połączenie) co przy poprzednich backfillach w tym projekcie.
+**Weryfikacja końcowa (żywa baza):**
+- `hour_entries`: **54 657 wierszy**, 2019-01-07 → 2026-09-21 (`BILLABLE` 33579 / `INTERNAL` 16645 / `VACATION` 2218 / `PARENTAL_LEAVE` 1185 / `SICK` 1009 / `WELFARE_LEAVE` 21)
+- **Idempotencja potwierdzona**: identyczna liczba wierszy po obu przejściach, zero duplikatów w `project_id IS NULL` (kontrola pod kątem incydentu z 2026-09-04 — zapytanie `GROUP BY date, employee_id, activity_type HAVING COUNT(*) > 1` na tych wierszach, pusty wynik)
+- E05: **zero wpisów** w całej historii (wyjątek trzyma się przez cały backfill)
+- `v_headcount_monthly`: 16 dla 2026-07/08/09 (wcześniej 12) — przewidziany efekt uboczny potwierdzony na żywo
+- `scripts/fix_outgoing_transactions.py` **nie był potrzebny** — TRUNCATE dotyczył wyłącznie `hour_entries`, `bank_transactions` nietknięte, więc nie ma nic do naprawy tym skryptem (to inaczej niż w poprzednich pełnych resetach 10 tabel z Fazy 6/7b)
 
-**Nie wykonano też `git tag v5.26-realistic-hours`** — zgodnie z konwencją tego projektu tagi wersji oznaczają stan PO potwierdzonym backfillu na żywej bazie (zob. `v5.25-portal-clarity` — tam backfill nie był potrzebny, bo to była zmiana czysto frontendowa). Tag do dodania po Twoim backfillu, albo mogę go dodać od razu po pushu kodu, jeśli wolisz — do ustalenia.
+`daily.yml`: włączenie z powrotem w GitHub UI zostawione użytkownikowi (decyzja z rozmowy — "oba": użytkownik włącza workflow, ja dodaję tag).
+
+**`git tag v5.26-realistic-hours` dodany i wypchnięty** po potwierdzonym backfillu, zgodnie z konwencją tego projektu.
