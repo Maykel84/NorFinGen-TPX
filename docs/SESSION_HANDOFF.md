@@ -1172,6 +1172,21 @@ Ta sama metoda co przy v5.26 (offline, `git stash` do porównania z aktualnym st
 
 **Nieoczekiwane odkrycie przy okazji**: `tests/test_faza7b_macro_shock.py::test_macro_shock_reduces_2020_covid_window_ticket_volume` zaczął failować (204,75 vs 184,25) — ale przyczyna nie leży w tej zmianie per se. Test porównywał miesiące COVID (marzec-czerwiec 2020, 5 billable pracowników) z miesiącami spoza okna (styczeń/luty/lipiec/sierpień) przy fałszywym założeniu w komentarzu "ta sama baza pracowników" — styczeń/luty 2020 miały w rzeczywistości tylko 3 billable pracowników (przed zatrudnieniami growth1 w marcu 2020). Ta rozbieżność istniała od zawsze, po prostu nie była dość duża żeby przewrócić asercję, dopóki nowe typy nieobecności nie dodały więcej wariancji dziennej. Naprawione przez zamianę miesięcy porównawczych na wrzesień-październik 2020 (też 5 billable pracowników, faktycznie porównywalne) — nie osłabienie testu, naprawienie jego przesłanki.
 
-### Backfill — NIE WYKONANY jeszcze
+### Backfill — WYKONANE, 2026-09-21
 
-Kod scommitowany i wypchnięty, ale **produkcyjny TRUNCATE + backfill dla tej rundy zmian jeszcze się nie odbył** — czeka na tę samą sekwencję co v5.26 (wyłącz `daily.yml` → `TRUNCATE hour_entries` → `run_backfill.py --mode daily --start 2019-01-01` x2 → włącz `daily.yml`), zainicjowaną przez użytkownika, backfill wykonywany przeze mnie w tle po TRUNCATE.
+`daily.yml` wyłączony przez użytkownika → `TRUNCATE hour_entries RESTART IDENTITY` wykonany przez użytkownika → backfill dzienny wykonany przeze mnie w tle, dwukrotnie:
+
+- **Przejście 1**: bez błędów, 2015 dni roboczych (2019-01-01 → 2026-09-21), exit code 0.
+- **Przejście 2**: padło na 2025-05-01 — ten sam, po raz trzeci już udokumentowany w tym projekcie wzorzec przejściowego zerwania DNS/sieci (`No route to host` → `could not translate host name`), ~35 min, 3 próby wyczerpane. Doszło bezpiecznie do 2025-04-28 (1650 dni), żaden dzień nie zapisał się połowicznie. Wznowione od `--start 2025-05-01` po potwierdzeniu, że sieć wróciła — dokończone, 363 dni robocze, exit code 0.
+
+**Weryfikacja końcowa (żywa baza):**
+- `hour_entries`: **51 098 wierszy**, 2019-01-01 → 2026-09-21 — `BILLABLE` 29745/36180,6h, `INTERNAL` 14908/77476,7h, `VACATION` 2220, `PARENTAL_LEAVE` 1379, `FLEX_LEAVE` 1048, `CHILD_CARE_LEAVE` 856, `SICK` 921, `WELFARE_LEAVE` 21
+- **Idempotencja potwierdzona**: identyczna liczba wierszy po obu przejściach, zero duplikatów (`GROUP BY date, employee_id, project_id, activity_type HAVING COUNT(*) > 1` — pusty wynik)
+- E05: zero wpisów w całej historii
+- `v_headcount_monthly`: nadal 16 dla 2026-07/08/09
+
+Spadek liczby wpisów względem v5.26 (54657→51098) jest oczekiwany — więcej typów nieobecności zajmujących dni, które wcześniej były BILLABLE/INTERNAL, więc mniej "produktywnych" wpisów per pracownik-dzień netto (choć więcej różnych typów łącznie).
+
+`daily.yml`: pozostawiony wyłączony do ręcznego włączenia przez użytkownika (ten sam wzorzec co v5.26).
+
+**Tag**: `v5.27-leave-corrections` do dodania i wypchnięcia po potwierdzeniu tego wpisu.
