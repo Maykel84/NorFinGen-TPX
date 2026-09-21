@@ -74,6 +74,11 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (3000, "Salgsinntekter, IT-tjenester", "OPERATING_INCOME", 3),
     (3100, "Lisensintekter", "OPERATING_INCOME", 3),
     (5000, "Lønn, fast", "OPERATING_EXPENSE", None),
+    # 2026-09-21 correction — feriepenger is accrued monthly (12% of normal
+    # gross), not conjured up in June: DR 5099 / CR 2930 every month, drawn
+    # down (DR 2930) instead of hitting 5000 again when actually paid out in
+    # June (see seed/payroll.py::calc_feriepenger_provision).
+    (5099, "Avsetning feriepenger", "OPERATING_EXPENSE", None),
     (5400, "Arbeidsgiveravgift", "OPERATING_EXPENSE", None),
     (5900, "Annen personalkostnad", "OPERATING_EXPENSE", None),
     (6300, "Husleie og leie av lokaler", "OPERATING_EXPENSE", 1),

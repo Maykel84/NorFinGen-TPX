@@ -68,7 +68,16 @@ def test_no_other_years_affected():
     wartościami zamrożonymi jako regresja we wcześniejszych fazach (Faza 7a/
     7b) — MAJOR_INCIDENT_2023 nie może wpływać wstecz. 2023-2026 są
     ŚWIADOMIE zmienione (to jest cel tej fazy), więc nie są tu sprawdzane
-    względem stanu sprzed Fazy 7c."""
+    względem stanu sprzed Fazy 7c.
+
+    Wartości zaktualizowane 2026-09-22 (poprawka feriepenger/AGA — miesięczna
+    rezerwa 12% + zsynchronizowana AGA zamiast jednorazowego kosztu w
+    czerwcu, zob. docs/SESSION_HANDOFF.md). To ŚWIADOMA, wyjaśniona zmiana
+    zamrożonych wartości, nie regresja: 2019 (rok założycielski, brak
+    zeszłorocznej bazy do skompensowania nowej rezerwy) przesuwa się
+    najmocniej (-25,67%→-33,40%), 2020-2022 mniej (efekt kolejnych fal
+    zatrudnień growth1/growth2/merger) — zob. tabela trzech wersji w
+    SESSION_HANDOFF.md dla pełnego uzasadnienia."""
     revenue: dict[int, float] = {}
     payroll: dict[int, float] = {}
     opex: dict[int, float] = {}
@@ -95,7 +104,7 @@ def test_no_other_years_affected():
 
     run_backfill(start_date=DEFAULT_START_DATE, end_date=date(2022, 12, 31), persist_fn=collect)
 
-    expected_margins = {2019: -0.2567, 2020: 0.1922, 2021: 0.1730, 2022: 0.1161}
+    expected_margins = {2019: -0.3340, 2020: 0.1778, 2021: 0.1647, 2022: 0.1021}
     for year, expected in expected_margins.items():
         r = revenue[year]
         total_cost = payroll.get(year, 0.0) + opex.get(year, 0.0) + cogs.get(year, 0.0)

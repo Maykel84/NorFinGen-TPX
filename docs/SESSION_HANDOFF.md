@@ -1189,4 +1189,57 @@ Spadek liczby wpisów względem v5.26 (54657→51098) jest oczekiwany — więce
 
 `daily.yml`: pozostawiony wyłączony do ręcznego włączenia przez użytkownika (ten sam wzorzec co v5.26).
 
-**Tag**: `v5.27-leave-corrections` do dodania i wypchnięcia po potwierdzeniu tego wpisu.
+**Tag**: `v5.27-leave-corrections` dodany i wypchnięty (potwierdzone).
+
+## Poprawny model feriepenger: miesięczna rezerwa + zsynchronizowana AGA (2026-09-22)
+
+### Kontekst — od pytania o skok wynagrodzeń do poprawki księgowej
+
+Użytkownik zapytał, dlaczego wynagrodzenia w czerwcu skaczą tak wysoko — odpowiedź: feriepenger (12% z całego zeszłorocznego wynagrodzenia) wypłacany jednorazowo w jeden miesiąc = ~1,4x normalnej pensji, matematyczna konsekwencja modelu z Fazy 5, nie błąd. Użytkownik poprosił o dodanie kosztów pracodawcy (~18%, potem 12%+2%) obejmujących feriepenger i benefity. Pierwsza próba (12% miesięczna rezerwa + 2% benefity, **NIESCOMMITOWANA**) ujawniła realny problem: **marża 2025 spadała poniżej zera** (0,61%→-0,22%) — bo AGA była nadal liczona od pełnej kwoty wypłaconej w czerwcu (w tym feriepenger), więc AGA od feriepenger była liczona PODWÓJNIE (raz przy hipotetycznej rezerwie, raz przy faktycznej wypłacie), a nowy koszt 2% dublował już istniejący koszt kantyny (konto 7350, Faza 3).
+
+Użytkownik dostarczył dwie wzajemnie sprzeczne poprawki z zewnętrznego źródła (jedna kazała całkowicie usunąć mechanizm zamiany czerwcowej, druga kazała wypłacać PEŁNĄ pensję ORAZ osobno feriepenger — czyli przywrócić dokładnie ten błąd podwójnego liczenia, który ten projekt już raz naprawił, udokumentowany w `calc_june_salary`'s docstring). Zamiast zgadywać, zatrzymałem się i zapytałem — użytkownik dostarczył trzeci, spójny i ostateczny prompt, potwierdzony wg realnych zasad norweskiej rachunkowości (Regnskapsguiden/Conta/DNB Regnskap): **opptjeningsprinsippet** — koszt feriepenger I jego AGA księguje się w roku ZAROBIENIA, nie w roku wypłaty.
+
+### Co ostatecznie wdrożono
+
+**Usunięte całkowicie**: koszt benefitów 2% (konto 5900) — cofnięty do stanu sprzed serii sesji (konto zdefiniowane w planie kont, nieużywane, tak jak zawsze). `calc_employee_benefits_cost`, `EMPLOYEE_BENEFITS_RATE` usunięte z `payroll.py`.
+
+**Zachowane z pierwszej próby** (już było poprawne): miesięczna rezerwa feriepenger — co miesiąc (wszystkie 12, łącznie z czerwcem) `DR 5099 "Avsetning feriepenger" / CR 2930 "Skyldige feriepenger"` = 12% z bieżącej pensji brutto (`calc_feriepenger_provision`). Wypłata w czerwcu (kwota BEZ ZMIAN — nadal 12% z sumy zeszłorocznego wynagrodzenia, zastępuje normalną pensję, dokładnie jak w Fazie 5) księguje się jako rozliczenie zobowiązania: `DR 2930 / CR 2710+2740`, NIE jako nowy koszt na koncie 5000.
+
+**Nowe w tej sesji**: synchronizacja AGA z rezerwą. Co miesiąc, AGA (14,1%) nalicza się od DWÓCH składowych: (1) bieżącej wypłaconej pensji (w czerwcu — tylko od ewentualnego "gap" dla pracowników z niepełnym poprzednim rokiem, NIE od wypłaconego feriepenger) + (2) tej miesięcznej rezerwy feriepenger (`calc_aga(calc_feriepenger_provision(...))`) — obie trafiają do tego samego, istniejącego konta 5400/2700, jeden łączny voucher miesięcznie. W czerwcu AGA od faktycznie wypłaconego feriepenger NIE jest liczona ponownie — była już rozpoznana miesiąc po miesiącu w roku poprzednim.
+
+Kwota faktycznie wypłacana pracownikowi w żadnym miesiącu się nie zmieniła względem Fazy 5 — zmieniło się wyłącznie księgowanie/moment rozpoznania kosztu w P&L.
+
+### Tabela porównawcza marży — trzy wersje (offline, bez zapisu do bazy)
+
+| Rok | Oryginalna (przed serią zmian, commit `cc3579f`) | Poprzednia sesja (12%+2%, błędna, NIESCOMMITOWANA) | **Finalna (ta sesja)** |
+|---|---|---|---|
+| 2019 | -25,67% | -33,57% | -33,40% |
+| 2020 | 19,22% | 17,28% | 17,78% |
+| 2021 | 17,30% | 15,85% | 16,47% |
+| 2022 | 11,61% | 9,56% | 10,21% |
+| 2023 | 3,65% | 1,25% | 1,93% |
+| 2024 | 1,06% | 0,13% | 0,91% |
+| **2025** | **0,61%** | **-0,22% (strata)** | **0,47%** |
+| 2026 (do VIII) | 2,86% | 3,96% | 4,81% |
+
+**2025 wraca na plus** — różnica względem oryginału to tylko -0,14 pp, zgodnie z oczekiwaniem, że poprawnie zsynchronizowany feriepenger jest w praktyce neutralny rocznie (tylko rozłożony w czasie zamiast skoncentrowany w czerwcu). 2019 pozostaje mocno przesunięty (-7,7 pp) — to nie błąd: efekt roku założycielskiego, nowa rezerwa zaczyna działać od razu (12 miesięcy odkładania w 2019), ale nie ma jeszcze "starego" kosztu czerwcowego do skompensowania (baza z 2018 = 0). Mniejsze, analogiczne przesunięcia w 2020-2022 to efekt kolejnych fal zatrudnień (growth1/growth2/merger) — każda nowa kohorta pracowników przechodzi przez ten sam "pierwszy rok bez kompensaty" efekt.
+
+`tests/test_faza7c_major_incidents.py::test_no_other_years_affected` — hardkodowane wartości 2019-2022 (zamrożona regresja sprzed tej zmiany) zaktualizowane do nowych liczb, jako świadoma, wyjaśniona zmiana, nie ukryty rozjazd.
+
+### Weryfikacja salda konta 2930 (E01, zatrudniony od 2019-01) — wzorzec potwierdzony
+
+```
+2023: maj=48 080 → czerwiec=-56 016 (wypłata) → lipiec=-46 112 → grudzień=3 411  (delta roku: +3 411)
+2024: maj=52 933 → czerwiec=-54 285 → lipiec=-44 084 → grudzień=6 924  (delta roku: +3 514)
+2025: maj=57 932 → czerwiec=-52 503 → lipiec=-41 995 → grudzień=10 543 (delta roku: +3 619)
+```
+
+Rośnie przez rok (akumulacja rezerwy), spada gwałtownie w czerwcu (rozliczenie/wypłata), rośnie od nowa — stabilny dryf ~+3,5k NOK/rok dla jednego długoletniego pracownika (efekt przesunięcia lipcowej podwyżki 3% między rokiem naliczenia rezerwy a rokiem wypłaty opartej na sumie roku poprzedniego), nie narasta bez ograniczeń. Potwierdza brak podwójnego liczenia — saldo faktycznie się zamyka co roku, nie kumuluje.
+
+### Testy
+
+7 nowych testów z Zadania 5 (`test_no_separate_benefit_cost_account_5900`, `test_feriepenger_accrued_monthly_all_twelve_months`, `test_aga_accrued_monthly_with_feriepenger_reserve`, `test_june_payout_settles_liability_not_new_cost`, `test_aga_excludes_canteen_and_insurance`, `test_june_employee_payout_unchanged_from_faza5`, `test_account_2930_balance_pattern_over_two_years`) + zaktualizowane istniejące (`test_june_2022`/`test_june_2023` — teraz 3 vouchery zamiast 2, `test_june_no_double_cost` — sprawdza że konto 5000 w czerwcu jest bliskie zeru, nie normalnej pensji). **298/299 zielone** — jedyny failujący to `test_export_default_range_is_full_history`, znany, wcześniej już zidentyfikowany flake granicy północy UTC/czasu lokalnego, niezwiązany z tą zmianą.
+
+### Backfill — celowo NIE WYKONANY w tej sesji
+
+Ta korekta dotyczy WYŁĄCZNIE `salary_transactions`/`vouchers`/`postings` (nie `hour_entries`) — inny zakres tabel niż poprzednie rundy (v5.26/v5.27). Backfill dla tej zmiany wymagałby osobnego resetu tabel finansowych (`orders`, `supplier_invoices`, `salary_transactions`, `payslips`, `salary_specifications`, `vouchers`, `postings` — NIE `hour_entries`), którego użytkownik świadomie nie zlecił w tej sesji (poprosił wyłącznie o commit + push kodu i tagu, weryfikację offline). **Stan produkcyjnej bazy pozostaje z poprzednim (błędnym, sprzed tej korekty) modelem feriepenger** — do zdecydowania w osobnej sesji, kiedy/czy robić pełny reset danych finansowych.

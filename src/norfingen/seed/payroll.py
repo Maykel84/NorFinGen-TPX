@@ -3,7 +3,33 @@
 Rates: skattetrekk (tax withholding) ~33% (approximation of the advance tax
 payment), AGA (employer's social security contribution) 14.1% (Oslo Zone 1),
 feriepenger (holiday pay) 12% (IT industry standard, statutory minimum 10.2%).
-"""
+
+Feriepenger bookkeeping (correction, 2026-09-21 — confirmed against real
+Norwegian accounting practice, opptjeningsprinsippet: feriepenger AND its
+AGA are both booked in the year they're EARNED, not the year they're paid):
+every month, the employer books calc_feriepenger_provision() (12% of that
+month's normal gross) as an expense, crediting a liability (account 2930,
+"Skyldige feriepenger") — plus calc_aga(that provision) as a further
+monthly expense, crediting the SAME AGA liability (2700) that regular
+salary AGA uses ("det samme gjelder arbeidsgiveravgift av feriepenger" —
+the AGA rules treat feriepenger the same way). In June, the actual
+feriepenger PAYOUT to the employee (calc_june_salary, unchanged formula —
+still 12% of the PRIOR year's total gross, replacing that month's normal
+salary) DRAWS DOWN that liability instead of hitting the P&L a second
+time, and its AGA is NOT recomputed either — both were already recognized
+monthly the year before. See salary_generator.py for the voucher
+structure. This avoids literally the same double-cost bug a previous
+version of this project already fixed once (see calc_june_salary's
+docstring) — recreating it via a second, uncoordinated mechanism (both for
+the feriepenger amount itself, and separately for its AGA) was the risk
+this rewrite was checked against before implementing.
+
+An earlier, uncommitted draft of this correction also added a flat 2%
+"employee benefits" cost (account 5900) — removed: it duplicated the
+canteen cost (opex_generator.py, account 7350, already modeled per Phase 3)
+without adding anything real. Account 5900 stays defined in the chart of
+accounts (repository.py) but unused by any generator, same as before this
+whole series of sessions started."""
 
 from __future__ import annotations
 
@@ -74,11 +100,23 @@ def calc_feriepenger(brutto_prev_year: float) -> float:
     return round(brutto_prev_year * FERIEPENGER_RATE)
 
 
+def calc_feriepenger_provision(brutto_normal: float) -> float:
+    """The monthly employer-side accrual toward NEXT year's feriepenger
+    payout — 12% of this month's normal gross (not the actual amount paid,
+    so June's own swap doesn't feed back into its own provisioning; see
+    calc_brutto_with_raises, the same base brutto_earned_in_year() sums).
+    Booked as an expense (account 5099) against the SAME liability
+    (account 2930) that calc_june_salary's feriepenger draws down."""
+    return round(brutto_normal * FERIEPENGER_RATE, 2)
+
+
 @dataclass(frozen=True)
 class JuneSalary:
     gross_salary: float  # regular June salary — 0 in the standard case
     feriepenger: float
-    total_brutto: float  # gross_salary + feriepenger — this is what posts to account 5000/AGA
+    total_brutto: float  # gross_salary + feriepenger — netto/skattetrekk are computed off this,
+    # but gross_salary posts to 5000 and feriepenger posts to 2930 (liability drawdown) separately —
+    # see salary_generator.py, not a single combined 5000/AGA posting
     tax_on_salary: float  # skattetrekk applies only to gross_salary; feriepenger is always untaxed
 
 
