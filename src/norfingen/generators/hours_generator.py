@@ -10,8 +10,9 @@ set before Phase 4 — see NON_BILLABLE_OVERRIDES). Department-dependent model:
   - Okonomi (generate_okonomi_daily_hours): regular full days, with a
     month-end closing spike.
 All four departments also carry the same absence types (SICK, VACATION,
-PARENTAL_LEAVE, WELFARE_LEAVE — see leave_events.py/vacation.py), checked
-before any department-specific logic runs.
+PARENTAL_LEAVE, WELFARE_LEAVE, FLEX_LEAVE, CHILD_CARE_LEAVE — see
+leave_events.py/vacation.py/flex_leave.py), checked before any
+department-specific logic runs.
 
 Phase 6, Tasks 3/4 — replaces the "one customer per day" pattern (Phase 4)
 with two department-dependent models, because in a small (17-person) team
@@ -47,6 +48,7 @@ from datetime import date, timedelta
 
 from norfingen.generators.client_events import event_aware_is_customer_active, hardship_ticket_multiplier_for
 from norfingen.generators.company_events import unprofitable_quarter_ticket_multiplier
+from norfingen.generators.flex_leave import is_child_care_leave_day, is_flex_leave_day
 from norfingen.generators.leave_events import active_leave_period
 from norfingen.generators.macro_shock import apply_macro_shock_multiplier
 from norfingen.generators.seasonality import fellesferie_activity_multiplier
@@ -88,6 +90,8 @@ LEAVE_DESCRIPTIONS = {
     ActivityType.VACATION: "Ferie",
     ActivityType.PARENTAL_LEAVE: "Foreldrepermisjon",
     ActivityType.WELFARE_LEAVE: "Velferdspermisjon",
+    ActivityType.FLEX_LEAVE: "Avspasering",
+    ActivityType.CHILD_CARE_LEAVE: "Omsorgsdager (sykt barn)",
 }
 
 BASE_YEAR = 2019
@@ -352,8 +356,12 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
        whole day (a single 0h entry), nothing else below applies.
     2. vacation.is_vacation_day — one of this employee's (up to) 25
        VACATION days for the year. Same shape as #1.
-    3. ~5% chance of a short, self-certified SICK day.
-    4. Department-specific generation for whoever's left (not absent today):
+    3. flex_leave.is_flex_leave_day — one of this employee's (up to) 12
+       FLEX_LEAVE days for the year. Same shape as #1.
+    4. flex_leave.is_child_care_leave_day — one of this employee's (up to)
+       10 CHILD_CARE_LEAVE days for the year. Same shape as #1.
+    5. ~5% chance of a short, self-certified SICK day.
+    6. Department-specific generation for whoever's left (not absent today):
        - Leveranse: the ticketing model (generate_daily_support_hours) over
          a portfolio covering all active customers.
        - Teknologi: a full day (7.5h billable) at a customer in active
@@ -401,6 +409,26 @@ def generate_daily_hours(year: int, month: int, day: int, active_employee_ids: l
                 activity_type=ActivityType.VACATION,
                 hours=0.0,
                 description=LEAVE_DESCRIPTIONS[ActivityType.VACATION],
+            ))
+            absent_ids.add(emp_id)
+            continue
+
+        if is_flex_leave_day(emp_id, d):
+            entries.append(HourEntry(
+                date=d, employee_id=emp_id,
+                activity_type=ActivityType.FLEX_LEAVE,
+                hours=0.0,
+                description=LEAVE_DESCRIPTIONS[ActivityType.FLEX_LEAVE],
+            ))
+            absent_ids.add(emp_id)
+            continue
+
+        if is_child_care_leave_day(emp_id, d):
+            entries.append(HourEntry(
+                date=d, employee_id=emp_id,
+                activity_type=ActivityType.CHILD_CARE_LEAVE,
+                hours=0.0,
+                description=LEAVE_DESCRIPTIONS[ActivityType.CHILD_CARE_LEAVE],
             ))
             absent_ids.add(emp_id)
             continue

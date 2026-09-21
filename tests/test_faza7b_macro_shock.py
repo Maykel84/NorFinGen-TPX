@@ -7,7 +7,16 @@ kwiecień 2019/2021 zamienione na porównanie WEWNĄTRZ 2020 (miesiące COVID
 vs pozostałe) — cross-rok jest silnie zaburzone wzrostem bazy klientów
 (2 aktywnych w kwietniu 2019, 8 w 2020, 10 w 2021), więc surowe liczby
 ticketów rosłyby z roku na rok niezależnie od COVID; porównanie
-wewnątrzroczne izoluje efekt szoku przy tej samej bazie klientów/pracowników."""
+wewnątrzroczne izoluje efekt szoku przy tej samej bazie klientów/pracowników.
+
+Korekta (sesja "realny model godzin", 2026-09-21): miesiące spoza okna COVID
+pierwotnie brzmiały (1, 2, 7, 8), ale styczeń/luty 2020 mają tylko 3 billable
+pracowników wobec 5 w oknie COVID (marzec+, growth1) — komentarz "ta sama
+baza pracowników" był nieprawdziwy od początku, po prostu wcześniej różnica
+nie była dość duża, żeby przewrócić asercję. Nowe typy nieobecności
+(FLEX_LEAVE/CHILD_CARE_LEAVE, więcej wariancji dziennej) ujawniły to —
+podmienione na (7, 8, 9, 10), które mają dokładnie tę samą liczbę billable
+pracowników (5) co okno COVID, więc porównanie jest znów miarodajne."""
 
 from datetime import date, timedelta
 
@@ -34,7 +43,7 @@ def _monthly_ticket_count(year: int, month: int) -> int:
 
 def test_macro_shock_reduces_2020_covid_window_ticket_volume():
     covid_months = (3, 4, 5, 6)
-    non_covid_months = (1, 2, 7, 8)  # ta sama baza klientów/pracowników w 2020 co okno COVID
+    non_covid_months = (7, 8, 9, 10)  # ta sama liczba billable pracowników (5) w 2020 co okno COVID
     covid_avg = sum(_monthly_ticket_count(2020, m) for m in covid_months) / len(covid_months)
     non_covid_avg = sum(_monthly_ticket_count(2020, m) for m in non_covid_months) / len(non_covid_months)
     assert covid_avg < non_covid_avg

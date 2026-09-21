@@ -18,9 +18,15 @@ class ActivityType(str, Enum):
     INTERNAL = "INTERNAL"  # internal — meetings, admin
     SICK = "SICK"  # sick leave — both short self-certified days (hours_generator's
     # daily coin flip) and longer certified blocks (see generators/leave_events.py)
-    VACATION = "VACATION"  # ferie — the statutory 25 days/year (see generators/vacation.py)
-    PARENTAL_LEAVE = "PARENTAL_LEAVE"  # foreldrepermisjon (~20-49 weeks) — not gender-assigned, see leave_events.py
+    VACATION = "VACATION"  # ferie — the statutory 25 days/year (see generators/vacation.py). NOT paid via
+    # ordinary salary — covered by feriepenger (already modeled independently as the June salary swap,
+    # see seed/payroll.py::calc_june_salary — unrelated to which calendar days are marked VACATION here)
+    PARENTAL_LEAVE = "PARENTAL_LEAVE"  # foreldrepermisjon, up to 52 weeks total per event — a primary block
+    # (20-39 weeks) at one employee plus a ~3-month "fedrekvote" block at a different employee, see leave_events.py
     WELFARE_LEAVE = "WELFARE_LEAVE"  # velferdspermisjon — short, occasional (1-3 days)
+    FLEX_LEAVE = "FLEX_LEAVE"  # dager til avspasering — 12/year, taken in blocks of up to 3 days with a
+    # mandatory 16-day gap between blocks (see generators/flex_leave.py)
+    CHILD_CARE_LEAVE = "CHILD_CARE_LEAVE"  # omsorgsdager (sykt barn) — 10/year, paid child-sick-care days
 
 
 class HourEntry(BaseModel):

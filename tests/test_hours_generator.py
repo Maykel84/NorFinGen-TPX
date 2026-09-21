@@ -63,7 +63,10 @@ def test_generate_daily_hours_respects_active_employee_filter():
     assert entry_employee_ids.issubset({2, 3})
 
 
-ZERO_HOUR_TYPES = {ActivityType.SICK, ActivityType.VACATION, ActivityType.PARENTAL_LEAVE, ActivityType.WELFARE_LEAVE}
+ZERO_HOUR_TYPES = {
+    ActivityType.SICK, ActivityType.VACATION, ActivityType.PARENTAL_LEAVE, ActivityType.WELFARE_LEAVE,
+    ActivityType.FLEX_LEAVE, ActivityType.CHILD_CARE_LEAVE,
+}
 
 
 def test_billable_and_internal_sum_to_full_workday():
@@ -147,6 +150,27 @@ def test_employee_on_leave_logs_a_single_zero_hour_entry():
     assert len(entries) == 1
     assert entries[0].employee_id == 3
     assert entries[0].activity_type == ActivityType.PARENTAL_LEAVE
+    assert entries[0].hours == 0.0
+    assert entries[0].project_id is None
+
+
+def test_employee_on_flex_leave_logs_a_single_zero_hour_entry():
+    # E01, 2023-01-02 — deterministically the first FLEX_LEAVE day (see
+    # test_flex_leave.py).
+    entries = generate_daily_hours(2023, 1, 2, [1])
+    assert len(entries) == 1
+    assert entries[0].employee_id == 1
+    assert entries[0].activity_type == ActivityType.FLEX_LEAVE
+    assert entries[0].hours == 0.0
+    assert entries[0].project_id is None
+
+
+def test_employee_on_child_care_leave_logs_a_single_zero_hour_entry():
+    # E01, 2023-01-05 — deterministically the first CHILD_CARE_LEAVE day.
+    entries = generate_daily_hours(2023, 1, 5, [1])
+    assert len(entries) == 1
+    assert entries[0].employee_id == 1
+    assert entries[0].activity_type == ActivityType.CHILD_CARE_LEAVE
     assert entries[0].hours == 0.0
     assert entries[0].project_id is None
 

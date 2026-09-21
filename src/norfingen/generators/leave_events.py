@@ -11,7 +11,13 @@ client_events.py docstring for the full rationale).
 PARENTAL_LEAVE is deliberately NOT gender-based: EmployeeSeed carries no
 gender field (and adding one just to pick "maternity vs paternity" would be
 a whole new dimension of data for one feature). Every employee has the same
-independent, symmetric chance of the event each year they're employed.
+independent, symmetric chance of the event each year they're employed. A
+triggered event places a primary block (20-39 weeks) for that employee AND
+a separate ~3-month "fedrekvote" block for a DIFFERENT, randomly chosen
+employee — together capped at the statutory 52 weeks — simulating the
+second parent without asserting who's the mother and who's the father (see
+_father_quota_assignments(), a company-wide pass, not a per-employee one,
+since it writes into someone ELSE's periods).
 
 This only affects hour_entries for employees who log hours at all — see
 hours_generator.py's NON_BILLABLE_OVERRIDES (E05 stays fully excluded, as
@@ -22,7 +28,10 @@ Salary is untouched by any of this — salary_generator computes pay from
 annual_salary/employment status only, independent of hours (see
 hours_generator.py's Phase 6 note), which matches Norwegian practice: the
 employer keeps paying salary through sick leave and parental leave (and
-reclaims part of it from NAV) rather than the employee going unpaid."""
+reclaims part of it from NAV) rather than the employee going unpaid. VACATION
+is the one exception — it's covered by feriepenger, not ordinary salary; see
+models/hours.py's ActivityType.VACATION comment and seed/payroll.py's
+calc_june_salary, which already models this independently of hour_entries."""
 
 from __future__ import annotations
 
@@ -46,11 +55,19 @@ LONG_SICK_LEAVE_MAX_DAYS = 84  # ~12 weeks
 # Parental leave (foreldrepermisjon) — rolled independently EVERY year an
 # employee is active, not once per tenure, per the spec ("~1 case/year across
 # a 17-person team"). A 2-year cooldown after a triggered event prevents the
-# same employee going on leave again immediately.
+# same employee going on leave again immediately. Total statutory cap is 52
+# weeks; the primary block below is capped at 39 (52 - the 13-week father's
+# quota placed separately, see FATHER_QUOTA_*).
 PARENTAL_LEAVE_ANNUAL_PROBABILITY = 0.06
 PARENTAL_LEAVE_MIN_WEEKS = 20
-PARENTAL_LEAVE_MAX_WEEKS = 49
+PARENTAL_LEAVE_MAX_WEEKS = 39
 PARENTAL_LEAVE_COOLDOWN_YEARS = 2
+
+# "Fedrekvote" — ~3 months reserved for the second parent, at a different
+# employee, placed right after the primary block ends (see
+# _father_quota_assignments()).
+FATHER_QUOTA_MIN_WEEKS = 12
+FATHER_QUOTA_MAX_WEEKS = 14
 
 # Welfare/occasional leave (velferdspermisjon — a death in the family, a
 # house move, a child's first day of school, etc.) — short, and unlike
@@ -78,13 +95,15 @@ class LeavePeriod:
 
 
 @lru_cache(maxsize=None)
-def employee_leave_periods(employee_id: int) -> tuple[LeavePeriod, ...]:
-    """Deterministically derives an employee's long-absence periods (long
-    SICK, PARENTAL_LEAVE, WELFARE_LEAVE) from their start_date alone — no
-    wall-clock/"today" input (see module docstring). Every roll uses its own
-    string-seeded random.Random (never hash() — see roster.py/
-    company_events.py convention), so periods can be added to this function
-    later without disturbing already-decided ones."""
+def _own_periods(employee_id: int) -> tuple[LeavePeriod, ...]:
+    """This employee's OWN rolled periods (long SICK, primary PARENTAL_LEAVE,
+    WELFARE_LEAVE) — everything derivable from just their own start_date, no
+    wall-clock/"today" input (see module docstring). Deliberately excludes
+    father's-quota blocks assigned to them by someone ELSE's parental-leave
+    event (see _father_quota_assignments()) — employee_leave_periods() below
+    merges those in. Kept separate to avoid a circular dependency: the
+    company-wide father-quota pass needs to read every employee's OWN
+    primary periods without triggering the merge itself."""
     employee = employee_by_id(employee_id)
     periods: list[LeavePeriod] = []
 
@@ -96,6 +115,60 @@ def employee_leave_periods(employee_id: int) -> tuple[LeavePeriod, ...]:
     _roll_welfare_leave(employee_id, employee.start_date, horizon_end, periods)
 
     return tuple(sorted(periods, key=lambda p: p.start))
+
+
+@lru_cache(maxsize=None)
+def _father_quota_assignments() -> dict[int, tuple[LeavePeriod, ...]]:
+    """Company-wide pass (not per-employee — it writes into OTHER employees'
+    periods): for every employee's own, already-rolled primary PARENTAL_LEAVE
+    block, assigns a ~3-month "fedrekvote" block, starting right after it
+    ends, to a different, randomly chosen employee active at that time.
+    E05 is excluded as a candidate (same permanent exclusion as everywhere
+    else in hour tracking — duplicated locally since this module can't
+    import hours_generator without creating a cycle)."""
+    from norfingen.seed.roster import EMPLOYEES
+
+    assignments: dict[int, list[LeavePeriod]] = {}
+    for source in EMPLOYEES:
+        source_id = int(source.number[1:])
+        for period in _own_periods(source_id):
+            if period.activity_type != ActivityType.PARENTAL_LEAVE:
+                continue
+            candidates = [
+                e for e in EMPLOYEES
+                if int(e.number[1:]) not in (source_id, 5) and e.start_date <= period.start
+            ]
+            if not candidates:
+                continue
+            rng = random.Random(f"LEAVE-FATHER-{source_id}-{period.start.isoformat()}")
+            father = rng.choice(candidates)
+            father_id = int(father.number[1:])
+            weeks = rng.randint(FATHER_QUOTA_MIN_WEEKS, FATHER_QUOTA_MAX_WEEKS)
+            length = weeks * 7
+            father_start = period.end + timedelta(days=1)
+            father_period = LeavePeriod(father_start, father_start + timedelta(days=length - 1), ActivityType.PARENTAL_LEAVE)
+            assignments.setdefault(father_id, []).append(father_period)
+
+    return {emp_id: tuple(periods) for emp_id, periods in assignments.items()}
+
+
+@lru_cache(maxsize=None)
+def employee_leave_periods(employee_id: int) -> tuple[LeavePeriod, ...]:
+    """This employee's full set of long-absence periods: their own (long
+    SICK, primary PARENTAL_LEAVE, WELFARE_LEAVE) plus any father's-quota
+    block assigned to them by a different employee's parental-leave event.
+    A father's-quota block that collides with something already in this
+    employee's own periods is dropped (not shifted) — a missed assignment is
+    harmless, same policy as _random_start()'s give-up-after-retries."""
+    own = _own_periods(employee_id)
+    incoming = _father_quota_assignments().get(employee_id, ())
+
+    merged = list(own)
+    for candidate in incoming:
+        if not any(candidate.start <= p.end and candidate.end >= p.start for p in merged):
+            merged.append(candidate)
+
+    return tuple(sorted(merged, key=lambda p: p.start))
 
 
 def _roll_long_sick_leave(

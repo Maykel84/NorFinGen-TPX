@@ -1141,3 +1141,37 @@ Metoda: `git stash` (bez utraty zmian) → przełączenie working tree na poprze
 `daily.yml`: włączenie z powrotem w GitHub UI zostawione użytkownikowi (decyzja z rozmowy — "oba": użytkownik włącza workflow, ja dodaję tag).
 
 **`git tag v5.26-realistic-hours` dodany i wypchnięty** po potwierdzonym backfillu, zgodnie z konwencją tego projektu.
+
+## Korekta danych o czasie pracy: FLEX_LEAVE, CHILD_CARE_LEAVE, kwota ojcowska, feriepenger (2026-09-21)
+
+Po zakończeniu backfillu v5.26 użytkownik poprosił o wypis zawartości `hour_entries` (do porównania z raportem Streamlit) i przy tej okazji podał korekty norweskich zasad:
+- wakacje 25 dni/rok (już poprawne, bez zmian),
+- **dni na żądanie 12/rok** — nowy typ, `FLEX_LEAVE` (potwierdzone: osobny typ, nie przemianowanie `WELFARE_LEAVE`); doprecyzowane w kolejnej wiadomości: max 3 dni pod rząd, przerwa min. 16 dni między blokami,
+- **dni na dziecko 10/rok** — nowy typ, `CHILD_CARE_LEAVE` (omsorgsdager),
+- **macierzyński max 52 tyg., z czego 3 miesiące dla ojca** — restrukturyzacja `PARENTAL_LEAVE` (potwierdzone: drugi, krótszy blok u INNEGO pracownika, nie tylko wydłużenie limitu),
+- **urlop (VACATION) nie podlega wynagrodzeniu, bo pokrywa go feriepenger** — korekta dokumentacji, nie kodu (patrz niżej).
+
+### Co dodano
+
+**Nowy moduł `generators/flex_leave.py`**: `employee_flex_leave_days`/`employee_child_care_leave_days`, ten sam wzorzec co `vacation.py` (deterministyczne, memoizowane per `(employee_id, year)`, omijają dni już zajęte przez inne typy nieobecności). `_place_day_budget()` — wspólny algorytm: idzie dzień po dniu przez rok, umieszcza bloki ≤N dni, po każdym bloku przeskakuje o `gap_days` dalej. **Znaleziony i naprawiony błąd we własnym kodzie w trakcie tej samej sesji**: dla `CHILD_CARE_LEAVE` (`gap_days=0`, bo "chore dziecko nie czeka 16 dni") dwa kolejne bloki mogły wylądować bezpośrednio obok siebie i sklejać się w dłuższy ciąg niż deklarowany limit 2 dni — złapane przez `test_child_care_leave_does_not_exceed_annual_budget_and_max_block` (5-dniowy ciąg zamiast max 2). Naprawione: `_place_day_budget` wymusza teraz `gap_days = max(gap_days, 1)` niezależnie od wejścia — brak "obowiązkowej" 16-dniowej przerwy jak przy `FLEX_LEAVE`, ale zawsze co najmniej 1 dzień odstępu, więc bloki nigdy się nie sklejają.
+
+**Restrukturyzacja `PARENTAL_LEAVE` (`leave_events.py`)**: `PARENTAL_LEAVE_MAX_WEEKS` 49→39 (52 minus 13-tygodniowa kwota ojcowska). Nowa funkcja `_father_quota_assignments()` — **przebieg firmowy, nie per-pracownik** (jedyna taka funkcja w tym module): dla każdego własnego, już wylosowanego bloku podstawowego (`_own_periods`) przypisuje ~3-miesięczny blok "fedrekvote" losowo wybranemu, INNEMU pracownikowi, startujący dzień po zakończeniu bloku podstawowego. Rozwiązuje to circular dependency (funkcja `employee_leave_periods(Z)` potrzebuje wiedzieć o zdarzeniach INNYCH pracowników) przez rozdzielenie: `_own_periods()` (czysto własne, bez kwoty ojcowskiej) → `_father_quota_assignments()` (globalny przebieg czytający tylko `_own_periods` wszystkich) → `employee_leave_periods()` (scala własne + otrzymane, odrzucając kolizje). Zweryfikowane end-to-end: E06 blok podstawowy kończy się 2025-09-04, E16 dostaje blok ojcowski zaczynający się dokładnie 2025-09-05.
+
+**Korekta dokumentacji (bez zmiany kodu)**: `salary_generator.py` już poprawnie modeluje feriepenger jako zamianę całej pensji czerwcowej (`seed/payroll.py::calc_june_salary`, mechanizm sprzed tej sesji) — niezależnie od tego, które konkretne dni w `hour_entries` są oznaczone `VACATION`. Wcześniejsze sformułowanie w `DATA_DICTIONARY.md`/kodzie ("salary keeps being paid through any absence exactly as through any other day") było mylące dla `VACATION` konkretnie — poprawione, żeby jasno rozróżniać: SICK/PARENTAL_LEAVE/WELFARE_LEAVE/FLEX_LEAVE/CHILD_CARE_LEAVE są płatne z normalnej pensji (pracodawca płaci, odzyskuje z NAV), ale VACATION pokrywa feriepenger, osobny mechanizm.
+
+### Bezpiecznik — WYNIK: PASS
+
+Ta sama metoda co przy v5.26 (offline, `git stash` do porównania z aktualnym stanem produkcyjnym `385ca82`, bez zapisu do bazy): suma godzin BILLABLE Leveranse/Teknologi za 2025:
+- **przed tą zmianą** (produkcja, po backfillu v5.26): **9018,6h**
+- **po tej zmianie** (+ FLEX_LEAVE + CHILD_CARE_LEAVE + rozszerzony PARENTAL_LEAVE z kwotą ojcowską): **8183,7h**
+- **spadek: 9,26%** — poniżej progu 15% → kontynuacja.
+
+### Testy
+
+292/292 zielone (było 280): nowy `tests/test_flex_leave.py` (8 testów), rozszerzony `tests/test_leave_events.py` (test kwoty ojcowskiej z deterministycznym przykładem E06→E16, poprawiony test cooldownu — musi odróżniać własne bloki podstawowe od otrzymanej kwoty ojcowskiej po długości, bo ta ostatnia nie podlega cooldownowi tego pracownika), rozszerzony `tests/test_hours_generator.py` (`ZERO_HOUR_TYPES` musiał objąć nowe typy — bez tego test sumy godzin fałszywie failował, `0.0 == 7.5`).
+
+**Nieoczekiwane odkrycie przy okazji**: `tests/test_faza7b_macro_shock.py::test_macro_shock_reduces_2020_covid_window_ticket_volume` zaczął failować (204,75 vs 184,25) — ale przyczyna nie leży w tej zmianie per se. Test porównywał miesiące COVID (marzec-czerwiec 2020, 5 billable pracowników) z miesiącami spoza okna (styczeń/luty/lipiec/sierpień) przy fałszywym założeniu w komentarzu "ta sama baza pracowników" — styczeń/luty 2020 miały w rzeczywistości tylko 3 billable pracowników (przed zatrudnieniami growth1 w marcu 2020). Ta rozbieżność istniała od zawsze, po prostu nie była dość duża żeby przewrócić asercję, dopóki nowe typy nieobecności nie dodały więcej wariancji dziennej. Naprawione przez zamianę miesięcy porównawczych na wrzesień-październik 2020 (też 5 billable pracowników, faktycznie porównywalne) — nie osłabienie testu, naprawienie jego przesłanki.
+
+### Backfill — NIE WYKONANY jeszcze
+
+Kod scommitowany i wypchnięty, ale **produkcyjny TRUNCATE + backfill dla tej rundy zmian jeszcze się nie odbył** — czeka na tę samą sekwencję co v5.26 (wyłącz `daily.yml` → `TRUNCATE hour_entries` → `run_backfill.py --mode daily --start 2019-01-01` x2 → włącz `daily.yml`), zainicjowaną przez użytkownika, backfill wykonywany przeze mnie w tle po TRUNCATE.
