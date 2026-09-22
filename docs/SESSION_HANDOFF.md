@@ -1240,6 +1240,19 @@ Rośnie przez rok (akumulacja rezerwy), spada gwałtownie w czerwcu (rozliczenie
 
 7 nowych testów z Zadania 5 (`test_no_separate_benefit_cost_account_5900`, `test_feriepenger_accrued_monthly_all_twelve_months`, `test_aga_accrued_monthly_with_feriepenger_reserve`, `test_june_payout_settles_liability_not_new_cost`, `test_aga_excludes_canteen_and_insurance`, `test_june_employee_payout_unchanged_from_faza5`, `test_account_2930_balance_pattern_over_two_years`) + zaktualizowane istniejące (`test_june_2022`/`test_june_2023` — teraz 3 vouchery zamiast 2, `test_june_no_double_cost` — sprawdza że konto 5000 w czerwcu jest bliskie zeru, nie normalnej pensji). **298/299 zielone** — jedyny failujący to `test_export_default_range_is_full_history`, znany, wcześniej już zidentyfikowany flake granicy północy UTC/czasu lokalnego, niezwiązany z tą zmianą.
 
-### Backfill — celowo NIE WYKONANY w tej sesji
+### Backfill — WYKONANE, 2026-09-22 (osobna sesja/prompt od commitu kodu)
 
-Ta korekta dotyczy WYŁĄCZNIE `salary_transactions`/`vouchers`/`postings` (nie `hour_entries`) — inny zakres tabel niż poprzednie rundy (v5.26/v5.27). Backfill dla tej zmiany wymagałby osobnego resetu tabel finansowych (`orders`, `supplier_invoices`, `salary_transactions`, `payslips`, `salary_specifications`, `vouchers`, `postings` — NIE `hour_entries`), którego użytkownik świadomie nie zlecił w tej sesji (poprosił wyłącznie o commit + push kodu i tagu, weryfikację offline). **Stan produkcyjnej bazy pozostaje z poprzednim (błędnym, sprzed tej korekty) modelem feriepenger** — do zdecydowania w osobnej sesji, kiedy/czy robić pełny reset danych finansowych.
+Zakres tabel INNY niż poprzednie rundy (v5.26/v5.27, tylko `hour_entries`) — ta poprawka dotyczy `orders`/`order_lines`/`supplier_invoices`/`salary_transactions`/`payslips`/`salary_specifications`/`vouchers`/`postings`/`bank_transactions`. `hour_entries` **celowo NIETKNIĘTY** — niezależny od tej poprawki, już poprawny z v5.27.
+
+Sekwencja: `daily.yml` wyłączony przez użytkownika → `TRUNCATE orders, order_lines, supplier_invoices, salary_transactions, payslips, salary_specifications, vouchers, postings, bank_transactions RESTART IDENTITY CASCADE` wykonany przez użytkownika (uwaga: `bank_transactions` musiał być w tym samym TRUNCATE co `orders`/`supplier_invoices`/`vouchers`/`salary_transactions` — ma do nich FK bez `ON DELETE CASCADE`) → backfill wykonany przeze mnie w tle:
+
+1. **Tryb miesięczny** (`run_backfill.py --start 2019-01-01`, domyślny) — orders/supplier_invoices/salary/vouchers. Bez błędów, 93 miesiące, `orders=1849 supplier_invoices=744 salary_transactions=92 payslips=1160 vouchers=1490 postings=3073`.
+2. **Tryb dzienny** (`run_backfill.py --mode daily --start 2019-01-01`) — bank_transactions (wymaga istniejących orders/faktur). Bez błędów, 2016 dni roboczych. `hour_entries` przeszedł przez ten sam przebieg jako efekt uboczny (funkcja `run_daily()` zawsze go generuje) — bezpiecznie no-op dzięki `ON CONFLICT DO NOTHING` (liczba wierszy wzrosła tylko o 48, dla jednego nowego dnia, 2026-09-22, który jeszcze nie istniał).
+3. **`scripts/fix_outgoing_transactions.py`** — standardowy krok po resecie `bank_transactions` (patrz `DATA_DICTIONARY.md`, p. 2: "bank_transactions requires manual re-repair after every TRUNCATE"). Naprawił 727 brakujących transakcji OUTGOING: `INCOMING=1280, OUTGOING=100 → INCOMING=1280, OUTGOING=827`.
+
+**Weryfikacja końcowa (żywa baza)**:
+- Zero niezbalansowanych voucherów (`SUM(amount + vat_amount) GROUP BY voucher_id` — pusty wynik; pierwsza, naiwna wersja tego zapytania bez `vat_amount` dała fałszywe alarmy — VAT jest polem na postingu DR, nie osobnym wpisem, zgodnie z konwencją `voucher.py`)
+- **Marża licząca się z żywych danych dokładnie zgadza się z przewidywaniem offline**: 2019:-33,40% / 2020:17,78% / 2021:16,47% / 2022:10,21% / 2023:1,93% / 2024:0,91% / **2025:0,47%** / 2026:8,16% (2026 wyższe niż offline 4,81%, bo żywa baza ma pełniejszy 2026 — backfill dotarł do dziś, offline liczone było tylko do sierpnia — to różnica zakresu dat, nie rozjazd)
+- `orders=1849, order_lines=3771, supplier_invoices=744, salary_transactions=92, payslips=1160, vouchers=3597, postings=7468, bank_transactions=2107, hour_entries=51146`
+
+`daily.yml`: pozostawiony wyłączony do ręcznego włączenia przez użytkownika.
