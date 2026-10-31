@@ -93,6 +93,21 @@ Fictional vs. real entities are handled under a clear rule: suppliers
 may be real, named companies; customers are always fictional. See
 [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md).
 
+## Backlog (deliberately deferred)
+
+Decisions taken while fixing the accounting model (see [docs/SPEC_poprawki_ksiegowe.md](docs/SPEC_poprawki_ksiegowe.md)):
+
+- **Norwegian public holidays as days without bank payments** (17 May, Easter, Christmas). Today a working
+  day is Monday-Friday only (`seed/workdays.py`); a payment due on a weekend is booked the next Monday,
+  one due on a holiday is not moved.
+- **Decimal end to end.** Amounts are Python floats rounded by Postgres on insert; `generators/money.py`
+  (`pg_round2`) reproduces that rounding where Python writes an amount first, and any amount already stored is
+  read back from the database, never recomputed. Moving the whole pipeline to `Decimal` is a separate,
+  conscious change of history and needs a new version of the golden hash (`tests/test_golden_hash.py`).
+- **COGS as real supplier invoices (variant A).** The monthly pass-through COGS (accounts 4291/4292) books a
+  liability on 2400 without a purchase invoice behind it; tests and the export cover it as a separate
+  "COGS payables" set instead (variant B). Giving it real supplier invoices would need a supplier for 4292.
+
 ## License / status
 
 Portfolio/demonstration project — no formal license specified.

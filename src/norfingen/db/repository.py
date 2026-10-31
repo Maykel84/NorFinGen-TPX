@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Optional, Union
 
@@ -640,6 +641,49 @@ def save_hour_entries(entries: list[HourEntry]) -> None:
     conn.commit()
 
 
+DAILY_PIPELINE_WATERMARK = "daily_pipeline"
+
+
+def get_watermark(key: str = DAILY_PIPELINE_WATERMARK) -> Optional[date]:
+    """The last calendar day the daily pipeline has fully processed (every
+    event of that day committed), or None if it never ran. run_daily's
+    catch-up processes (watermark, today]."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT value_date FROM generation_state WHERE key = %s", (key,))
+        row = cur.fetchone()
+    conn.commit()
+    return row[0] if row else None
+
+
+def set_watermark(value: date, key: str = DAILY_PIPELINE_WATERMARK) -> None:
+    """Advances the watermark. GREATEST makes it monotonic: a slow or retried
+    run that finishes late can never move it backwards."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO generation_state (key, value_date, updated_at)
+               VALUES (%s, %s, now())
+               ON CONFLICT (key) DO UPDATE
+                   SET value_date = GREATEST(generation_state.value_date, EXCLUDED.value_date),
+                       updated_at = now()""",
+            (key, value),
+        )
+    conn.commit()
+
+
+def latest_hour_entry_date(on_or_before: date) -> Optional[date]:
+    """Fallback starting point for a database that predates generation_state:
+    hours are written every working day, so their latest date is the best
+    available evidence of how far the daily pipeline got."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT max(date) FROM hour_entries WHERE date <= %s", (on_or_before,))
+        row = cur.fetchone()
+    conn.commit()
+    return row[0] if row else None
+
+
 def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> int:
     """Saves a SalaryTransaction (+payslips+specifications) and its matching
     Vouchers (payroll, AGA, possibly feriepenger) — the pair returned by
@@ -661,7 +705,12 @@ def save_salary(transaction: SalaryTransaction, vouchers: list[Voucher]) -> int:
     return transaction_id
 
 
-ORDER_PAYMENT_LOOKBACK_DAYS = MAX_PAYMENT_TERMS_DAYS + OVERDUE_PAYMENT_DELAY_DAYS  # OVERDUE pays +90 days later
+# A payment due on Sat/Sun is booked on the following Monday (seed.workdays.next_working_day),
+# so the look-back window must reach 2 days further back than the raw due date; 3 for margin.
+PAYMENT_WEEKEND_SHIFT_MARGIN_DAYS = 3
+ORDER_PAYMENT_LOOKBACK_DAYS = (
+    MAX_PAYMENT_TERMS_DAYS + OVERDUE_PAYMENT_DELAY_DAYS + PAYMENT_WEEKEND_SHIFT_MARGIN_DAYS
+)  # OVERDUE pays +90 days later
 
 
 def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMENT_LOOKBACK_DAYS) -> list[Order]:
@@ -689,7 +738,7 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMEN
         if order_ids:
             cur.execute(
                 """SELECT order_id, product_id, count, unit_price_excluding_vat_currency,
-                          vat_type_id, discount
+                          vat_type_id, discount, amount_currency
                    FROM order_lines WHERE order_id = ANY(%s)""",
                 (order_ids,),
             )
@@ -706,8 +755,15 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMEN
                 vatType=TripletexRef(id=l_vat_type_id) if l_vat_type_id is not None else None,
                 discount=float(l_discount) if l_discount is not None else 0.0,
             )
-            for (_, l_product_id, l_count, l_price, l_vat_type_id, l_discount) in lines_by_order.get(oid, [])
+            for (_, l_product_id, l_count, l_price, l_vat_type_id, l_discount, _gross) in lines_by_order.get(oid, [])
         ]
+        # Exact stored gross: summed as Decimal straight from the database,
+        # never recomputed from price x count in Python (see generators/money.py).
+        stored_lines = lines_by_order.get(oid, [])
+        stored_gross = (
+            float(sum((Decimal(str(row[6])) for row in stored_lines), Decimal("0")))
+            if stored_lines and all(row[6] is not None for row in stored_lines) else None
+        )
         orders.append(Order(
             id=oid,
             customer=TripletexRef(id=customer_id),
@@ -719,11 +775,14 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMEN
             comment=comment,
             status=OrderStatus(status) if status else OrderStatus.PAID,
             orderLines=order_lines,
+            storedGrossAmountCurrency=stored_gross,
         ))
     return orders
 
 
-def get_unpaid_supplier_invoices(as_of: date, lookback_days: int = MAX_PAYMENT_TERMS_DAYS) -> list[SupplierInvoice]:
+def get_unpaid_supplier_invoices(
+    as_of: date, lookback_days: int = MAX_PAYMENT_TERMS_DAYS + PAYMENT_WEEKEND_SHIFT_MARGIN_DAYS,
+) -> list[SupplierInvoice]:
     """Reconstructs SupplierInvoice rows with status UNPAID whose
     payment_due_date falls in the window [as_of-lookback_days, as_of]. The
     status switches to PAID in save_bank_transactions() once the payment is

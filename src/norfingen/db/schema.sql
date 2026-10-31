@@ -279,6 +279,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS hour_entries_unique_null_project
     ON hour_entries (date, employee_id, activity_type)
     WHERE project_id IS NULL;
 
+-- ───────────────────────────────────────── Phase 0.5a — daily pipeline watermark
+--
+-- run_daily used to match events on the EXACT current date, so any day the
+-- cron did not run (every weekend: cron is Mon-Fri) lost its events for good.
+-- The pipeline now processes every calendar day in (watermark, today] and
+-- advances the watermark only after a day has been fully committed. Internal
+-- bookkeeping: RLS on, no policy, so the read-only roles see nothing.
+CREATE TABLE IF NOT EXISTS generation_state (
+    key         TEXT PRIMARY KEY,
+    value_date  DATE NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE generation_state ENABLE ROW LEVEL SECURITY;
+
 -- ─────────────────────────────────────────────────── Phase 1 — service catalog, metadata
 
 CREATE TABLE IF NOT EXISTS services (

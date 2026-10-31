@@ -1,9 +1,14 @@
 """Testy run_backfill_daily() z zamockowanym run_daily() — weryfikują pętlę
-dat (pomija weekendy, obejmuje pełny zakres), bez odpalania realnych
-generatorów/bazy danych."""
+dat (obejmuje KAŻDY dzień kalendarzowy, także weekendy; ustawia watermark),
+bez odpalania realnych generatorów/bazy danych.
+
+Faza 0.5a: wcześniej pętla pomijała weekendy, więc wpłata z terminem w sobotę
+lub niedzielę nigdy nie powstawała. Teraz weekendy są przetwarzane (wpłaty
+i tak lądują w następnym dniu roboczym; godziny i płace pilnują dni roboczych
+same)."""
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,21 +16,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import run_backfill as run_backfill_module  # noqa: E402
 
+EMPTY_STATS = {"orders": 0, "bank_transactions": 0, "hour_entries": 0, "salary": 0}
 
-def test_run_backfill_daily_skips_weekends():
-    # 2024-01-08 (pon) .. 2024-01-14 (nd) -> 5 dni roboczych, 2 weekendowe
-    with patch("run_daily.run_daily") as mock_run_daily:
-        mock_run_daily.return_value = {"orders": 0, "bank_transactions": 0, "hour_entries": 0, "salary": 0}
+
+def test_run_backfill_daily_visits_every_calendar_day_including_weekends():
+    # 2024-01-08 (pon) .. 2024-01-14 (nd) -> 7 dni, w tym sobota i niedziela
+    with patch("run_daily.run_daily") as mock_run_daily, patch("norfingen.db.repository.set_watermark"):
+        mock_run_daily.return_value = EMPTY_STATS
         run_backfill_module.run_backfill_daily(date(2024, 1, 8), date(2024, 1, 14))
 
-    assert mock_run_daily.call_count == 5
-    called_dates = {call.kwargs["target_date"] for call in mock_run_daily.call_args_list}
-    assert called_dates == {date(2024, 1, 8), date(2024, 1, 9), date(2024, 1, 10), date(2024, 1, 11), date(2024, 1, 12)}
+    assert mock_run_daily.call_count == 7
+    called_dates = [call.kwargs["target_date"] for call in mock_run_daily.call_args_list]
+    assert called_dates == [date(2024, 1, 8) + timedelta(days=i) for i in range(7)]
+    assert date(2024, 1, 13) in called_dates and date(2024, 1, 14) in called_dates  # sob + nd
 
 
-def test_run_backfill_daily_single_day_range():
-    with patch("run_daily.run_daily") as mock_run_daily:
-        mock_run_daily.return_value = {"orders": 0, "bank_transactions": 0, "hour_entries": 0, "salary": 0}
+def test_run_backfill_daily_single_weekend_day_is_processed():
+    with patch("run_daily.run_daily") as mock_run_daily, patch("norfingen.db.repository.set_watermark"):
+        mock_run_daily.return_value = EMPTY_STATS
         run_backfill_module.run_backfill_daily(date(2024, 1, 6), date(2024, 1, 6))  # sobota
 
-    mock_run_daily.assert_not_called()
+    mock_run_daily.assert_called_once()
+    assert mock_run_daily.call_args.kwargs["target_date"] == date(2024, 1, 6)
+
+
+def test_run_backfill_daily_sets_watermark_to_end_date():
+    with patch("run_daily.run_daily") as mock_run_daily, patch("norfingen.db.repository.set_watermark") as mock_set:
+        mock_run_daily.return_value = EMPTY_STATS
+        run_backfill_module.run_backfill_daily(date(2024, 1, 8), date(2024, 1, 14))
+
+    mock_set.assert_called_once_with(date(2024, 1, 14))

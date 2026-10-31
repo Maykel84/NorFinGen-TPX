@@ -44,12 +44,14 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
+from norfingen.generators.money import pg_round2
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
 from norfingen.models.order import Order, OrderStatus
 from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import customer_by_id
+from norfingen.seed.workdays import next_working_day
 
 ACCOUNT_BANK = 1910  # Bankinnskudd, driftskonto
 ACCOUNT_KUNDEFORDRINGER = 1500
@@ -63,18 +65,33 @@ OVERDUE_PAYMENT_DELAY_DAYS = 90  # OVERDUE pays payment_terms + 90 days, not on 
 
 
 def _order_gross_amount(order: Order) -> float:
-    return round(sum(line.amountCurrency for line in order.orderLines), 2)
+    """The invoice's gross amount. For an Order rebuilt from the database this
+    is SUM(order_lines.amount_currency) as stored (storedGrossAmountCurrency) -
+    the payment, and later Dr 1500, must equal it to the grosz. For a freshly
+    generated Order (not stored yet) it is the sum of the per-line values
+    rounded the way Postgres will round them (pg_round2), so both paths agree.
+    Before phase 0.5a this was round(sum(unrounded lines), 2), which differed
+    from the stored sum by 0.01-0.02 NOK on 445 orders."""
+    if order.storedGrossAmountCurrency is not None:
+        return round(order.storedGrossAmountCurrency, 2)
+    return round(sum(pg_round2(line.amountCurrency) for line in order.orderLines), 2)
 
 
 def _incoming_payment_date(order: Order, payment_terms: int) -> Optional[date]:
     """None if WRITTEN_OFF — bad debt, never paid. OVERDUE pays with a delay
-    of OVERDUE_PAYMENT_DELAY_DAYS relative to the normal due date."""
+    of OVERDUE_PAYMENT_DELAY_DAYS relative to the normal due date.
+
+    The bank books on working days only: a due date falling on Saturday or
+    Sunday is booked on the following Monday. (Before phase 0.5a such payments
+    were never generated at all - the daily loop only visited working days and
+    matched on the exact date - which silently dropped 525 invoices, 74.3 mln
+    NOK gross.)"""
     if order.status == OrderStatus.WRITTEN_OFF:
         return None
     base = order.invoiceDate + timedelta(days=payment_terms)
     if order.status == OrderStatus.OVERDUE:
-        return base + timedelta(days=OVERDUE_PAYMENT_DELAY_DAYS)
-    return base
+        base = base + timedelta(days=OVERDUE_PAYMENT_DELAY_DAYS)
+    return next_working_day(base)
 
 
 def build_incoming_payment(order: Order, payment_terms: int) -> Optional[tuple[BankTransaction, Voucher]]:
@@ -146,7 +163,7 @@ def generate_daily_bank_transactions(
                 results.append(payment)
 
     for invoice in supplier_invoices:
-        if invoice.paymentDueDate == today:
+        if invoice.paymentDueDate is not None and next_working_day(invoice.paymentDueDate) == today:
             results.append(build_outgoing_payment(invoice))
 
     return results
@@ -154,10 +171,11 @@ def generate_daily_bank_transactions(
 
 def build_outgoing_payment(invoice: SupplierInvoice) -> tuple[BankTransaction, Voucher]:
     """The company pays a purchase invoice (SupplierInvoice) — a bank
-    account outflow. date = invoice.paymentDueDate."""
+    account outflow. date = invoice.paymentDueDate, moved to the next working
+    day when it falls on a weekend (the bank books on business days only)."""
     assert invoice.paymentDueDate is not None, "A SupplierInvoice without paymentDueDate does not generate a payment"
     amount = round(invoice.amountCurrency, 2)
-    payment_date = invoice.paymentDueDate
+    payment_date = next_working_day(invoice.paymentDueDate)
 
     transaction = BankTransaction(
         date=payment_date,

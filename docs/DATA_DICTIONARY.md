@@ -294,6 +294,10 @@ Business meaning: a single line of an accounting entry (DR/CR). For cost analysi
 
 Business meaning: the actual movement on the bank account, time-shifted relative to the invoice by `payment_terms` (customer) or 30 days (supplier), +90 days for OVERDUE orders, never for WRITTEN_OFF. Payroll is paid the same day as the payroll run (`salary_transaction.date` = the last working day of the month) — no delay like invoices have.
 
+**Phase 0.5a - two rules that changed the data** (see `docs/SPEC_poprawki_ksiegowe.md`):
+- *Working days only.* A payment (customer or supplier) whose due date falls on a Saturday or Sunday is booked on the following Monday (`seed/workdays.next_working_day`; holidays are not modelled - README backlog). Before this, such payments were never generated at all: the daily loop visited working days only and matched the exact date, so 525 invoices (74.3 mln NOK gross, ~30% of the invoiced amount) had no payment. Invoices themselves keep their own date, weekends included.
+- *Amount = what is stored.* An INCOMING payment equals `SUM(order_lines.amount_currency)` read back from the database, not a Python recomputation (which differed by 0.01-0.02 NOK on 445 orders because Postgres and Python round `.xx5` differently - `generators/money.py`).
+
 **A fixed inaccuracy (in a previous version of this document)**: it used to say "the INCOMING/OUTGOING asymmetry is an artifact of the order features were implemented in" — **that was an incomplete explanation**. The real cause: `bank_transaction_generator.py` had logic ONLY for `Order` (INCOMING) and `SupplierInvoice` (OUTGOING) since Tier 2 — **payroll (the single largest cost line item) never generated any bank transaction at all**. Detected via the mismatch between the published report and the database (1264 INCOMING/187.6M vs 719 OUTGOING/17.5M — physically impossible at costs on the order of 30M+/year). Fixed: `generate_payroll_bank_transaction()` (one aggregated transaction/month: net pay+skattetrekk+AGA, a deliberate simplification — in reality skattetrekk/AGA are remitted to Skatteetaten with a delay, not the same day, but that was beyond the scope of this fix) + a one-time migration `scripts/archive/fix_missing_payroll_transactions.py` (91 missing). After the fix: 810 OUTGOING (107.6M) vs 1267 INCOMING (188.3M) — still unequal (the company is profitable, that's expected), but no longer a structural gap.
 
 ### hour_entries
@@ -346,6 +350,15 @@ All of these are precomputed deterministically per `employee_id` (`employee_leav
 | status | VARCHAR(20) | Always "ACTIVE" |
 
 Business meaning: a container for consultant hours per customer — used exclusively by `hour_entries.project_id`, has no direct relationship to invoicing (`orders`). **Phase 4**: expanded from 8 (only some customers, manually picked) to 50 (all of them, including SMB, which previously had no project at all) — needed for dynamic consultant assignment (`hours_generator.assign_customers_to_consultants`), replacing the static `EMPLOYEE_PROJECT_MAP` from before this phase.
+
+### generation_state
+| Column | Type | Description |
+|---|---|---|
+| key | TEXT (PK) | Pipeline name; today only `daily_pipeline` |
+| value_date | DATE | The last calendar day the daily pipeline processed completely (the watermark) |
+| updated_at | TIMESTAMPTZ | Last time it moved |
+
+Business meaning: internal bookkeeping (phase 0.5a), not business data. `run_daily` processes every calendar day in `(watermark, today]` and moves the watermark only after a day is fully committed, so a day the cron missed (every weekend: the workflow runs Mon-Fri) is caught up on the next run instead of being lost. The watermark only moves forward (`GREATEST` on upsert). RLS is on with no policy: the read-only roles see nothing. `run_backfill.py --mode daily` sets it to its end date.
 
 ---
 

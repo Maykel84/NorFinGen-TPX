@@ -64,6 +64,7 @@ from norfingen.seed.roster import (
     employee_by_id,
     project_for_customer,
 )
+from norfingen.seed.workdays import is_working_day  # noqa: F401 - re-exported, tests/run_backfill import it from here
 
 BILLABLE_DEPARTMENTS = {2, 3}  # Leveranse, Teknologi
 NON_BILLABLE_OVERRIDES = {5}  # E05 System Architect — excluded from ALL hour tracking (set before Phase 4)
@@ -128,11 +129,6 @@ DEVELOPERS_PER_ONBOARDING: dict[str, int] = {
     "SMB": 1,
 }
 CONCURRENT_ONBOARDING_CAPACITY = 1
-
-
-def is_working_day(d: date) -> bool:
-    """Mon-Fri, without Norwegian holidays (simplified)."""
-    return d.weekday() < 5
 
 
 def is_month_end_closing_period(d: date) -> bool:

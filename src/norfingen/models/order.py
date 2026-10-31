@@ -12,7 +12,7 @@ from datetime import date
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from norfingen.models.base import NOK_CURRENCY_REF, TripletexRef
 from norfingen.models.product import SALES_VAT_TYPE_REF
@@ -71,3 +71,9 @@ class Order(BaseModel):
     ourContact: Optional[TripletexRef] = None
     status: OrderStatus = OrderStatus.PAID
     url: Optional[str] = None
+    # Gross amount exactly as stored in the database: SUM(order_lines.amount_currency).
+    # Set only by repository.get_orders_for_payment_window() when an Order is rebuilt
+    # from the database; None for freshly generated orders. A payment must carry the
+    # stored amount, not a Python recomputation (see generators/money.py). Not part of
+    # the Tripletex payload, hence excluded from dumps.
+    storedGrossAmountCurrency: Optional[float] = Field(default=None, exclude=True)

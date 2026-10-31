@@ -1,34 +1,52 @@
 #!/usr/bin/env python3
-"""Generuje dane NorFinGen za konkretny dzień i zapisuje je do Supabase.
+"""Generuje dane NorFinGen i zapisuje je do Supabase.
 
 CLI:
-    python run_daily.py
+    python run_daily.py          # nadrabia WSZYSTKIE dni od ostatnio przetworzonego do dziś
 
-Importowalny jako funkcja — docelowo wywoływany z APScheduler job na Railway
-(zamiast GitHub Actions):
+Importowalny jako funkcja:
     from run_daily import run_daily
-    run_daily()
+    run_daily()                  # catch-up (watermark, dziś]
+    run_daily(date(2024, 1, 3))  # dokładnie jeden dzień (backfill, testy)
 
-Etap 4 — rytm dzienny (nie miesięczny jak poprzednio). Generuje dla
-target_date (domyślnie dzisiaj):
-1. Zamówienia klientów, których invoice_day wypada dzisiaj (generate_daily_orders)
-2. Płatności bankowe, których termin przypada dzisiaj — dopasowywane wśród
-   zamówień/faktur zakupu z ostatnich max. 45 dni (generate_daily_bank_transactions)
+Faza 0.5a — catch-up zamiast dopasowania do dokładnej daty "dziś". Wcześniej
+przebieg dzienny przetwarzał tylko zdarzenia o dacie równej dzisiejszej, a cron
+(`daily.yml`) działa tylko pon.-pt., więc zdarzenia z soboty/niedzieli ginęły
+na zawsze: faktury klientów z `invoice_day` w weekend (13 faktur w październiku
+2026), wpłaty klientów z terminem w weekend (525 faktur, 74,3 mln NOK brutto) i
+płatności dla dostawców. Teraz każdy przebieg bierze wszystkie dni
+kalendarzowe z okresu (watermark, dziś] (tabela `generation_state`) i przesuwa
+watermark dopiero po pełnym zatwierdzeniu dnia. Pominięty dzień (awaria
+crona, weekend, maszyna uśpiona) jest nadrabiany przy następnym przebiegu.
+
+Zasady dat:
+  - faktury sprzedaży zachowują swoją datę, także weekendową (jak w backfillu),
+  - wpłaty klientów i płatności dostawców wypadające w weekend księgowane są
+    w następnym dniu roboczym (seed.workdays.next_working_day),
+  - kwota wpłaty = SUM(order_lines.amount_currency) z bazy, nie przeliczenie.
+
+Dla każdego dnia kalendarzowego (process_day):
+1. Zamówienia klientów, których invoice_day wypada tego dnia (generate_daily_orders)
+2. Płatności bankowe z terminem (po przesunięciu na dzień roboczy) przypadającym
+   tego dnia, dopasowywane wśród zamówień/faktur zakupu z ostatnich ~140 dni
 3. Godziny pracy konsultantów, jeśli to dzień roboczy (generate_daily_hours)
-4. Lista płac, jeśli target_date to ostatni dzień roboczy miesiąca (generate_monthly_salary)
+4. Lista płac, jeśli to ostatni dzień roboczy miesiąca (generate_monthly_salary)
 
 Idempotentny: ON CONFLICT DO NOTHING na naturalnych kluczach biznesowych we
 wszystkich tabelach + status supplier_invoices przełączany na PAID po
-zaksięgowaniu płatności (save_bank_transactions) — powtórne uruchomienie dla
-tego samego dnia nie tworzy duplikatów i nie generuje drugi raz tej samej
-płatności.
+zaksięgowaniu płatności (save_bank_transactions) — powtórne przetworzenie tego
+samego dnia nie tworzy duplikatów.
+
+Poza zakresem 0.5a (robi 0.5b): faktury zakupu, COGS i koszty operacyjne oraz
+skutki zdarzeń (bankructwo, duży projekt, extra consulting) nadal powstają tylko
+w trybie miesięcznym `run_backfill.py`.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -38,11 +56,14 @@ from norfingen.db.repository import (  # noqa: E402
     ensure_schema,
     get_orders_for_payment_window,
     get_unpaid_supplier_invoices,
+    get_watermark,
+    latest_hour_entry_date,
     save_bank_transactions,
     save_hour_entries,
     save_orders,
     save_salary,
     seed_reference_data,
+    set_watermark,
 )
 from norfingen.generators.bank_transaction_generator import (  # noqa: E402
     generate_daily_bank_transactions,
@@ -57,17 +78,16 @@ from norfingen.seed.roster import numeric_id  # noqa: E402
 logger = logging.getLogger("run_daily")
 
 
-def run_daily(target_date: Optional[date] = None, skip_setup: bool = False) -> dict:
-    """Generuje dane dla konkretnego dnia (domyślnie: dzisiaj). Importowalna
-    jako funkcja dla APScheduler na Railway — nie wymaga subprocesu CLI.
+def process_day(target_date: date, skip_setup: bool = False) -> dict:
+    """Przetwarza wszystkie zdarzenia JEDNEGO dnia kalendarzowego (także
+    soboty i niedziele — wtedy powstają tylko faktury klientów z invoice_day
+    w weekend; wpłaty i płatności są wcześniej przesunięte na dzień roboczy,
+    godziny i płace mają własne warunki dnia roboczego).
 
     skip_setup=True pomija ensure_schema()/seed_reference_data() — używane
-    przez run_backfill.py::run_backfill_daily(), który woła run_daily() setki
-    razy w pętli i sam wykonuje setup raz na starcie; bez tego każde z ~1800
-    wywołań powtarzałoby ~50 idempotentnych, ale niepotrzebnych round-tripów
-    do bazy."""
-    if target_date is None:
-        target_date = date.today()
+    przez pętle (catch-up, run_backfill.py::run_backfill_daily()), które
+    wykonują setup raz na starcie; bez tego każde z ~2000 wywołań
+    powtarzałoby ~50 idempotentnych, ale niepotrzebnych round-tripów."""
 
     # Faza 5a — generator NIGDY nie tworzy rekordów z datą późniejszą niż
     # dzisiaj; bezpiecznik na wypadek wywołania run_daily() z przyszłą datą
@@ -126,6 +146,48 @@ def run_daily(target_date: Optional[date] = None, skip_setup: bool = False) -> d
 
     logger.info("run_daily %s: %s", target_date.isoformat(), stats)
     return stats
+
+
+def run_catch_up(today: Optional[date] = None, skip_setup: bool = False) -> dict:
+    """Przetwarza każdy dzień kalendarzowy z okresu (watermark, today].
+
+    Watermark (generation_state) przesuwamy dopiero PO zatwierdzeniu całego
+    dnia — jeśli przebieg padnie w połowie dnia, następny zacznie od tego dnia
+    od nowa, co jest bezpieczne dzięki idempotencji zapisów. Gdy watermark nie
+    istnieje (baza sprzed fazy 0.5a), startujemy od ostatniego dnia z
+    hour_entries (godziny powstają w każdy dzień roboczy), a gdyby i tego nie
+    było — od wczoraj."""
+    if today is None:
+        today = date.today()
+    if not skip_setup:
+        ensure_schema()
+        seed_reference_data()
+
+    watermark = get_watermark()
+    if watermark is None:
+        watermark = latest_hour_entry_date(today) or (today - timedelta(days=1))
+        logger.warning("run_daily: brak watermarku - startuję od %s (ostatnie hour_entries).", watermark)
+
+    totals = {"orders": 0, "bank_transactions": 0, "hour_entries": 0, "salary": 0, "days": 0}
+    day = watermark + timedelta(days=1)
+    while day <= today:
+        stats = process_day(day, skip_setup=True)
+        set_watermark(day)
+        for key in ("orders", "bank_transactions", "hour_entries", "salary"):
+            totals[key] += stats.get(key, 0)
+        totals["days"] += 1
+        day += timedelta(days=1)
+
+    logger.info("run_daily catch-up (%s, %s]: %s", watermark.isoformat(), today.isoformat(), totals)
+    return totals
+
+
+def run_daily(target_date: Optional[date] = None, skip_setup: bool = False) -> dict:
+    """Bez argumentu: catch-up od ostatnio przetworzonego dnia do dziś (tryb
+    crona). Z `target_date`: dokładnie ten jeden dzień (backfill, testy)."""
+    if target_date is None:
+        return run_catch_up(skip_setup=skip_setup)
+    return process_day(target_date, skip_setup=skip_setup)
 
 
 def main() -> None:

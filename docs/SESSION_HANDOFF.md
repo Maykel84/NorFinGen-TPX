@@ -1256,3 +1256,26 @@ Sekwencja: `daily.yml` wyłączony przez użytkownika → `TRUNCATE orders, orde
 - `orders=1849, order_lines=3771, supplier_invoices=744, salary_transactions=92, payslips=1160, vouchers=3597, postings=7468, bank_transactions=2107, hour_entries=51146`
 
 `daily.yml`: pozostawiony wyłączony do ręcznego włączenia przez użytkownika.
+
+## Poprawki księgowe wg SPEC — faza 0.5a: catch-up zamiast dopasowania do "dziś" (2026-10-30)
+
+Praca według `docs/SPEC_poprawki_ksiegowe.md` (kopia specyfikacji) i `tests/gl_checks.sql`, fazami, z zatrzymaniem po każdej na "ok". Wszystko robione na **lokalnym, jednorazowym Postgresie** (instancja w katalogu sesji, port 54329; Postgres.app odrzuca połączenia bez hasła od Claude — uszanowane, zamiast tego własna instancja). Produkcja (Supabase) **nietknięta**: tylko odczyty do porównań.
+
+**Diagnoza (przyczyny, nie objawy):**
+- *Brakujące ~30% wpłat klientów* (79,5 mln z 264,5 mln brutto) to błąd, nie model 98/1,6/0,4: 525 faktur, wszystkie z terminem płatności w sobotę lub niedzielę. Pętla dzienna odwiedzała tylko dni robocze i dopasowywała dokładną datę, więc wpłata z terminem w weekend nigdy nie powstawała. Rozkład 70/25/5 ze specyfikacji był błędnym wnioskiem z tej luki i został wycofany.
+- *13 brakujących faktur w październiku*: `generate_daily_orders` wystawia fakturę tylko dla `invoice_day == dziś`, a cron `daily.yml` działa pon.–pt. (K12 bez faktury — bankructwo, poprawnie).
+- *Zerowe koszty w październiku* to INNA przyczyna (brak ścieżki, nie weekend): faktury zakupu, COGS i koszty operacyjne powstają tylko w trybie miesięcznym. Naprawia to 0.5b.
+
+**Zmiany (0.5a):**
+- `generation_state` (nowa tabela, RLS bez polityki) + `repository.get_watermark/set_watermark/latest_hour_entry_date`; `run_daily.py`: `process_day(d)` (jeden dzień kalendarzowy), `run_catch_up()` ((watermark, dziś], watermark po każdym zatwierdzonym dniu, monotoniczny), `run_daily()` bez argumentu = catch-up, z datą = jeden dzień. `run_backfill --mode daily` iteruje po WSZYSTKICH dniach kalendarzowych i ustawia watermark.
+- `seed/workdays.py` (`is_working_day`, `next_working_day`); wpłaty klientów i płatności dostawców z terminem w weekend księgowane w następny dzień roboczy; faktury zachowują swoją datę. Okna wyszukiwania płatności poszerzone o margines 3 dni.
+- Kwota wpłaty = `SUM(order_lines.amount_currency)` z bazy (`Order.storedGrossAmountCurrency`, ustawiane przez repozytorium). `generators/money.py::pg_round2` odtwarza zaokrąglanie Postgresa float8→numeric (15 cyfr znaczących, half-up) tam, gdzie Python zapisuje kwotę pierwszy raz; Python `round()` różni się od Postgresa na 4104 z 18 050 testowych wartości.
+- `scripts/fix_outgoing_transactions.py` stosuje tę samą regułę dnia roboczego (skrypt znika w 0.5b).
+- Testy: `test_golden_hash.py` (hashe historii do 2026-09-30 zamrożone PRZED zmianą kodu, przeszły przed i po), `test_no_global_randomness.py` (strażnik: brak globalnego `random`, `hash()`, zegara poza allowlistą), `test_money_pg_round.py` (18 050 wartości vs prawdziwy Postgres, uruchamiany gdy ustawione `NORFINGEN_TEST_PG_URL`), `test_catch_up.py` (cron tylko pon.–pt. z catch-upem == cron codzienny, na pełnym stosie generatorów; żadna wpłata nie ginie ani nie dubluje się; kwota == zapisana). Zaktualizowane 5 testów kodujących stare zachowanie (pomijanie weekendów, surowa data płatności). Mutacja (wyłączenie przesunięcia weekendowego) jest wykrywana.
+- `tests/run_gl_checks.py` uruchamia `gl_checks.sql` na lokalnej bazie (widoki gl/sales/purch/pay z tych samych zapytań co eksport); `tests/db_fingerprint.py` — hash tabel z id.
+- `tests/gl_checks.sql`: REG zastąpiony trzema regułami (REG_A przychód ≤ 2026-09-30 = 209 030 662; REG_C brutto płac ≤ 2026-09-30 = 81 422 455; REG_B przychód ≤ 2026-10-30 — wartość pośrednia 212 984 162,08, końcowa po 0.5b). **Poprawione NULL-e w T6, T8, T10**: T8 przechodził pozornie, gdy żadna faktura zakupu nie była UNPAID (podzapytanie NULL → HAVING NULL → 0 wierszy), mimo 88 mln NOK niezapłaconego COGS na 2400.
+
+**Wynik regeneracji lokalnej (historia do 2026-09-30 + catch-up października):** historia ≤ 2026-09-30 identyczna z produkcją do grosza (zamówienia, faktury zakupu, koszty, godziny; przychód 209 030 662, brutto płac 81 422 455). Październik: +13 zamówień weekendowych (1 359 615,08 NOK), przychód ≤ 10-30 = 212 984 162. Luka należności: brutto 266,23 mln, wpłaty 259,45 mln, luka 6,78 mln = wyłącznie WRITTEN_OFF (1,75) + OVERDUE z przyszłą wpłatą (0,45) + terminy w przyszłości (4,57). Dwie pełne regeneracje dają **identyczne hashe wszystkich tabel łącznie z id** (`vouchers.id` jako `voucher_number` jest stabilny).
+
+**Dalej:** 0.5b (jeden potok dla historii i dnia bieżącego: faktury zakupu, COGS, koszty, skutki zdarzeń, status faktur zakupu z płatności, usunięcie `fix_outgoing_transactions.py`), potem fazy 1–6. Wdrożenie na Supabase dopiero po planie i "ok" (backup, migracja `generation_state`, wyłączenie crona, regeneracja, sprawdzenie dashboardu).
+
