@@ -1,4 +1,4 @@
-"""Order + OrderLine generator (Layer 2) — monthly (backfill) and daily.
+"""Order + OrderLine generator (Layer 2).
 
 Order.invoiceDate = orderDate triggers automatic Voucher (INVOICE) creation
 by Tripletex — this module does NOT create Vouchers manually (unlike
@@ -21,9 +21,9 @@ customers with an A/B/C subscription can ADDITIONALLY (on top of their
 regular Order) get a separate S04 order (an off-contract consulting
 project) in Q2/Q4, at low frequency (~15%/~8% chance per month) —
 analogous to K06, but as an extra Order on top of the existing
-subscription, not instead of it. Like K06, this logic only runs in
-generate_monthly_orders (historical backfill) — generate_daily_orders does
-not reproduce it, the same limited scope already in place for K06.
+subscription, not instead of it. Like K06, this logic lives in
+generate_monthly_orders - and since phase 0.5b that is the ONLY order generator:
+a day takes its slice of the month (generators/day_events.orders_dated).
 
 The invoice date (orderDate/invoiceDate) and payment terms (invoicesDueIn)
 per subscription customer (A/B/C) come from
@@ -35,12 +35,12 @@ Customers do not generate orders before their roster.CustomerSeed.onboarding_dat
 by 2022), not all existing since 2019-01-01.
 
 generate_monthly_orders(year, month) — one Order per A/B/C customer per
-month (+ optional D, + optional extra consulting), used by backfill.py
-(historical loop).
-generate_daily_orders(year, month, day) — an Order only for customers whose
-invoice_day falls on that day; K06 (consulting, invoice_day=None) is
-skipped — a separate triggering logic (should_generate_consulting),
-unrelated to the day of month.
+month (+ optional D, + optional extra consulting, + customer-event orders).
+It is the single source for history AND the current day: the pipeline
+(run_daily.process_day) generates the whole month and takes the orders dated on
+that day. A separate day-only generator (`generate_daily_orders`, removed in
+phase 0.5b) used to exist; it knew nothing about K06, extra consulting, large
+projects or customer events, so cron-built months differed from backfilled ones.
 """
 
 from __future__ import annotations
@@ -297,10 +297,8 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
     (event_aware_is_customer_active — BANKRUPTCY), the bad-debt threshold
     (raised during TEMPORARY_HARDSHIP), the status of the final invoice
     (forced WRITTEN_OFF in the bankruptcy month), and an extra order
-    (ONE_OFF_LARGE_PROJECT). Like extra-consulting/K06 — the same,
-    deliberately limited scope: monthly backfill only, not
-    generate_daily_orders (except for the activity/BANKRUPTCY check itself,
-    see below)."""
+    (ONE_OFF_LARGE_PROJECT). Like extra-consulting/K06, all of it lives here
+    - and, since phase 0.5b, this function is also what the daily pipeline uses."""
     orders: list[Order] = []
 
     for customer in CUSTOMERS:
@@ -353,35 +351,5 @@ def generate_monthly_orders(year: int, month: int) -> list[Order]:
 
         else:
             raise ValueError(f"Unknown order_pattern: {pattern!r} for customer {customer.number}")
-
-    return orders
-
-
-def generate_daily_orders(year: int, month: int, day: int) -> list[Order]:
-    """Generates orders for a specific day — issues an invoice only to
-    customers whose invoice_day falls today and who are already onboarded
-    (order_date >= onboarding_date). K06 (consulting, invoice_day=None) is
-    skipped here — it has separate triggering logic
-    (should_generate_consulting), not tied to a specific day of the month.
-
-    Phase 7, Task 2 — uses event_aware_is_customer_active (not plain
-    roster.is_customer_active), so the live cron/daily mode stops issuing
-    invoices to a customer whose BANKRUPTCY fired during the monthly
-    backfill — the rest of the event effects (extra order, raised bad-debt)
-    deliberately stay only in generate_monthly_orders, see that docstring."""
-    orders: list[Order] = []
-
-    for customer in CUSTOMERS:
-        if customer.invoice_day is None:
-            continue  # K06 consulting — separate logic
-        if customer.invoice_day != day:
-            continue
-
-        order_date = date(year, month, day)
-        if not event_aware_is_customer_active(customer, order_date):
-            continue
-
-        lines = build_order_lines(customer, order_date)
-        orders.append(_build_order(customer, year, month, day, lines))
 
     return orders

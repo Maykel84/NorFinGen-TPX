@@ -211,7 +211,7 @@ Business meaning: a single sales invoice line item. **Phase 2**: one line per se
 | account_number | INTEGER (FK) | Cost account (6xxx) or capitalization account (1200, for L05 >= 30,000 NOK) |
 | **status** | TEXT | UNPAID / PAID — flipped to PAID automatically once the matching `bank_transactions` row (OUTGOING) is booked |
 
-Business meaning: **purchase invoice (cost)**. Limitation: 526 historical invoices had PAID status assigned by an old time-based heuristic (predating the `bank_transactions` rollout) — fixed once by `scripts/fix_outgoing_transactions.py`, but **this script needs to be re-run after every full table reset** (TRUNCATE zeroes out `bank_transactions`).
+Business meaning: **purchase invoice (cost)**. **Phase 0.5b - the status follows the ledger.** Every invoice is created `UNPAID` and becomes `PAID` only when its OUTGOING bank payment is booked (`repository.save_bank_transactions`), on the due date moved to the next working day. The old rule ("due date older than 45 days -> PAID", read from the clock) made the output depend on when the generator ran and left ~700 invoices PAID with no payment behind them, which `scripts/fix_outgoing_transactions.py` had to repair by hand after every reset - that script is deleted. Invoices whose due date is still ahead stay `UNPAID` (8 on 2026-10-31).
 
 **Phase 2 — L01 (Microsoft Norge) split into several invoices/month** (not 1 flat 85,000 NOK line) — `supplier_invoice_generator.MICROSOFT_COST_LINES`: M365 E3 licenses, Visual Studio/developer tools, CSP/Premier support. 2019 base total = 18,100 NOK/month, with +3%/year inflation (`apply_annual_inflation`, unlike L02-L08, which stay flat). L01's `invoice_number` has an extra `-{1..3}` suffix (e.g. `L01-2024-01-1`).
 
@@ -384,7 +384,7 @@ A customer has at most one "big" event at a time — while a `TEMPORARY_HARDSHIP
 
 **A bug found and fixed during implementation**: the original expansion map (SMB→S02, Mid-market→S03) violated the already-existing `Service.availability` constraints (S02=`ENTERPRISE_MID`, S03=`ENTERPRISE_ONLY`) — the missing price for SMB/Mid-market caused a `TypeError`. Both segments now expand into S04.
 
-**Scope deliberately limited to the monthly backfill** (like the existing `should_generate_extra_consulting` precedent): revenue/cost effects live in `generate_monthly_orders`/`generate_monthly_opex`. `generate_daily_orders` (the live cron) only respects `event_aware_is_customer_active` (BANKRUPTCY) — otherwise the cron would keep invoicing a customer that already went bankrupt in the backfill history.
+**One source since phase 0.5b.** The revenue/cost effects live in `generate_monthly_orders`/`generate_monthly_opex`, and the live cron now uses those very functions (`generators/day_events.py` generates the month whole and each day takes its slice), instead of a separate, poorer `generate_daily_orders` that only respected BANKRUPTCY. Before this, a cron-built month silently lacked extra consulting, large projects, hardship/macro-shock bad-debt effects and all operating costs (October 2026: +4 extra-consulting orders and the whole cost side were missing).
 
 ### Company-level events (`src/norfingen/generators/company_events.py`)
 
@@ -474,7 +474,7 @@ The rate-limit counter for `GET /api/v1/export/{format}` (1 export/5 min/IP) —
 ## Known overall limitations
 
 1. **No revenue postings** (accounts 3000/3100) — see the header of this document. Revenue lives exclusively in `orders`/`order_lines`.
-2. **`bank_transactions` requires manual re-repair after every `TRUNCATE`** — `scripts/fix_outgoing_transactions.py` backfills historical OUTGOING rows, but must be re-run after every full data reset.
+2. ~~`bank_transactions` requires manual re-repair after every `TRUNCATE`~~ — **fixed in phase 0.5b**: supplier payments are produced by the same day-by-day pipeline as everything else, so a reset is `TRUNCATE ... RESTART IDENTITY` + `python run_backfill.py`, nothing to repair by hand (`scripts/fix_outgoing_transactions.py` is deleted).
 3. **Phase 1 metadata** (`customers.segment/onboarding_date/churn_date/price_multiplier`, `services`, `products.service_code`) previously existed **only in Python** (`roster.py`) — it's now also in Supabase, but historical queries/dashboards written before Phase 1 may have omitted it.
 4. **`projects.start_date` = `customers.onboarding_date` since Phase 4** (before Phase 4 it was independent, a static 2026-01-01/03-01 — a limitation that has been FIXED, kept in the history as an example of an earlier design mistake).
 5. **RLS enabled with no write policies of its own** — only `postgres` (RLS bypass) can write; the `analyst` role has pure read (SELECT) on **20/20 tables with active RLS** (see "Read-only access" below — until 2026-09-04, 6 reference tables had no RLS at all, fixed in that day's security audit). **Step 2 (2026-07) fixed a Phase 1 gap**: RLS policies alone weren't enough for reading — the base `GRANT SELECT` was missing, so `analyst` (and `powerbi_reader`, which inherits from it) would get "permission denied" on every query despite having correct policies.

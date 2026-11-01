@@ -9,13 +9,20 @@ writing to the ledger.
 Rule L05 (Sandvik IT Solutions): if the net amount >= capitalization_threshold
 (30,000 NOK) -> capitalization account (1200, fixed asset), otherwise ->
 the regular cost account (6540).
+
+Phase 0.5b - every invoice is created UNPAID. It becomes PAID only when its bank
+payment is booked (repository.save_bank_transactions), so the status can never run
+ahead of the ledger. The old rule ("due date older than 45 days -> PAID", read from
+date.today()) made the output depend on when the generator ran and left 700+ old
+invoices PAID with no payment behind them, which scripts/fix_outgoing_transactions.py
+then had to repair by hand after every reset.
 """
 
 from __future__ import annotations
 
 import calendar
 import random
-from datetime import date, timedelta
+from datetime import date
 
 from norfingen.generators.company_events import equipment_investment_trigger, supplier_cost_multiplier
 from norfingen.generators.order_generator import apply_annual_inflation
@@ -25,7 +32,6 @@ from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import SUPPLIERS, SupplierSeed, numeric_id, supplier_by_number
 
 GROSS_UP_FACTOR = 1.25  # amountCurrency (incl. VAT) = net * 1.25, VAT 25%
-PAID_AFTER_DAYS = 45  # invoices with payment_due_date older than 45 days -> PAID
 
 # Phase 2 — L01 Microsoft Norge split from a single flat line item
 # (85,000 NOK/month, economically implausible) into cost lines that
@@ -102,8 +108,6 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
 
         if supplier.number == "L01":
             invoice_date = _month_day(year, month, 1)
-            payment_due = invoice_date + timedelta(days=30)
-            paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
             for idx, cost_line in enumerate(MICROSOFT_COST_LINES, start=1):
                 netto = round(apply_annual_inflation(cost_line["base_monthly"], year) * renegotiation_multiplier, 2)
                 account_number = _account_for_invoice(supplier, netto)
@@ -114,7 +118,7 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
                     amountCurrency=round(netto * GROSS_UP_FACTOR, 2),
                     account=TripletexRef(id=account_number),
                     comment=cost_line["name"],
-                    status="PAID" if paid else "UNPAID",
+                    status="UNPAID",
                 ))
             continue
         elif supplier.number == "L02":
@@ -149,8 +153,6 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
 
         netto = round(netto * renegotiation_multiplier, 2)
         account_number = _account_for_invoice(supplier, netto)
-        payment_due = invoice_date + timedelta(days=30)
-        paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
 
         invoice = SupplierInvoice(
             invoiceNumber=_next_invoice_number(supplier, year, seq),
@@ -159,7 +161,7 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
             amountCurrency=round(netto * GROSS_UP_FACTOR, 2),
             account=TripletexRef(id=account_number),
             comment=supplier.cost_category,
-            status="PAID" if paid else "UNPAID",
+            status="UNPAID",
         )
         invoices.append(invoice)
 
@@ -173,8 +175,6 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
         l05 = supplier_by_number("L05")
         invoice_date = _month_day(year, month, 28)
         account_number = _account_for_invoice(l05, equipment_amount)
-        payment_due = invoice_date + timedelta(days=30)
-        paid = date.today() - payment_due > timedelta(days=PAID_AFTER_DAYS)
         invoices.append(SupplierInvoice(
             invoiceNumber=f"L05-{year}-{month:02d}-EQUIP",
             supplier=TripletexRef(id=numeric_id("L05")),
@@ -182,7 +182,7 @@ def generate_monthly_supplier_invoices(year: int, month: int) -> list[SupplierIn
             amountCurrency=round(equipment_amount * GROSS_UP_FACTOR, 2),
             account=TripletexRef(id=account_number),
             comment="Utstyrsinvestering (uforutsett)",
-            status="PAID" if paid else "UNPAID",
+            status="UNPAID",
         ))
 
     return invoices

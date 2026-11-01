@@ -7,6 +7,9 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from norfingen.models.supplier_invoice import SupplierInvoice, SupplierInvoiceStatus
+from norfingen.generators.voucher import Voucher, VoucherType
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import run_daily as run_daily_module  # noqa: E402
@@ -19,6 +22,7 @@ def _patch_repository(**overrides):
         get_orders_for_payment_window=MagicMock(return_value=[]),
         get_unpaid_supplier_invoices=MagicMock(return_value=[]),
         save_orders=MagicMock(),
+        save_all=MagicMock(),
         save_bank_transactions=MagicMock(),
         save_hour_entries=MagicMock(),
         save_salary=MagicMock(),
@@ -83,3 +87,60 @@ def test_run_daily_calls_ensure_schema_and_seed_every_time():
 
     mocks["ensure_schema"].assert_called_once()
     mocks["seed_reference_data"].assert_called_once()
+
+
+# --- phase 0.5b: one pipeline for history and the current day -----------------------------------
+
+def _saved(mocks, cls):
+    return [c.args[0] for c in mocks["save_all"].call_args_list if isinstance(c.args[0], cls)]
+
+
+def test_run_daily_saves_supplier_invoice_with_voucher_on_its_date():
+    # 2024-01-05 = L02 Telenor's monthly invoice day
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        stats = run_daily_module.run_daily(date(2024, 1, 5))
+
+    invoices = _saved(mocks, SupplierInvoice)
+    vouchers = _saved(mocks, Voucher)
+    assert stats["supplier_invoices"] == len(invoices) >= 1
+    assert all(i.invoiceDate == date(2024, 1, 5) for i in invoices)
+    assert all(i.status == SupplierInvoiceStatus.UNPAID for i in invoices)  # PAID only via a booked payment
+    assert sum(v.voucherType == VoucherType.INCOMING_INVOICE for v in vouchers) == len(invoices)
+
+
+def test_run_daily_saves_operating_costs_and_cogs_on_the_first():
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        stats = run_daily_module.run_daily(date(2024, 2, 1))
+
+    costs = [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.OPERATING_COST]
+    assert stats["operating_costs"] == len(costs) >= 3  # canteen, representation, S01/S02 COGS
+    assert all(v.date == date(2024, 2, 1) for v in costs)
+
+
+def test_run_daily_books_founding_capital_once_on_its_date():
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        run_daily_module.run_daily(date(2019, 1, 2))
+        mocks["save_all"].reset_mock()
+        run_daily_module.run_daily(date(2019, 1, 3))
+
+    assert not [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.MANUAL]  # not on the 3rd
+
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        run_daily_module.run_daily(date(2019, 1, 2))
+    manual = [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.MANUAL]
+    assert len(manual) == 1 and manual[0].date == date(2019, 1, 2)
+
+
+def test_run_daily_creates_customer_event_orders_that_the_old_daily_path_never_made():
+    # 2026-10-25 (Sunday): extra-consulting orders for K02/K07/K16/K32 existed only in the monthly path.
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        stats = run_daily_module.run_daily(date(2026, 10, 25))
+
+    saved_orders = mocks["save_orders"].call_args.args[0]
+    assert {o.customer.id for o in saved_orders} >= {2, 7, 16, 32}
+    assert stats["orders"] == len(saved_orders)

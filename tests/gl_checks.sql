@@ -112,11 +112,12 @@ FROM pay
 WHERE date <= DATE '2026-09-30'
 HAVING ABS(SUM(gross_amount) - 81422455) > 1;
 
--- REG_B: przychód do 2026-10-30. Wartość = 209 030 662 + (październik 2026).
---   po fazie 0.5a: 212 984 162,08 = 211 624 547 + 1 359 615,08 (13 faktur weekendowych subskrypcji);
---   po fazie 0.5b dojdą 4 zamówienia extra consulting z niedzieli 25.10 (+133 152,61) -> 213 117 314,69
---   i ta liczba zostanie tu wpisana jako wartość końcowa.
-SELECT 'REG_B' AS test, ROUND(SUM(amount_excluding_vat_currency), 0) AS przychod
+-- REG_B: przychód do 2026-10-30 = 213 117 314,34 NOK. Składa się z:
+--   211 624 546,65  przychód w produkcji przed poprawkami (ten sam co 211 624 547 po zaokrągleniu)
+--   +  1 359 615,08 13 faktur subskrypcyjnych z weekendowym invoice_day (3,4,10,11,17,18,24.10), gubionych przez przebieg dzienny
+--   +    133 152,61 4 zamówienia extra consulting z niedzieli 25.10 (K02, K07, K16, K32), których ścieżka dzienna nie tworzyła wcale
+--   = 213 117 314,34 (łącznie 17 zamówień, +1 492 767,69). K12 bez faktury (bankructwo).
+SELECT 'REG_B' AS test, ROUND(SUM(amount_excluding_vat_currency), 2) AS przychod
 FROM sales
 WHERE invoice_date <= DATE '2026-10-30'
-HAVING ABS(SUM(amount_excluding_vat_currency) - 212984162.08) > 1;
+HAVING ABS(SUM(amount_excluding_vat_currency) - 213117314.34) > 1;

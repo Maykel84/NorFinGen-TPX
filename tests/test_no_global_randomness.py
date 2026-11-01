@@ -5,8 +5,9 @@ Every random draw must come from a local `random.Random(<seed>)`. Forbidden in s
 * the built-in `hash()` (salted per process for str),
 * wall-clock reads (`datetime.now/utcnow/today`, `time.time`) that would make output depend on when it runs.
 
-`date.today()` is allowed only at the explicit allowlist below; the entry for the
-supplier-invoice PAID heuristic disappears in 0.5b (status then follows payments).
+`date.today()` is allowed only at the explicit allowlist below: the single source of "today"
+(seed/payroll.get_generation_cutoff_date). The supplier-invoice PAID heuristic that used to
+be the second entry is gone (phase 0.5b: status follows the payments).
 """
 
 import ast
@@ -17,7 +18,6 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 # (relative path, number of allowed `date.today()` calls)
 DATE_TODAY_ALLOWLIST = {
     "norfingen/seed/payroll.py": 1,  # get_generation_cutoff_date() - the single source of "today"
-    "norfingen/generators/supplier_invoice_generator.py": 3,  # PAID heuristic, removed in 0.5b
 }
 
 GLOBAL_RANDOM_FUNCS = {

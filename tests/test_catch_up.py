@@ -10,7 +10,9 @@ in the history. These tests pin the replacement:
 * a cron that fires only on working days (with catch-up) yields EXACTLY the same orders
   and bank transactions as one that fires every single day;
 * invoices keep their own date (weekends included); payments and supplier payments are
-  booked on working days only, exactly once, for the stored gross amount.
+  booked on working days only, exactly once, for the stored gross amount;
+* (0.5b) supplier invoices, COGS and operating costs now come out of the same pipeline,
+  and a supplier invoice becomes PAID only through its booked payment.
 
 Persistence is replaced by an in-memory FakeStore that mirrors the repository's query
 windows, so the whole real generator stack runs (orders, hours, payroll, payments).
@@ -32,8 +34,10 @@ from norfingen.generators.bank_transaction_generator import _incoming_payment_da
 from norfingen.generators.money import pg_round2  # noqa: E402
 from norfingen.generators.order_generator import generate_monthly_orders  # noqa: E402
 from norfingen.generators.supplier_invoice_generator import generate_monthly_supplier_invoices  # noqa: E402
+from norfingen.generators.voucher import Voucher  # noqa: E402
 from norfingen.models.bank_transaction import BankTransactionType  # noqa: E402
 from norfingen.models.order import OrderStatus  # noqa: E402
+from norfingen.models.supplier_invoice import SupplierInvoice  # noqa: E402
 from norfingen.seed.roster import customer_by_id  # noqa: E402
 from norfingen.seed.workdays import is_working_day, next_working_day  # noqa: E402
 
@@ -168,6 +172,7 @@ class FakeStore:
         self.orders = {}          # (customer_id, order_date) -> Order (with id + storedGross)
         self.invoices = {}        # invoice id -> SupplierInvoice
         self.unpaid = set()
+        self.vouchers = {}        # (date, description) -> Voucher   (ON CONFLICT (date, description) DO NOTHING)
         self.payments = {}        # unique key -> BankTransaction
         self._next_id = 1
         for order in seed_orders:
@@ -195,6 +200,18 @@ class FakeStore:
         start = as_of - timedelta(days=lookback_days)
         return [i for iid, i in self.invoices.items() if iid in self.unpaid and start <= i.paymentDueDate <= as_of]
 
+    def save_all(self, obj):
+        if isinstance(obj, SupplierInvoice):
+            if any(i.invoiceNumber == obj.invoiceNumber for i in self.invoices.values()):
+                return  # ON CONFLICT (invoice_number) DO NOTHING
+            self.invoices[self._next_id] = obj.model_copy(update={"id": self._next_id})
+            self.unpaid.add(self._next_id)  # created UNPAID, whatever the generator said
+            self._next_id += 1
+        elif isinstance(obj, Voucher):
+            self.vouchers.setdefault((obj.date, obj.description), obj)
+        else:
+            raise TypeError(type(obj))
+
     def save_bank_transactions(self, pairs):
         for transaction, _voucher in pairs:
             key = (transaction.transaction_type, transaction.order_id, transaction.supplier_invoice_id,
@@ -214,7 +231,7 @@ class FakeStore:
             latest_hour_entry_date=MagicMock(return_value=None),
             get_orders_for_payment_window=self.get_orders_for_payment_window,
             get_unpaid_supplier_invoices=self.get_unpaid_supplier_invoices,
-            save_orders=self.save_orders, save_bank_transactions=self.save_bank_transactions,
+            save_orders=self.save_orders, save_all=self.save_all, save_bank_transactions=self.save_bank_transactions,
             save_hour_entries=MagicMock(), save_salary=self.save_salary,
         )
 
@@ -224,13 +241,13 @@ WINDOW_END = date(2024, 4, 1)  # a Monday: both schedules end on a processed wor
 
 
 def _seed():
-    """What the monthly backfill left in the database: customer orders Sep 2023 - Jan 2024 (the window
-    then creates Feb-Mar orders itself, through the daily path) and supplier invoices Nov 2023 - Mar 2024
-    (supplier invoices come from the monthly mode only until phase 0.5b)."""
+    """What the database already holds before the window: customer orders Sep 2023 - Jan 2024 and
+    supplier invoices Nov 2023 - Jan 2024. The window itself (Feb - Mar 2024) is produced entirely by
+    the pipeline: orders, supplier invoices + vouchers, operating costs and COGS."""
     orders, invoices = [], []
     for year, month in ((2023, 9), (2023, 10), (2023, 11), (2023, 12), (2024, 1)):
         orders += generate_monthly_orders(year, month)
-    for year, month in ((2023, 11), (2023, 12), (2024, 1), (2024, 2), (2024, 3)):
+    for year, month in ((2023, 11), (2023, 12), (2024, 1)):
         invoices += generate_monthly_supplier_invoices(year, month)
     return orders, invoices
 
@@ -266,6 +283,29 @@ def weekdays_only_store():
 def test_weekdays_only_cron_equals_every_day_cron(every_day_store, weekdays_only_store):
     assert set(weekdays_only_store.orders) == set(every_day_store.orders)
     assert set(weekdays_only_store.payments) == set(every_day_store.payments)
+    assert {i.invoiceNumber for i in weekdays_only_store.invoices.values()} == {
+        i.invoiceNumber for i in every_day_store.invoices.values()}
+    assert set(weekdays_only_store.vouchers) == set(every_day_store.vouchers)
+    assert weekdays_only_store.unpaid and len(weekdays_only_store.unpaid) == len(every_day_store.unpaid)
+
+
+def test_pipeline_produces_exactly_the_monthly_generators_output_for_the_window(weekdays_only_store):
+    """One pipeline for history and the current day: Feb-Mar 2024 built day by day equals the whole-month
+    generators (orders incl. K06/extra consulting, supplier invoices, operating costs and COGS)."""
+    store = weekdays_only_store
+    window = [(2024, 2), (2024, 3), (2024, 4)]  # the window ends on Monday 2024-04-01
+    expected_orders = {(o.customer.id, o.orderDate) for y, m in window for o in generate_monthly_orders(y, m)
+                       if o.orderDate <= WINDOW_END}
+    assert {k for k in store.orders if k[1] >= WINDOW_START} == expected_orders
+
+    expected_invoices = {i.invoiceNumber for y, m in window for i in generate_monthly_supplier_invoices(y, m)
+                         if i.invoiceDate <= WINDOW_END}
+    got_invoices = {i.invoiceNumber for i in store.invoices.values() if i.invoiceDate >= WINDOW_START}
+    assert got_invoices == expected_invoices
+
+    cost_vouchers = {k for k, v in store.vouchers.items()
+                     if k[0] >= WINDOW_START and v.voucherType.value == "OPERATING_COST"}
+    assert len(cost_vouchers) >= 2 * 4  # canteen, representation, transport, S01 + S02 COGS, 3 first-of-months
 
 
 def test_weekend_invoices_are_created_with_their_weekend_date(weekdays_only_store):

@@ -46,3 +46,15 @@ def test_run_backfill_daily_sets_watermark_to_end_date():
         run_backfill_module.run_backfill_daily(date(2024, 1, 8), date(2024, 1, 14))
 
     mock_set.assert_called_once_with(date(2024, 1, 14))
+
+
+def test_run_backfill_pipeline_never_goes_past_today_and_keeps_the_old_name():
+    today = date.today()
+    with patch("run_daily.run_daily") as mock_run_daily, patch("norfingen.db.repository.set_watermark") as mock_set:
+        mock_run_daily.return_value = EMPTY_STATS
+        run_backfill_module.run_backfill_pipeline(today - timedelta(days=1), today + timedelta(days=5))
+
+    called = [c.kwargs["target_date"] for c in mock_run_daily.call_args_list]
+    assert called == [today - timedelta(days=1), today]          # nothing from the future
+    mock_set.assert_called_once_with(today)                       # watermark never ahead of today
+    assert run_backfill_module.run_backfill_daily is run_backfill_module.run_backfill_pipeline

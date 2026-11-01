@@ -1,9 +1,9 @@
 from datetime import date
 
+from norfingen.generators.day_events import orders_dated
 from norfingen.generators.order_generator import (
     build_order_lines,
     determine_order_status,
-    generate_daily_orders,
     generate_monthly_orders,
     should_generate_extra_consulting,
 )
@@ -43,20 +43,31 @@ def test_monthly_orders_use_customer_payment_terms():
     assert k03.invoicesDueIn == 45
 
 
-def test_generate_daily_orders_only_on_invoice_day():
+def test_orders_dated_only_on_invoice_day():
     k02 = customer_by_number("K02")  # invoice_day=7
-    orders_on_day = generate_daily_orders(2024, 1, k02.invoice_day)
+    orders_on_day = orders_dated(date(2024, 1, k02.invoice_day))
     assert any(o.customer.id == 2 for o in orders_on_day)
 
-    orders_other_day = generate_daily_orders(2024, 1, k02.invoice_day + 1)
+    orders_other_day = orders_dated(date(2024, 1, k02.invoice_day + 1))
     assert not any(o.customer.id == 2 for o in orders_other_day)
 
 
-def test_generate_daily_orders_skips_consulting_customer():
-    # K06 (consulting, invoice_day=None) nigdy nie pojawia się w generate_daily_orders.
-    for day in range(1, 29):
-        orders = generate_daily_orders(2024, 1, day)
-        assert not any(o.customer.id == 6 for o in orders)
+def test_orders_dated_includes_weekend_invoice_days():
+    # Faza 0.5a/b: faktura zachowuje swoją datę, także weekendową. K01 ma invoice_day=3;
+    # 2026-10-03 to sobota — to jedna z 13 faktur, które ginęły w ścieżce dziennej.
+    assert date(2026, 10, 3).weekday() == 5
+    assert any(o.customer.id == 1 for o in orders_dated(date(2026, 10, 3)))
+
+
+def test_orders_dated_returns_the_monthly_generators_orders_only():
+    # Jedno źródło: to, co jest dla dnia, jest wycinkiem generate_monthly_orders, nic więcej, nic mniej.
+    month = generate_monthly_orders(2024, 3)
+    for day in range(1, 32):
+        try:
+            d = date(2024, 3, day)
+        except ValueError:
+            break
+        assert orders_dated(d) == [o for o in month if o.orderDate == d]
 
 
 def test_price_multiplier_within_expected_range():
@@ -291,9 +302,9 @@ def test_churned_customer_no_orders_after_churn_date():
             assert not any(o.customer.id == 9 for o in orders), f"K09 wygenerował zamówienie w {year}-{month:02d} po churn"
 
 
-def test_customer_churn_no_daily_orders_after_churn_date():
+def test_customer_churn_no_orders_for_the_day_after_churn_date():
     k09 = customer_by_number("K09")
-    orders_after_churn = generate_daily_orders(2025, 1, k09.invoice_day)
+    orders_after_churn = orders_dated(date(2025, 1, k09.invoice_day))
     assert not any(o.customer.id == 9 for o in orders_after_churn)
 
 
@@ -341,10 +352,10 @@ def test_customer_not_onboarded_yet_generates_no_order():
     assert any(o.customer.id == 4 for o in orders_after)
 
 
-def test_generate_daily_orders_respects_onboarding_date():
+def test_orders_dated_respects_onboarding_date():
     k04 = customer_by_number("K04")  # invoice_day=10, onboarding 2020-08-01
-    orders_before = generate_daily_orders(2020, 7, k04.invoice_day)
-    orders_after = generate_daily_orders(2020, 8, k04.invoice_day)
+    orders_before = orders_dated(date(2020, 7, k04.invoice_day))
+    orders_after = orders_dated(date(2020, 8, k04.invoice_day))
     assert not any(o.customer.id == 4 for o in orders_before)
     assert any(o.customer.id == 4 for o in orders_after)
 

@@ -1279,3 +1279,27 @@ Praca według `docs/SPEC_poprawki_ksiegowe.md` (kopia specyfikacji) i `tests/gl_
 
 **Dalej:** 0.5b (jeden potok dla historii i dnia bieżącego: faktury zakupu, COGS, koszty, skutki zdarzeń, status faktur zakupu z płatności, usunięcie `fix_outgoing_transactions.py`), potem fazy 1–6. Wdrożenie na Supabase dopiero po planie i "ok" (backup, migracja `generation_state`, wyłączenie crona, regeneracja, sprawdzenie dashboardu).
 
+## Poprawki księgowe wg SPEC — faza 0.5b: jeden potok dla historii i dnia bieżącego (2026-10-31)
+
+Przed tą fazą: środowisko robocze sesji (venv, lokalny Postgres w katalogu tymczasowym) zostało wyczyszczone przy zmianie doby i odtworzone; narzędzia pomocnicze trafiły do repo (`scripts/local_regen.sh`, `tests/verify_regeneration.py`, `tests/run_gl_checks.py`, `tests/db_fingerprint.py`), żeby nie zależeć od katalogu tymczasowego. Produkcja nadal nietknięta (tylko odczyty).
+
+**Problem (przyczyna zerowych kosztów w październiku):** historia powstawała trybem miesięcznym (zamówienia, faktury zakupu, lista płac, koszty), a cron miał własną, uboższą ścieżkę: `generate_daily_orders` nie znał K06, extra consultingu, dużego projektu ani skutków zdarzeń klienta, a faktur zakupu, COGS i kosztów operacyjnych w ogóle nie tworzył. Dwa kody, dwa różne wyniki dla tego samego miesiąca.
+
+**Zmiany:**
+- `generators/day_events.py` — miesiąc generowany W CAŁOŚCI tymi samymi funkcjami `generate_monthly_*` (raz, cache), dzień bierze wycinek datowany na niego (`orders_dated`, `supplier_invoices_dated`, `operating_vouchers_dated`). Cały miesiąc, bo faktury zakupu i zdarzenia klienta czerpią z jednego strumienia losowego na miesiąc (zob. determinizm w fazie 0.5a); golden hash pilnuje, że nic się nie przesunęło.
+- `run_daily.process_day` obsługuje WSZYSTKO jednego dnia: kapitał zakładowy (2019-01-02), zamówienia, faktury zakupu + vouchery, COGS i koszty operacyjne, płatności, godziny, listę płac. `run_backfill.py` przepuszcza przez to każdy dzień od 2019-01-01 (`run_backfill_pipeline`; `--mode monthly|daily` zostały jako przestarzałe aliasy). Koniec ręcznej kolejności "najpierw miesięczny, potem dzienny".
+- `generate_daily_orders` usunięta (jedno źródło prawdy), jej testy przeniesione na `orders_dated`.
+- Status faktury zakupu: zawsze `UNPAID` przy tworzeniu, `PAID` wyłącznie przez zaksięgowaną płatność. Zniknęła heurystyka z `date.today()` (PAID_AFTER_DAYS) — strażnik `test_no_global_randomness` ma teraz jedyny wyjątek na zegar (`get_generation_cutoff_date`).
+- `scripts/fix_outgoing_transactions.py` usunięty (`git rm`); nie jest już potrzebny, bo luka, którą naprawiał, nie może powstać.
+- Testy: nowy `test_day_events.py` (każdy obiekt datowany w swoim miesiącu przez 108 miesięcy, suma dni == wynik miesięczny co do pozycji), `test_catch_up.py` rozszerzony o faktury zakupu/vouchery/koszty (cron tylko pon.–pt. == cron codzienny; pipeline == generatory miesięczne), nowe testy `test_run_daily.py` (faktura zakupu, koszty 1. dnia, kapitał zakładowy, zamówienia zdarzeń klienta z niedzieli 25.10), klamra dla `--end` w przyszłości. 469 testów zielonych + 1 pominięty (test z prawdziwym Postgresem, gdy ustawione `NORFINGEN_TEST_PG_URL`).
+
+**Wynik regeneracji lokalnej (22 s, 2861 dni, jeden potok do 2026-10-31):**
+- Historia do 2026-09-30 identyczna z produkcją co do grosza: zamówienia (status, netto, brutto, linie), faktury zakupu, koszty i COGS, godziny, listy płac. Przychód 209 030 662, brutto płac 81 422 455.
+- Październik: 17 nowych zamówień (13 weekendowych subskrypcji 1 359 615,08 + 4 extra consulting z niedzieli 25.10, 133 152,61), razem +1 492 767,69. Przychód ≤ 2026-10-30 = **213 117 314,34** = produkcyjne 211 624 546,65 + 1 492 767,69. K12 bez faktury (bankructwo). Pierwsze zdanie brzmiałoby "13", ale generator miesięczny, którym zbudowano historię, tworzy 17.
+- Koszty w październiku istnieją (8 faktur zakupu, 4 vouchery COGS/operacyjne), faktury zakupu: PAID <=> mają płatność; 8 UNPAID z terminem w przyszłości.
+- **Backfill do 2026-09-30 + catch-up crona (`python run_daily.py`) daje hashe wszystkich tabel IDENTYCZNE (łącznie z id) jak jedno ciągłe uruchomienie**; trzecia pełna regeneracja też identyczna. `vouchers.id` rośnie zgodnie z kalendarzem (potok jest chronologiczny).
+
+**`tests/gl_checks.sql`:** REG_B ma wartość końcową 213 117 314,34. T10 nadal FAIL (ostatni koszt 2026-10-20 przy ostatnim voucherze 2026-10-30): koszty są już generowane, ale w dniach 1/5/10/15/20, nie w realnych datach — to faza 5 (decyzja 1, opcja A).
+
+**Do wdrożenia na Supabase (jeszcze nie wykonane, wymaga planu i "ok"):** migracja `generation_state`, wyłączony cron na czas TRUNCATE + `python run_backfill.py` (ok. godzinę, commit per rekord), potem włączenie crona; `ensure_schema()` w pierwszym przebiegu i tak utworzy tabelę.
+

@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
 """CLI: generuje historyczne dane NorFinGen (2019 -> dziś) i zapisuje do Supabase.
 
-Użycie (tryb miesięczny — domyślny, orders/supplier_invoices/salary):
+Użycie:
     python run_backfill.py --start 2019-01-01
     python run_backfill.py --start 2019-01-01 --end 2023-12-31
 
-Użycie (tryb dzienny — opcjonalny, DOPIERO PO backfillu miesięcznym: bank_transactions,
-hour_entries; wymaga, żeby orders/supplier_invoices już istniały w bazie, bo
-generate_daily_bank_transactions dopasowuje płatności do istniejących dokumentów):
-    python run_backfill.py --mode daily --start 2019-01-01
+Faza 0.5b — jeden potok. Historia przechodzi przez TEN SAM kod co dzień bieżący
+(`run_daily.process_day`), dzień po dniu, w kolejności chronologicznej: kapitał
+zakładowy, zamówienia, faktury zakupu, COGS i koszty operacyjne, płatności,
+godziny, lista płac. Dawny podział na tryb miesięczny (dokumenty) i dzienny
+(płatności, godziny) zniknął: wymagał ręcznej kolejności i osobnej naprawy
+(`fix_outgoing_transactions.py`), a cron miał własną, uboższą ścieżkę.
+`--mode monthly|daily` zostają jako przestarzałe aliasy tego samego potoku.
 
-Uwaga wydajnościowa: tryb daily woła run_daily() raz per dzień kalendarzowy w całym
-zakresie (~2800 dni dla 2019->dziś, od fazy 0.5a także weekendy) — znacznie wolniejsze niż tryb monthly
-(commit per rekord, jak reszta repository.py). Licz się z czasem rzędu godzin
-dla pełnej historii od 2019.
+Po zakończeniu ustawia watermark (`generation_state`) na ostatni przetworzony
+dzień, żeby catch-up crona ruszył od właściwego miejsca. Kolejność dni daje też
+rosnące `vouchers.id` zgodne z datą.
+
+Wymagane przy pełnym resecie (robi je człowiek, nie skrypt): wyłączony cron,
+TRUNCATE tabel transakcyjnych z RESTART IDENTITY, potem ten skrypt.
+
+Uwaga wydajnościowa: ~2800 dni kalendarzowych dla 2019->dziś, commit per rekord
+(jak reszta repository.py) — lokalnie kilkadziesiąt sekund, na Supabase godzina i więcej.
 
 Wymaga DATABASE_URL w .env (zob. .env.example).
 """
@@ -29,8 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from norfingen.db.repository import ensure_schema, save_all, seed_reference_data  # noqa: E402
-from norfingen.generators.backfill import run_backfill  # noqa: E402
+from norfingen.db.repository import ensure_schema, seed_reference_data  # noqa: E402
 
 logger = logging.getLogger("run_backfill")
 
@@ -39,20 +46,17 @@ def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
-def run_backfill_daily(start_date: date, end_date: date) -> None:
-    """Backfill dla nowych encji dziennych (bank_transactions, hour_entries) —
-    uzupełnia historię, która nie mogła powstać w backfillu miesięcznym, bo te
-    generatory nie istniały wcześniej. Uruchom PO standardowym backfillu
-    miesięcznym (orders/supplier_invoices muszą już być w bazie — bank
-    transactions dopasowują się do nich po dacie płatności).
+def run_backfill_pipeline(start_date: date, end_date: date) -> None:
+    """Przepuszcza KAŻDY dzień kalendarzowy z [start_date, end_date] przez
+    run_daily.process_day, w kolejności chronologicznej — to samo, co robi cron
+    dla dnia bieżącego (faza 0.5b, zob. nagłówek pliku).
 
-    Faza 0.5a — pętla obejmuje WSZYSTKIE dni kalendarzowe, nie tylko robocze.
-    Wcześniej weekendy były pomijane, więc wpłata z terminem w sobotę lub
-    niedzielę nigdy nie powstawała (525 faktur, 74,3 mln NOK brutto). Płatności
-    wypadające w weekend są teraz księgowane w następnym dniu roboczym, ale
-    muszą mieć dzień, w którym ktoś je przetworzy; godziny i lista płac same
-    pilnują dni roboczych. Na końcu ustawiamy watermark (generation_state) na
-    end_date, żeby bieżący catch-up crona startował od właściwego dnia.
+    Pętla obejmuje wszystkie dni, nie tylko robocze (faza 0.5a): płatność z
+    terminem w weekend jest księgowana w poniedziałek, ale faktury klientów z
+    invoice_day w weekend powstają w sam weekend; godziny i lista płac pilnują
+    dni roboczych same. `end_date` jest obcinany do dziś (generator nigdy nie
+    tworzy rekordów z przyszłości), a watermark ustawiany na ostatni
+    przetworzony dzień — nie dalej.
 
     Importuje run_daily() leniwie (dopiero przy wywołaniu), żeby uniknąć
     cyklu importu na poziomie modułu: run_daily.py sam wykonuje
@@ -72,6 +76,7 @@ def run_backfill_daily(start_date: date, end_date: date) -> None:
     from norfingen.db.repository import close_connection, set_watermark, terminate_stale_sessions
     from run_daily import run_daily
 
+    end_date = min(end_date, date.today())
     max_retries = 3
     retry_delay_seconds = 10
     current = start_date
@@ -83,27 +88,31 @@ def run_backfill_daily(start_date: date, end_date: date) -> None:
                 break
             except Exception as exc:
                 logger.warning(
-                    "run_backfill_daily: błąd dla %s (próba %d/%d): %s — reconnect i ponów",
+                    "run_backfill_pipeline: błąd dla %s (próba %d/%d): %s — reconnect i ponów",
                     current, attempt, max_retries, exc,
                 )
                 close_connection()
                 try:
                     killed = terminate_stale_sessions()
                     if killed:
-                        logger.warning("run_backfill_daily: zabito %d zawieszonych sesji 'idle in transaction'", killed)
+                        logger.warning("run_backfill_pipeline: zabito %d zawieszonych sesji 'idle in transaction'", killed)
                 except Exception:
                     pass  # brak połączenia/uprawnień do pg_stat_activity nie powinien zablokować retry
                 if attempt == max_retries:
-                    logger.error("run_backfill_daily: %s nie powiodło się po %d próbach — przerywam", current, max_retries)
+                    logger.error("run_backfill_pipeline: %s nie powiodło się po %d próbach — przerywam", current, max_retries)
                     raise
                 time.sleep(retry_delay_seconds * attempt)
         processed += 1
         if processed % 50 == 0:
-            logger.info("run_backfill_daily: przetworzono %d dni, ostatni %s", processed, current)
+            logger.info("run_backfill_pipeline: przetworzono %d dni, ostatni %s", processed, current)
         current += timedelta(days=1)
 
     set_watermark(end_date)
-    logger.info("run_backfill_daily zakończony: %d dni (%s -> %s), watermark = %s", processed, start_date, end_date, end_date)
+    logger.info("run_backfill_pipeline zakończony: %d dni (%s -> %s), watermark = %s", processed, start_date, end_date, end_date)
+
+
+# Przestarzała nazwa sprzed fazy 0.5b — ten sam potok.
+run_backfill_daily = run_backfill_pipeline
 
 
 def main() -> None:
@@ -113,31 +122,21 @@ def main() -> None:
     parser.add_argument("--start", type=_parse_date, default=date(2019, 1, 1), help="YYYY-MM-DD, domyślnie 2019-01-01")
     parser.add_argument("--end", type=_parse_date, default=None, help="YYYY-MM-DD, domyślnie dzisiejsza data")
     parser.add_argument(
-        "--mode", choices=["monthly", "daily"], default="monthly",
-        help="monthly (domyślnie): orders/supplier_invoices/salary. "
-             "daily: bank_transactions/hour_entries — uruchom PO trybie monthly.",
+        "--mode", choices=["pipeline", "monthly", "daily"], default="pipeline",
+        help="przestarzałe: monthly i daily to aliasy jedynego potoku (faza 0.5b).",
     )
     args = parser.parse_args()
     end_date = args.end or date.today()
+
+    if args.mode != "pipeline":
+        logger.warning("--mode %s jest przestarzały: od fazy 0.5b istnieje jeden potok, uruchamiam go w całości.", args.mode)
 
     logger.info("Inicjalizacja schematu (db/schema.sql) i danych referencyjnych...")
     ensure_schema()
     seed_reference_data()
 
-    if args.mode == "daily":
-        logger.info("Start backfillu dziennego: %s -> %s", args.start, end_date)
-        run_backfill_daily(args.start, end_date)
-        return
-
-    logger.info("Start backfillu miesięcznego: %s -> %s", args.start, end_date)
-    stats = run_backfill(start_date=args.start, end_date=end_date, persist_fn=save_all)
-
-    logger.info(
-        "Backfill zakończony: %d miesięcy | orders=%d order_lines=%d supplier_invoices=%d "
-        "salary_transactions=%d payslips=%d vouchers=%d postings=%d",
-        stats["months"], stats["orders"], stats["order_lines"], stats["supplier_invoices"],
-        stats["salary_transactions"], stats["payslips"], stats["vouchers"], stats["postings"],
-    )
+    logger.info("Start backfillu (jeden potok, każdy dzień kalendarzowy): %s -> %s", args.start, end_date)
+    run_backfill_pipeline(args.start, end_date)
 
 
 if __name__ == "__main__":
