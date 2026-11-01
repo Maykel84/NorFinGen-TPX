@@ -144,3 +144,26 @@ def test_run_daily_creates_customer_event_orders_that_the_old_daily_path_never_m
     saved_orders = mocks["save_orders"].call_args.args[0]
     assert {o.customer.id for o in saved_orders} >= {2, 7, 16, 32}
     assert stats["orders"] == len(saved_orders)
+
+
+# --- phase 3: every invoice is booked in the ledger the day it is issued -----------------------------
+
+def test_run_daily_books_a_sales_voucher_for_every_order_of_the_day():
+    # 2026-10-03 is a Saturday: K01 and K20 are invoiced that day (weekend invoice_day).
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        stats = run_daily_module.run_daily(date(2026, 10, 3))
+
+    saved_orders = mocks["save_orders"].call_args.args[0]
+    sales = [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.OUTGOING_INVOICE]
+    assert stats["orders"] == len(saved_orders) >= 2
+    assert len(sales) == len(saved_orders)
+    assert all(v.date == date(2026, 10, 3) for v in sales)
+    assert {p.account.number for v in sales for p in v.postings} == {1500, 3000, 2700}
+
+
+def test_run_daily_books_no_sales_voucher_on_a_day_without_invoices():
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        run_daily_module.run_daily(date(2024, 1, 30))
+    assert not [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.OUTGOING_INVOICE]

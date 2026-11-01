@@ -2,7 +2,7 @@
 
 Description of all 20 tables in the Supabase schema (`src/norfingen/db/schema.sql`). Default currency: **NOK**. All tables have RLS enabled (Phase 1) — access from `run_backfill.py`/`run_daily.py` goes through the `postgres` role (bypasses RLS), read-only access through the `analyst` role.
 
-**The most important limitation of the whole model** *(removed by accounting phase 3 of `docs/SPEC_poprawki_ksiegowe.md`; until then it stands)*: `Order.invoiceDate` in real Tripletex automatically creates a Voucher (accounts 3000/3100, revenue). NorFinGen **does not call the real Tripletex API** — that Voucher never gets created locally. Consequence: **`vouchers`/`postings` never contain sales revenue** — only costs (payroll, suppliers, bank). Every P&L query must compute revenue from `orders`/`order_lines`, and costs from `vouchers`/`postings` separately, and join them manually (see examples in the session history — `WITH p AS (...orders...), k AS (...postings...)`).
+**The ledger now holds the sales side too (accounting phase 3, `docs/SPEC_poprawki_ksiegowe.md`).** In real Tripletex `Order.invoiceDate` automatically creates a sales Voucher; NorFinGen does not call the API, so until phase 3 that Voucher did not exist locally and `vouchers`/`postings` held only costs and customer payments (account 1500 stood at -185 mln NOK). Now every invoice books `Dr 1500 Kundefordringer (gross) / Cr 3000 Salgsinntekt (net) / Cr 2700 Utgående merverdiavgift (VAT)` on its invoice date - a voucher of type `OUTGOING_INVOICE`, weekends included. Revenue is still read from `orders`/`order_lines` in the BI views and in `PL_miesiecznie` (the cost side sums only accounts 4000-7999, so nothing is counted twice); the ledger's Cr 3000 equals that revenue in every month, to the grosz, and that equality is a test (gl_checks T4), not a coincidence.
 
 ---
 
@@ -197,6 +197,17 @@ Business meaning: a product catalog independent of per-customer pricing (that's 
 
 Business meaning: **sales invoice (revenue)**. Amount = the sum of `order_lines.amount_currency`. Currency: NOK. Limitation: `status` is decided **once, deterministically, when the order is created** (not based on actual elapsed time) — deliberate, so the backfill is fully reproducible.
 
+**Phase 3 - the ledger side and the deliberate traps.** Each order has its `OUTGOING_INVOICE` voucher (see `vouchers`). The `Faktury_sprzedazy` export carries four columns that mark behaviour modelled ON PURPOSE, so a reconciliation that finds it has found a feature, not an error:
+
+| Column | Meaning |
+|---|---|
+| `invoice_status` | `PAID` / `OVERDUE` / `WRITTEN_OFF` - the customer's modelled behaviour (`orders.status`). `PAID` does not mean "already paid": an invoice whose due date is still ahead is `PAID` and unpaid |
+| `is_overdue` | true for `OVERDUE` (paid ~90 days late) and `WRITTEN_OFF` (never paid) |
+| `payment_due_date` | `invoice_date + invoices_due_in` (normal due date, before any OVERDUE delay) |
+| `paid_date` | date of the customer's payment (`bank_transactions` INCOMING); NULL = not paid (yet, or never) |
+
+The receivable (account 1500) is the sum of the gross of every invoice with no `paid_date` - exactly, to the grosz. On 2026-11-01 that is 7.32 mln NOK: 5.11 mln of invoices whose due date is still ahead, 0.45 mln OVERDUE (payment still in the future) and 1.75 mln WRITTEN_OFF (bad debt that stays on the receivable). The model is 98% on time / 1.6% OVERDUE / 0.4% WRITTEN_OFF; the 70/25/5 split once proposed in the specification was withdrawn (it was a wrong inference from the weekend bug).
+
 ### order_lines
 | Column | Type | Description |
 |---|---|---|
@@ -273,9 +284,9 @@ Business meaning: the breakdown of a payslip into its components. In June: norma
 | id | SERIAL (PK) | |
 | date | DATE | Booking date |
 | description | TEXT | Description (natural key together with `date`, UNIQUE) |
-| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL / OPERATING_COST. `OUTGOING_INVOICE` (a sales invoice, accounting phase 3) replaces the old `INVOICE`, which was defined but never used and has been removed. No sales voucher exists yet (see the limitation at the top of this document) |
+| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL / OPERATING_COST. `OUTGOING_INVOICE` (a sales invoice, accounting phase 3) replaces the old `INVOICE`, which was defined but never used and has been removed |
 
-Business meaning: the header of an accounting entry. **Contains no sales revenue** — only costs (purchase invoices, payroll, bank movements, Phase 3: canteen/representation/transport/implementation equipment) and founding capital. `OPERATING_COST` (Phase 3, `generators/opex_generator.py`) — cash costs with no matching source document (unlike `INCOMING_INVOICE`, which always has a `SupplierInvoice`).
+Business meaning: the header of an accounting entry. Since accounting phase 3 it holds the **sales side as well**: one `OUTGOING_INVOICE` voucher per invoice (`Dr 1500 / Cr 3000 / Cr 2700`, description `Faktura K01 2026-10-03 — <customer>`, unique per customer and day), next to purchase invoices, payroll, bank movements (customer payments Dr 1910 / Cr 1500, supplier and payroll payments), operating costs / COGS and the founding capital. `OPERATING_COST` (Phase 3, `generators/opex_generator.py`) — cash costs with no matching source document (unlike `INCOMING_INVOICE`, which always has a `SupplierInvoice`).
 
 ### postings
 | Column | Type | Description |
@@ -312,7 +323,7 @@ Business meaning: the actual movement on the bank account, time-shifted relative
 
 **Phase 0.5a - two rules that changed the data** (see `docs/SPEC_poprawki_ksiegowe.md`):
 - *Working days only.* A payment (customer or supplier) whose due date falls on a Saturday or Sunday is booked on the following Monday (`seed/workdays.next_working_day`; holidays are not modelled - README backlog). Before this, such payments were never generated at all: the daily loop visited working days only and matched the exact date, so 525 invoices (74.3 mln NOK gross, ~30% of the invoiced amount) had no payment. Invoices themselves keep their own date, weekends included.
-- *Amount = what is stored.* An INCOMING payment equals `SUM(order_lines.amount_currency)` read back from the database, not a Python recomputation (which differed by 0.01-0.02 NOK on 445 orders because Postgres and Python round `.xx5` differently - `generators/money.py`).
+- *Amount = what is stored.* An INCOMING payment equals `SUM(order_lines.amount_currency)` read back from the database, not a Python recomputation (which differed by 0.01-0.02 NOK on 445 orders because Postgres and Python round `.xx5` differently - `generators/money.py`). **Correction made in phase 3:** the helper that predicts the stored cent (`pg_round2`) was first written to match the `float8 -> numeric` cast and validated against that cast; but psycopg2 writes a float as a numeric *literal* (`repr`, up to 17 digits), which Postgres rounds differently on values like `52733.024999999994` (stored `.02`, the cast would give `.03`). 137 gross amounts (-1.37 NOK) were affected - found because the receivable 1500 missed the unpaid invoices by exactly that. `pg_round2` now follows the write path and is tested against a real Postgres through the same INSERT (18 050 values; the old version disagreed on 2 444).
 
 **A fixed inaccuracy (in a previous version of this document)**: it used to say "the INCOMING/OUTGOING asymmetry is an artifact of the order features were implemented in" — **that was an incomplete explanation**. The real cause: `bank_transaction_generator.py` had logic ONLY for `Order` (INCOMING) and `SupplierInvoice` (OUTGOING) since Tier 2 — **payroll (the single largest cost line item) never generated any bank transaction at all**. Detected via the mismatch between the published report and the database (1264 INCOMING/187.6M vs 719 OUTGOING/17.5M — physically impossible at costs on the order of 30M+/year). Fixed: `generate_payroll_bank_transaction()` (one aggregated transaction/month: net pay+skattetrekk+AGA, a deliberate simplification — in reality skattetrekk/AGA are remitted to Skatteetaten with a delay, not the same day, but that was beyond the scope of this fix) + a one-time migration `scripts/archive/fix_missing_payroll_transactions.py` (91 missing). After the fix: 810 OUTGOING (107.6M) vs 1267 INCOMING (188.3M) — still unequal (the company is profitable, that's expected), but no longer a structural gap.
 
@@ -489,7 +500,7 @@ The rate-limit counter for `GET /api/v1/export/{format}` (1 export/5 min/IP) —
 
 ## Known overall limitations
 
-1. **No revenue postings** (accounts 3000/3100) — see the header of this document. Revenue lives exclusively in `orders`/`order_lines`.
+1. ~~**No revenue postings** (accounts 3000/3100)~~ — **fixed in accounting phase 3**: every invoice is booked (`OUTGOING_INVOICE`). All revenue is booked on **3000**; account 3100 (Lisensintekter) exists in the chart but stays unused - the specification books revenue on 3000 and no figure would change by splitting off licences. Revenue in the BI views still comes from `orders`/`order_lines`, deliberately (see the header).
 2. ~~`bank_transactions` requires manual re-repair after every `TRUNCATE`~~ — **fixed in phase 0.5b**: supplier payments are produced by the same day-by-day pipeline as everything else, so a reset is `TRUNCATE ... RESTART IDENTITY` + `python run_backfill.py`, nothing to repair by hand (`scripts/fix_outgoing_transactions.py` is deleted).
 3. **Phase 1 metadata** (`customers.segment/onboarding_date/churn_date/price_multiplier`, `services`, `products.service_code`) previously existed **only in Python** (`roster.py`) — it's now also in Supabase, but historical queries/dashboards written before Phase 1 may have omitted it.
 4. **`projects.start_date` = `customers.onboarding_date` since Phase 4** (before Phase 4 it was independent, a static 2026-01-01/03-01 — a limitation that has been FIXED, kept in the history as an example of an earlier design mistake).

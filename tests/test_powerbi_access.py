@@ -27,10 +27,14 @@ def test_setup_script_never_hardcodes_a_password():
 
 
 def test_v_pl_monthly_computes_revenue_from_orders_not_postings():
-    """Zadanie 2 — regresja krytycznego błędu ze szkicu w prompcie: postings
-    NIGDY nie zawiera przychodu (account_number 3000-3999), więc widok P&L
-    musi liczyć revenue z orders/order_lines, nie z postings — inaczej
-    revenue zawsze wychodzi 0/NULL. Zob. nagłówek DATA_DICTIONARY.md."""
+    """Zadanie 2 — regresja krytycznego błędu ze szkicu w prompcie: widok P&L
+    liczy revenue z orders/order_lines, nie z postings. (Wtedy powodem było to,
+    że postings w ogóle nie zawierał przychodu, więc revenue wychodziło
+    0/NULL. Od fazy 3 księgowej konto 3000 ISTNIEJE w postings i jest równe
+    przychodowi z faktur co do grosza - gl_checks T4 - ale widok zostaje przy
+    orders/order_lines świadomie: jego część kosztowa sumuje tylko 4000-7999,
+    więc nic nie jest liczone podwójnie, a dwa niezależne źródła, które się
+    zgadzają, to test, nie coś do ukrycia.)"""
     view_start = SCHEMA_SQL.index("CREATE OR REPLACE VIEW v_pl_monthly")
     view_end = SCHEMA_SQL.index(";", SCHEMA_SQL.index("v_headcount_monthly", view_start))
     view_sql = SCHEMA_SQL[view_start:view_end]

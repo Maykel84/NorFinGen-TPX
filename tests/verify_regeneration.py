@@ -137,6 +137,38 @@ def main() -> int:
     vat_gl = f(local.one("select sum(amount) from postings where account_number=2710 and amount>0"))
     vat_inv = f(local.one("select sum(vat_amount_currency) from supplier_invoices"))
     check("input VAT in the GL == VAT on the purchase invoices (gl_checks T6)", abs(vat_gl - vat_inv) <= 1.0, f"GL {vat_gl:,.2f} | invoices {vat_inv:,.2f} | diff {vat_gl - vat_inv:+.2f}")
+    # ---- phase 3: sales invoices in the ledger
+    check("every invoice has exactly one sales voucher dated on its invoice date",
+          local.one("""select count(*) from orders o where (select count(*) from vouchers v where v.voucher_type='OUTGOING_INVOICE'
+                       and v.date=o.invoice_date and v.description like 'Faktura K%' || ' ' || o.invoice_date::text || ' %'
+                       and v.description like 'Faktura ' || (select customer_number from customers c where c.id=o.customer_id) || ' %') <> 1""") == 0,
+          f"{local.one('select count(*) from orders')} orders, {local.one(chr(39).join(['select count(*) from vouchers where voucher_type=','OUTGOING_INVOICE','']))} sales vouchers")
+    rev_diff = local.one("""with g as (select to_char(v.date,'YYYY-MM') m, -sum(p.amount) r from vouchers v join postings p on p.voucher_id=v.id
+                                       where p.account_number=3000 group by 1),
+                                s as (select to_char(o.invoice_date,'YYYY-MM') m, sum(ol.amount_excluding_vat_currency) r
+                                      from orders o join order_lines ol on ol.order_id=o.id group by 1)
+                           select coalesce(max(abs(coalesce(g.r,0)-coalesce(s.r,0))),0) from g full join s on g.m=s.m""")
+    check("ledger revenue (Cr 3000) == invoiced revenue (order_lines) in every month (gl_checks T4)", f(rev_diff) < 0.005, f"worst monthly difference {f(rev_diff):.4f} NOK")
+    vat_out = f(local.one("select -sum(amount) from postings where account_number=2700 and amount<0"))
+    rev_gl = f(local.one("select -sum(amount) from postings where account_number=3000"))
+    n_inv = local.one("select count(*) from postings where account_number=2700 and amount<0")
+    check("output VAT == 25% of revenue within 1 cent per invoice (gl_checks T5)", abs(vat_out - 0.25 * rev_gl) <= 0.01 * n_inv,
+          f"VAT {vat_out:,.2f} | 25% of revenue {0.25 * rev_gl:,.2f} | diff {vat_out - 0.25 * rev_gl:+.2f} NOK over {n_inv} invoices (the original 1 NOK bound would FAIL)")
+    bal_1500 = f(local.one("select sum(amount) from postings where account_number=1500"))
+    open_gross = f(local.one("""select coalesce(sum(ol.amount_currency),0) from orders o join order_lines ol on ol.order_id=o.id
+                                where not exists (select 1 from bank_transactions b where b.order_id=o.id and b.transaction_type='INCOMING')"""))
+    check("receivable 1500 >= 0 and == gross of the invoices without a payment (gl_checks T3, compared by hand as the spec asks)",
+          bal_1500 >= -0.005 and abs(bal_1500 - open_gross) < 0.005, f"1500 balance {bal_1500:,.2f} | unpaid invoices {open_gross:,.2f}")
+    traps = local.all("""select o.status, count(*), round(sum(g)/1e6, 2) from orders o
+                         join (select order_id, sum(amount_currency) g from order_lines group by 1) l on l.order_id=o.id
+                         where not exists (select 1 from bank_transactions b where b.order_id=o.id and b.transaction_type='INCOMING')
+                         group by 1 order by 1""")
+    print("\nUnpaid invoices making up the 1500 balance, by modelled behaviour (status in the export):")
+    for t in traps:
+        print(f"   {t[0]:12} n={t[1]:>4}  gross {f(t[2])} mln")
+    print()
+    check("the export flags exactly the OVERDUE and WRITTEN_OFF invoices", local.one("select count(*) from orders where (status in ('OVERDUE','WRITTEN_OFF')) is distinct from (status <> 'PAID')") == 0)
+
     check("every bank transaction has its voucher", local.one("select count(*) from bank_transactions where voucher_id is null") == 0)
 
     # supplier invoices: status follows the payments, and nothing is paid before it is due

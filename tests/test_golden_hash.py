@@ -25,6 +25,12 @@ GOLDEN = {
     "orders": (1853, "62f1f25e5f6fdb88"),
     "supplier_invoices": (745, "4a571fa9fea764a7"),
     "opex_vouchers": (469, "892715817cd39468"),
+    # Phase 3: the sales voucher of every invoice (Dr 1500 / Cr 3000 / Cr 2700). Same count as the orders, and the
+    # revenue it books equals the 209 030 662 of the regression rule (to the cent: the exact figure is 661.93).
+    # (Pinned after pg_round2 was corrected to the psycopg2 literal path: the first value, 47c32992810ab004, had 137
+    # gross amounts one cent off the stored ones. Revenue - the net side - was already right and did not move.)
+    "sales_vouchers": (1853, "d87b271c20eb9788"),
+    "revenue_in_gl": 209_030_661.93,
     # With the phase-1 accounts mapped back to the old ones this is the hash frozen BEFORE phase 1 (see
     # golden_fingerprint.PHASE1_TO_LEGACY_ACCOUNTS): phase 1 renumbered accounts and changed nothing else.
     "salary_vouchers": (279, "ea2df287fc8f69c1"),
@@ -49,3 +55,4 @@ def test_golden_component_unchanged(fingerprint, component):
 def test_regression_revenue_and_payroll_up_to_2026_09_30(fingerprint):
     assert fingerprint["revenue_net"] == 209_030_662
     assert fingerprint["payroll_gross"] == 81_422_455
+    assert abs(fingerprint["revenue_in_gl"] - 209_030_662) < 0.5  # the ledger's revenue is the regression revenue

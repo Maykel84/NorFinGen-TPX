@@ -36,7 +36,7 @@ BALANCE_TOLERANCE = 0.005
 
 
 class VoucherType(str, Enum):
-    OUTGOING_INVOICE = "OUTGOING_INVOICE"  # a sales invoice (Order) — booked by the generator from phase 3: Dr 1500 / Cr 3000 / Cr 2700
+    OUTGOING_INVOICE = "OUTGOING_INVOICE"  # a sales invoice (Order) — booked by the generator (sales_voucher.py): Dr 1500 / Cr 3000 / Cr 2700
     INCOMING_INVOICE = "INCOMING_INVOICE"  # a SupplierInvoice — created explicitly by the generator
     SALARY = "SALARY"  # SalaryTransaction + feriepenger — created explicitly by the generator
     BANK = "BANK"  # bank payments — Tier 4

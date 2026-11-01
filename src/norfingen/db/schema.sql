@@ -459,6 +459,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analyst;
 --    postings). Copying the sketch verbatim would give a view that always
 --    returns revenue=NULL.
 --
+--    UPDATE (accounting phase 3): sales invoices are now booked in the ledger
+--    too (OUTGOING_INVOICE: Dr 1500 / Cr 3000 / Cr 2700), so 3000 postings DO
+--    exist now and equal the revenue in order_lines to the grosz (gl_checks
+--    T4). The view still reads revenue from orders/order_lines on purpose: its
+--    cost CTE sums only 4000-7999, so there is no double count, and the two
+--    sources agreeing is a test, not something to paper over.
+--
 -- 2. v_sales_flat.amount_including_vat_currency is an ALIAS of the
 --    physical column order_lines.amount_currency, NOT a rename of that
 --    column — "Basket 1" (renaming order_lines.amount_currency ->

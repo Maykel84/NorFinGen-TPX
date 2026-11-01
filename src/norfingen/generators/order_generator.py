@@ -1,10 +1,11 @@
 """Order + OrderLine generator (Layer 2).
 
 In real Tripletex, Order.invoiceDate = orderDate triggers an automatic sales
-Voucher. NorFinGen does not call the API, so this module still creates no
-Voucher: the sales voucher (OUTGOING_INVOICE: Dr 1500 / Cr 3000 / Cr 2700) is
-phase 3 of docs/SPEC_poprawki_ksiegowe.md. (The VoucherType.INVOICE that used to
-stand for it was never used and has been removed.)
+Voucher. NorFinGen does not call the API, so this module creates no Voucher
+itself: the pipeline books the sales voucher (OUTGOING_INVOICE: Dr 1500 / Cr 3000
+/ Cr 2700) right after saving the Order - generators/sales_voucher.py, phase 3 of
+docs/SPEC_poprawki_ksiegowe.md. (The VoucherType.INVOICE that used to stand for it
+was never used and has been removed.)
 
 Patterns from roster.CUSTOMERS.order_pattern:
   A/B/C — subscription customers (cadence per invoice_day/payment_terms). The

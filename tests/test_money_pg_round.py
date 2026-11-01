@@ -1,12 +1,14 @@
-"""pg_round2 must equal what Postgres stores for a float8 -> numeric(14,2) (phase 0.5a).
+"""pg_round2 must equal the cent Postgres STORES when the pipeline writes a float through psycopg2.
 
 Two layers:
 * pure tests of the rule on known boundary values (always run);
-* a comparison against a REAL Postgres on >= 10 000 values, including the .xx5
-  boundaries and their neighbouring doubles (runs only when NORFINGEN_TEST_PG_URL
-  points at a scratch database; it only ever runs SELECTs on literals, never
-  touches tables, and is never pointed at production - the variable is separate
-  from DATABASE_URL on purpose).
+* a comparison against a REAL Postgres on >= 10 000 values, including every .xx5 boundary and the doubles on either
+  side of it. It goes through the same psycopg2 INSERT the pipeline uses - NOT through a `float8::numeric` cast, which
+  rounds differently (15 significant digits instead of the literal psycopg2 sends) and is exactly the mistake the
+  first version of this test made (phase 0.5a validated the cast path; phase 3 found 137 stored lines it predicted
+  wrongly). It runs only when NORFINGEN_TEST_PG_URL points at a scratch database; the only thing it creates is a TEMP
+  table, gone with the connection, and the variable is separate from DATABASE_URL on purpose so it can never be pointed
+  at production by accident.
 
     NORFINGEN_TEST_PG_URL=postgresql://user@127.0.0.1:54329/scratch pytest tests/test_money_pg_round.py
 """
@@ -28,9 +30,11 @@ from datetime import date
 @pytest.mark.parametrize("value,expected", [
     (114249.135, 114249.14),      # the real order (K01, 2020-07-26) that Python's round() got wrong
     (0.005, 0.01),
-    (2.675, 2.68),                # binary repr is 2.67499999... ; PG goes through 15 significant digits
+    (2.675, 2.68),                # the literal 2.675 is exactly half: Postgres rounds it up; Python's round() says 2.67
     (1.005, 1.01),
     (-2.675, -2.68),              # half away from zero
+    (52733.024999999994, 52733.02),   # a real order line (K08, 2020-11-25): just BELOW the boundary, stored as .02 -
+    (114119.42499999999, 114119.42),  # the float8::numeric cast would say .03 / .43; the literal psycopg2 sends does not
     (0.0, 0.0),
     (298215.505, 298215.51),
     (100.0, 100.0),
@@ -71,7 +75,7 @@ def _candidate_values() -> list[float]:
 
 
 @pytest.mark.skipif(not os.environ.get("NORFINGEN_TEST_PG_URL"), reason="NORFINGEN_TEST_PG_URL not set (no scratch Postgres)")
-def test_pg_round2_matches_real_postgres_on_10k_values():
+def test_pg_round2_matches_what_postgres_stores_on_10k_values():
     import psycopg2
 
     values = _candidate_values()
@@ -80,13 +84,16 @@ def test_pg_round2_matches_real_postgres_on_10k_values():
     conn = psycopg2.connect(os.environ["NORFINGEN_TEST_PG_URL"])
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT x, x::numeric(14,2) FROM unnest(%s::float8[]) AS x", (values,))
-            rows = cur.fetchall()
+            cur.execute("CREATE TEMP TABLE pg_round2_probe (id integer PRIMARY KEY, v numeric(14,2))")
+            for i, x in enumerate(values):            # one INSERT per value: exactly how repository.py writes amounts
+                cur.execute("INSERT INTO pg_round2_probe (id, v) VALUES (%s, %s)", (i, x))
+            cur.execute("SELECT id, v FROM pg_round2_probe ORDER BY id")
+            stored = cur.fetchall()
     finally:
         conn.close()
 
-    assert len(rows) == len(values)
+    assert len(stored) == len(values)
     mismatches = [
-        (x, stored, pg_round2(x)) for x, stored in rows if Decimal(str(pg_round2(x))) != stored
+        (values[i], v, pg_round2(values[i])) for i, v in stored if Decimal(str(pg_round2(values[i]))) != v
     ]
-    assert not mismatches, f"{len(mismatches)} of {len(rows)} differ, first: {mismatches[:5]}"
+    assert not mismatches, f"{len(mismatches)} of {len(stored)} differ, first: {mismatches[:5]}"

@@ -51,3 +51,19 @@ def test_new_employee_payroll_sheet_registered():
     assert "Payroll_per_pracownik" in QUERIES
     for expected_alias in ("employee_id", "employee_name", "net_amount", "gross_amount", "tax_amount"):
         assert expected_alias in QUERIES["Payroll_per_pracownik"]
+
+
+def test_sales_invoice_export_flags_the_deliberate_test_traps():
+    """Accounting phase 3: late and written-off invoices are modelled on purpose, so the export says so - a reconciliation
+    that finds them has found a feature, not an error. Same four columns in the local export and in the REST API's copy."""
+    from api.export_data import _COLUMNS
+
+    flags = ("invoice_status", "is_overdue", "payment_due_date", "paid_date")
+    for column in flags:
+        assert column in QUERIES["Faktury_sprzedazy"], column
+        assert column in _COLUMNS["Faktury_sprzedazy"], column
+    assert "bank_transactions" in QUERIES["Faktury_sprzedazy"]          # paid_date comes from the real payment
+    assert "LEFT JOIN" in QUERIES["Faktury_sprzedazy"].upper()           # an unpaid invoice must not vanish from the export
+    # the REST API copy lists exactly the columns of the local query
+    for column in _COLUMNS["Faktury_sprzedazy"]:
+        assert column in QUERIES["Faktury_sprzedazy"], column

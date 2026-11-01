@@ -44,6 +44,7 @@ _COLUMNS: dict[str, list[str]] = {
         "order_id", "customer_id", "order_date", "invoice_date", "customer_name",
         "customer_number", "city", "postal_code", "count",
         "unit_price_excluding_vat_currency", "amount_excluding_vat_currency", "amount_currency",
+        "invoice_status", "is_overdue", "payment_due_date", "paid_date",
     ],
     "Faktury_zakupu": [
         "invoice_number", "supplier_id", "invoice_date", "payment_due_date",
@@ -108,10 +109,15 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
                    ol.count,
                    ol.unit_price_excluding_vat_currency,
                    ol.amount_excluding_vat_currency,
-                   ol.amount_currency
+                   ol.amount_currency,
+                   o.status AS invoice_status,
+                   (o.status IN ('OVERDUE', 'WRITTEN_OFF')) AS is_overdue,
+                   (o.invoice_date + o.invoices_due_in) AS payment_due_date,
+                   b.date AS paid_date
             FROM orders o
             JOIN customers c ON c.id = o.customer_id
             JOIN order_lines ol ON ol.order_id = o.id
+            LEFT JOIN bank_transactions b ON b.order_id = o.id AND b.transaction_type = 'INCOMING'
             WHERE o.order_date BETWEEN $1 AND $2
             ORDER BY o.order_date, o.id
             """,

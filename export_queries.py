@@ -40,16 +40,29 @@ QUERIES = {
         FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month = c.month
         ORDER BY 1
     """,
+    # Accounting phase 3: the four last columns flag the DELIBERATE test traps. A small, documented share of
+    # invoices is paid late (OVERDUE: +90 days) or never (WRITTEN_OFF: bad debt) - behaviour the generator models on
+    # purpose, so a reconciliation that finds them has found a feature, not an error.
+    #   invoice_status     PAID | OVERDUE | WRITTEN_OFF  (the customer's modelled behaviour, set when the invoice is
+    #                      created; PAID does not mean "already paid" - see paid_date)
+    #   is_overdue         true for OVERDUE and WRITTEN_OFF
+    #   payment_due_date   invoice_date + payment terms (normal due date, before any OVERDUE delay)
+    #   paid_date          date of the customer's payment in the bank; NULL = not paid (yet, or never)
     "Faktury_sprzedazy": """
         SELECT o.id AS order_id, o.customer_id, o.order_date, o.invoice_date,
                c.name AS customer_name, c.customer_number, c.city, c.postal_code,
                ol.count,
                ol.unit_price_excluding_vat_currency,
                ol.amount_excluding_vat_currency,
-               ol.amount_currency
+               ol.amount_currency,
+               o.status AS invoice_status,
+               (o.status IN ('OVERDUE', 'WRITTEN_OFF')) AS is_overdue,
+               (o.invoice_date + o.invoices_due_in) AS payment_due_date,
+               b.date AS paid_date
         FROM orders o
         JOIN customers c ON c.id = o.customer_id
         JOIN order_lines ol ON ol.order_id = o.id
+        LEFT JOIN bank_transactions b ON b.order_id = o.id AND b.transaction_type = 'INCOMING'
         ORDER BY o.order_date, o.id
     """,
     "Faktury_zakupu": """

@@ -44,7 +44,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
-from norfingen.generators.money import pg_round2
+from norfingen.generators.sales_voucher import order_gross_amount
 from norfingen.generators.salary_generator import ACCOUNT_FORSKUDDSTREKK, ACCOUNT_SKYLDIG_AGA, ACCOUNT_SKYLDIG_LONN
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
@@ -67,16 +67,12 @@ OVERDUE_PAYMENT_DELAY_DAYS = 90  # OVERDUE pays payment_terms + 90 days, not on 
 
 
 def _order_gross_amount(order: Order) -> float:
-    """The invoice's gross amount. For an Order rebuilt from the database this
-    is SUM(order_lines.amount_currency) as stored (storedGrossAmountCurrency) -
-    the payment, and later Dr 1500, must equal it to the grosz. For a freshly
-    generated Order (not stored yet) it is the sum of the per-line values
-    rounded the way Postgres will round them (pg_round2), so both paths agree.
-    Before phase 0.5a this was round(sum(unrounded lines), 2), which differed
-    from the stored sum by 0.01-0.02 NOK on 445 orders."""
-    if order.storedGrossAmountCurrency is not None:
-        return round(order.storedGrossAmountCurrency, 2)
-    return round(sum(pg_round2(line.amountCurrency) for line in order.orderLines), 2)
+    """The invoice's gross amount - the single definition lives in sales_voucher.order_gross_amount, because the sales
+    voucher (Dr 1500) and this payment (Cr 1500) must carry the very same number for the receivable to clear to the
+    grosz. For an Order rebuilt from the database it is SUM(order_lines.amount_currency) as stored; for a fresh one the
+    per-line sum rounded as Postgres will round it. (Before phase 0.5a this was round(sum(unrounded lines), 2), which
+    differed from the stored sum by 0.01-0.02 NOK on 445 orders.)"""
+    return order_gross_amount(order)
 
 
 def _incoming_payment_date(order: Order, payment_terms: int) -> Optional[date]:

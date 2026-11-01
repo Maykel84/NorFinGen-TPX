@@ -29,7 +29,8 @@ Dla każdego dnia kalendarzowego (process_day) — TEN SAM kod dla historii
 (`run_backfill.py`) i dla dnia bieżącego (cron):
 0. Kapitał zakładowy (jednorazowo, 2019-01-02)
 1. Zamówienia klientów datowane tego dnia (day_events.orders_dated: zwykłe faktury,
-   K06, extra consulting, duży projekt, skutki zdarzeń klienta)
+   K06, extra consulting, duży projekt, skutki zdarzeń klienta) wraz z voucherem
+   sprzedaży OUTGOING_INVOICE (Wn 1500 / Ma 3000 / Ma 2700, faza 3)
 2. Faktury zakupu datowane tego dnia + ich vouchery; COGS i koszty operacyjne
    datowane tego dnia (day_events)
 3. Płatności bankowe z terminem (po przesunięciu na dzień roboczy) przypadającym
@@ -84,6 +85,7 @@ from norfingen.generators.day_events import (  # noqa: E402
     orders_dated,
     supplier_invoices_dated,
 )
+from norfingen.generators.sales_voucher import build_sales_voucher  # noqa: E402
 from norfingen.generators.salary_generator import generate_monthly_salary  # noqa: E402
 from norfingen.generators.supplier_invoice_generator import build_voucher_for_invoice  # noqa: E402
 from norfingen.seed.payroll import active_employees, last_working_day, should_generate_monthly_salary  # noqa: E402
@@ -132,6 +134,9 @@ def process_day(target_date: date, skip_setup: bool = False) -> dict:
     orders = orders_dated(target_date)
     if orders:
         save_orders(orders)
+        # ... and its sales voucher: Dr 1500 / Cr 3000 / Cr 2700 on the invoice date (phase 3).
+        for order in orders:
+            save_all(build_sales_voucher(order))
         stats["orders"] = len(orders)
 
     # 2. Faktury zakupu (+ voucher INCOMING_INVOICE) i koszty operacyjne/COGS datowane dzisiaj.

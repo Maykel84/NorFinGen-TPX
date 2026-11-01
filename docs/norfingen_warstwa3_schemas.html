@@ -187,7 +187,7 @@
       <table>
         <thead><tr><th>voucherType</th><th>Źródło W2</th><th>Tworzony przez</th><th>Etap</th></tr></thead>
         <tbody>
-          <tr><td class="mono-val">OUTGOING_INVOICE</td><td>Order z <span class="mono-val">invoiceDate</span></td><td>generator jawnie <span style="color:var(--amber)">(faza 3)</span></td><td>faza 3 SPEC</td></tr>
+          <tr><td class="mono-val">OUTGOING_INVOICE</td><td>Order z <span class="mono-val">invoiceDate</span></td><td>generator jawnie (<code>sales_voucher.py</code>)</td><td>faza 3 SPEC ✓</td></tr>
           <tr><td class="mono-val">INCOMING_INVOICE</td><td>SupplierInvoice</td><td>generator jawnie</td><td>W2 (teraz)</td></tr>
           <tr><td class="mono-val">SALARY</td><td>SalaryTransaction + Feriepenger</td><td>generator jawnie</td><td>W2 (teraz)</td></tr>
           <tr><td class="mono-val">BANK</td><td>Płatności bankowe</td><td>generator jawnie</td><td>Etap 4</td></tr>
@@ -240,13 +240,13 @@
   <!-- VAT RULE -->
   <div class="entity-section type-ledger" id="vat-rule">
     <div class="entity-header"><h2>Zasada VAT w Postingach</h2></div>
-    <p class="entity-desc">VAT jest <strong>osobnym postingiem</strong>, tak jak w prawdziwym Tripletex (linie VAT powstają z kodu VAT postingu): VAT naliczony z faktury zakupu to własna linia <code style="font-family:var(--font-mono);color:var(--blue)">Wn 2710</code>, VAT należny ze sprzedaży — własna linia <code style="font-family:var(--font-mono);color:var(--blue)">Ma 2700</code>. Pole <code style="font-family:var(--font-mono);color:var(--blue)">vatAmount</code> zostaje na linii kosztu/przychodu jako informacja, ale nie jest składnikiem bilansu. Voucher bilansuje się <strong>co do grosza</strong>.</p>
+    <p class="entity-desc">VAT jest <strong>osobnym postingiem</strong>, tak jak w prawdziwym Tripletex (linie VAT powstają z kodu VAT postingu): VAT naliczony z faktury zakupu to własna linia <code style="font-family:var(--font-mono);color:var(--blue)">Wn 2710</code>, VAT należny ze sprzedaży — własna linia <code style="font-family:var(--font-mono);color:var(--blue)">Ma 2700</code> (od fazy 3). Pole <code style="font-family:var(--font-mono);color:var(--blue)">vatAmount</code> zostaje na linii kosztu/przychodu jako informacja, ale nie jest składnikiem bilansu. Voucher bilansuje się <strong>co do grosza</strong>.</p>
 
     <div class="table-wrap">
       <table>
         <thead><tr><th>Posting</th><th>amount</th><th>vatType</th><th>vatAmount</th><th>Uwaga</th></tr></thead>
         <tbody>
-          <tr><td>Wn 1500 (sprzedaż) <span style="color:var(--amber);font-size:10px">faza 3</span></td><td class="mono-val" style="color:var(--red)">+150 000</td><td class="mono-val" style="color:var(--text-dim)">null</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">brutto</td></tr>
+          <tr><td>Wn 1500 (sprzedaż)</td><td class="mono-val" style="color:var(--red)">+150 000</td><td class="mono-val" style="color:var(--text-dim)">null</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">brutto</td></tr>
           <tr><td>Ma 3000 (przychód)</td><td class="mono-val" style="color:var(--green)">−120 000</td><td class="mono-val">vatCode "3"</td><td class="mono-val" style="color:var(--amber)">30 000</td><td style="font-size:11px">netto</td></tr>
           <tr><td>Ma 2700 (VAT należny)</td><td class="mono-val" style="color:var(--green)">−30 000</td><td class="mono-val">vatCode "3"</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">brutto − netto</td></tr>
           <tr><td>Wn 6xxx (zakup)</td><td class="mono-val" style="color:var(--red)">+100 000</td><td class="mono-val">vatCode "1"</td><td class="mono-val" style="color:var(--amber)">25 000</td><td style="font-size:11px">netto</td></tr>
@@ -275,7 +275,7 @@
       <div class="pattern-header">
         <span class="pattern-num">W1</span>
         <span class="pattern-title">Faktura sprzedaży</span>
-        <span class="pattern-source">← Order z invoiceDate · wdrożenie: faza 3 SPEC</span>
+        <span class="pattern-source">← Order z invoiceDate · <code>sales_voucher.build_sales_voucher</code></span>
         <span class="pattern-type ptype-manual">generator jawnie</span>
       </div>
       <div class="pattern-body">
