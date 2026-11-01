@@ -78,8 +78,10 @@ def main() -> int:
                 from orders o join order_lines ol on ol.order_id=o.id where o.order_date<=%s group by o.id""",
              "orders (status, net, gross, lines)")
         same("select invoice_number, invoice_date::text, amount_currency from supplier_invoices where invoice_date<=%s", "supplier invoices")
-        same("""select v.date::text, v.description, p.account_number, p.amount from vouchers v join postings p on p.voucher_id=v.id
-                where v.voucher_type='OPERATING_COST' and v.date<=%s""", "operating cost / COGS postings")
+        # Phase 5 moved these entries from the 1st of the month to realistic days: the DAY differs on purpose, the month,
+        # description, account and amount may not.
+        same("""select to_char(v.date, 'YYYY-MM'), v.description, p.account_number, p.amount from vouchers v join postings p on p.voucher_id=v.id
+                where v.voucher_type='OPERATING_COST' and v.date<=%s""", "operating cost / COGS postings (month, not day)")
         same("select date::text, employee_id, project_id, activity_type, hours from hour_entries where date<=%s", "hour entries")
         # Phase 2 added the input-VAT line (Dr 2710) to every purchase-invoice voucher. Without that line the
         # voucher is exactly what production holds: cost at net, 2400 at gross - so no cost figure moved.
@@ -200,6 +202,62 @@ def main() -> int:
     for r in per_supplier:
         print(f"   {r[0]} {r[1]:32} {f(r[2]):>14,.2f}")
     check("every posting on 2400 carries a supplier (ageing is complete)", local.one("select count(*) from postings where account_number=2400 and supplier_id is null") == 0)
+    # ---- phase 5: realistic cost dates + VAT settlement
+    check("operating costs: never on a weekend, and none left on a bare 'first of the month' habit", local.one(
+        """select count(*) from vouchers where voucher_type='OPERATING_COST' and extract(isodow from date) in (6,7)""") == 0)
+    check("COGS accruals are booked on the last working day of their month", local.one(
+        """select count(*) from cogs_payables cp where cp.accrual_date <>
+           (select max(d::date) from generate_series(date_trunc('month', cp.accrual_date), date_trunc('month', cp.accrual_date) + interval '1 month - 1 day', '1 day') d
+            where extract(isodow from d) < 6)""") == 0)
+    gap = local.all("""with d as (select generate_series(date '2019-03-01', (select max(date) from vouchers), '1 day')::date as dd),
+                       c as (select distinct v.date from vouchers v join postings p on p.voucher_id=v.id
+                             where (p.account_number between 4000 and 4999 or p.account_number between 6000 and 7999) and p.amount > 0)
+                       select max(gap), count(*) filter (where gap > 7) from
+                         (select d.dd - (select max(date) from c where date <= d.dd) as gap from d) x""")[0]
+    check("no stretch of more than 14 days without a cost posting (gl_checks T10, checked for EVERY day of the history)", gap[0] <= 14,
+          f"longest {gap[0]} days; {gap[1]} days have a gap above 7")
+    n_terms = local.one("select count(*) from vat_settlements")
+    check("a VAT settlement for every ended term with any VAT, none twice", n_terms == local.one(
+        """select count(*) from (select extract(year from v.date), (extract(month from v.date)::int + 1) / 2 from vouchers v
+           join postings p on p.voucher_id = v.id where p.account_number in (2700, 2710)
+           group by 1, 2 having (make_date(min(extract(year from v.date))::int, ((min(extract(month from v.date))::int + 1) / 2) * 2, 1)
+                                 + interval '1 month - 1 day') < (select max(date) from vouchers)) t"""), f"{n_terms} terms")
+    check("settlement voucher sits on the last calendar day of the term", local.one(
+        """select count(*) from vat_settlements vs join vouchers v on v.id = vs.voucher_id
+           where v.date <> vs.period_end or vs.period_end <> (date_trunc('month', vs.period_end) + interval '1 month - 1 day')::date""") == 0)
+    check("settlement amounts == the VAT turnover of the term (2700 credits, 2710 debits, settlements excluded)", local.one(
+        """select count(*) from vat_settlements vs where
+             vs.output_vat <> (select coalesce(-sum(p.amount), 0) from postings p join vouchers v on v.id = p.voucher_id
+                               where p.account_number = 2700 and v.date between vs.period_start and vs.period_end and v.id <> vs.voucher_id)
+          or vs.input_vat  <> (select coalesce(sum(p.amount), 0) from postings p join vouchers v on v.id = p.voucher_id
+                               where p.account_number = 2710 and v.date between vs.period_start and vs.period_end and v.id <> vs.voucher_id)
+          or vs.balance <> vs.output_vat - vs.input_vat""") == 0)
+    check("payment date: the due date (10.04/10.06/31.08/10.10/10.12/10.02 next year) moved to a working day", local.one(
+        """select count(*) from vat_settlements vs where vs.payment_date <> (
+             with due as (select make_date(vs.period_year + (vs.term = 6)::int,
+                                           (array[4, 6, 8, 10, 12, 2])[vs.term], (array[10, 10, 31, 10, 10, 10])[vs.term]) as d)
+             select d + (case extract(isodow from d) when 6 then 2 when 7 then 1 else 0 end) from due)""") == 0)
+    check("VAT payment/refund: one bank transaction per due settlement, right direction, right amount, on its payment date", local.one(
+        """select count(*) from vat_settlements vs where vs.balance <> 0 and vs.payment_date <= current_date and
+             (select count(*) from bank_transactions b where b.vat_settlement_id = vs.id) <> 1""") == 0
+        and local.one(
+        """select count(*) from bank_transactions b join vat_settlements vs on vs.id = b.vat_settlement_id
+           where b.date <> vs.payment_date or b.amount <> abs(vs.balance)
+              or (b.transaction_type = 'OUTGOING') <> (vs.balance > 0)""") == 0)
+    check("settlement status: PAID <=> paid (or nothing to pay); UNPAID only while the payment date is ahead", local.one(
+        """select count(*) from vat_settlements vs where
+             (vs.status = 'PAID') <> (vs.balance = 0 or exists (select 1 from bank_transactions b where b.vat_settlement_id = vs.id))
+          or (vs.status = 'UNPAID' and vs.payment_date <= current_date)""") == 0)
+    bal_2740 = f(local.one("select coalesce(sum(amount), 0) from postings where account_number = 2740"))
+    open_vat = f(local.one("select coalesce(sum(balance), 0) from vat_settlements where status = 'UNPAID'"))
+    check("balance of 2740 == -(balances of settlements still UNPAID), to the cent", abs(bal_2740 + open_vat) < 0.005,
+          f"2740 balance {bal_2740:,.2f} | open settlements {open_vat:,.2f}")
+    check("2700 and 2710 hold only the unsettled (current) term: zero up to the last settlement day", local.one(
+        """select count(*) from (select p.account_number from postings p join vouchers v on v.id = p.voucher_id
+           where p.account_number in (2700, 2710) and v.date <= (select max(period_end) from vat_settlements)
+           group by p.account_number having abs(sum(p.amount)) > 0.005) t""") == 0)
+    open_terms = local.all("""select period_year || '-T' || term, balance, payment_date from vat_settlements where status = 'UNPAID' order by period_end""")
+    print("\nVAT settlements still open (payment ahead):", [(a, f(b), str(c)) for a, b, c in open_terms])
     print()
     check("every bank transaction has its voucher", local.one("select count(*) from bank_transactions where voucher_id is null") == 0)
 

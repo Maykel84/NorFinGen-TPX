@@ -46,6 +46,7 @@ from typing import Optional
 
 from norfingen.generators.sales_voucher import order_gross_amount
 from norfingen.generators.salary_generator import ACCOUNT_FORSKUDDSTREKK, ACCOUNT_SKYLDIG_AGA, ACCOUNT_SKYLDIG_LONN
+from norfingen.generators.vat_settlement import build_vat_payment
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
 from norfingen.models.base import TripletexRef
@@ -53,6 +54,7 @@ from norfingen.models.cogs_payable import CogsPayable
 from norfingen.models.order import Order, OrderStatus
 from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
+from norfingen.models.vat_settlement import VatSettlement
 from norfingen.seed.roster import customer_by_id
 from norfingen.seed.workdays import next_working_day
 
@@ -137,6 +139,7 @@ def generate_daily_bank_transactions(
     orders: list[Order],
     supplier_invoices: list[SupplierInvoice],
     cogs_payables: list[CogsPayable] = (),
+    vat_settlements: list[VatSettlement] = (),
 ) -> list[tuple[BankTransaction, Voucher]]:
     """Generates bank payments falling exactly on a given day — matches
     among the `orders`/`supplier_invoices` from previous months (payment
@@ -172,6 +175,11 @@ def generate_daily_bank_transactions(
     for payable in cogs_payables:
         if next_working_day(payable.payment_due_date) == today:
             results.append(build_cogs_payment(payable))
+
+    # Phase 5: the VAT return of a term is paid (or refunded) on its payment date (already a working day).
+    for settlement in vat_settlements:
+        if settlement.payment_date == today and settlement.balance != 0:
+            results.append(build_vat_payment(settlement))
 
     return results
 

@@ -43,7 +43,7 @@ def digest(rows) -> str:
 
 
 def build(cutoff: date = CUTOFF) -> dict:
-    orders, invoices, opex, salary_v, salary_v_legacy, hours, sales_v, cogs = [], [], [], [], [], [], [], []
+    orders, invoices, opex, opex_amounts, cogs_amounts, salary_v, salary_v_legacy, hours, sales_v, cogs = ([] for _ in range(10))
     gross = 0.0
     gl_revenue = 0.0
     for year, month in months_range(START, cutoff):
@@ -64,10 +64,13 @@ def build(cutoff: date = CUTOFF) -> dict:
         for v in generate_monthly_opex(year, month):
             if is_date_generatable(v.date, cutoff):
                 opex.append((v.date.isoformat(), v.description, tuple((p.account.number, p.amount) for p in v.postings)))
+                opex_amounts.append((v.description, tuple((p.account.number, p.amount) for p in v.postings)))
                 payable = cogs_payable_for(v)  # phase 4
                 if payable is not None:
                     cogs.append((payable.accrual_date.isoformat(), payable.payment_due_date.isoformat(),
                                  payable.account_number, payable.supplier_id, payable.amount_currency))
+                    cogs_amounts.append((payable.account_number, payable.supplier_id, payable.description,
+                                         payable.amount_currency))
         if should_generate_monthly_salary(year, month, cutoff):
             txn, vouchers = generate_monthly_salary(year, month)
             for v in vouchers:
@@ -90,8 +93,10 @@ def build(cutoff: date = CUTOFF) -> dict:
     return {
         "orders": (len(orders), digest(orders)),
         "supplier_invoices": (len(invoices), digest(invoices)),
-        "opex_vouchers": (len(opex), digest(opex)),
-        "cogs_payables": (len(cogs), digest(cogs)),  # phase 4: one per 4291/4292 accrual
+        "opex_vouchers": (len(opex), digest(opex)),  # dates + descriptions + postings (re-pinned in phase 5)
+        "opex_amounts": (len(opex_amounts), digest(opex_amounts)),  # descriptions + postings, NO dates (frozen)
+        "cogs_payables": (len(cogs), digest(cogs)),  # phase 4: one per 4291/4292 accrual (dates included)
+        "cogs_payable_amounts": (len(cogs_amounts), digest(cogs_amounts)),  # no dates (frozen)
         "sales_vouchers": (len(sales_v), digest(sales_v)),  # phase 3: Dr 1500 / Cr 3000 / Cr 2700 per invoice
         "revenue_in_gl": round(gl_revenue, 2),
         "salary_vouchers": (len(salary_v_legacy), digest(salary_v_legacy)),  # accounts mapped back: the pre-phase-1 hash

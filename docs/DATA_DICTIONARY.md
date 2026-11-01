@@ -1,6 +1,6 @@
 # NorFinGen — Data Dictionary
 
-Description of all 21 tables in the Supabase schema (`src/norfingen/db/schema.sql`). Default currency: **NOK**. All tables have RLS enabled (Phase 1) — access from `run_backfill.py`/`run_daily.py` goes through the `postgres` role (bypasses RLS), read-only access through the `analyst` role.
+Description of all 22 tables in the Supabase schema (`src/norfingen/db/schema.sql`). Default currency: **NOK**. All tables have RLS enabled (Phase 1) — access from `run_backfill.py`/`run_daily.py` goes through the `postgres` role (bypasses RLS), read-only access through the `analyst` role.
 
 **The ledger now holds the sales side too (accounting phase 3, `docs/SPEC_poprawki_ksiegowe.md`).** In real Tripletex `Order.invoiceDate` automatically creates a sales Voucher; NorFinGen does not call the API, so until phase 3 that Voucher did not exist locally and `vouchers`/`postings` held only costs and customer payments (account 1500 stood at -185 mln NOK). Now every invoice books `Dr 1500 Kundefordringer (gross) / Cr 3000 Salgsinntekt (net) / Cr 2700 Utgående merverdiavgift (VAT)` on its invoice date - a voucher of type `OUTGOING_INVOICE`, weekends included. Revenue is still read from `orders`/`order_lines` in the BI views and in `PL_miesiecznie` (the cost side sums only accounts 4000-7999, so nothing is counted twice); the ledger's Cr 3000 equals that revenue in every month, to the grosz, and that equality is a test (gl_checks T4), not a coincidence.
 
@@ -318,6 +318,7 @@ Business meaning: a single line of an accounting entry (DR/CR). For cost analysi
 | customer_id / supplier_id | INTEGER (FK) | Populated depending on direction |
 | order_id / supplier_invoice_id | INTEGER (FK) | The linked source document |
 | **salary_transaction_id** | INTEGER (FK) | → salary_transactions.id — populated for OUTGOING rows that are payroll payouts (addendum: "Fix: orphaned records + payroll OUTGOING") |
+| **vat_settlement_id** | INTEGER (FK) | → vat_settlements.id — populated for the payment (OUTGOING) or refund (INCOMING) of a VAT term (accounting phase 5); UNIQUE with `(date, transaction_type)` where not NULL |
 | **cogs_payable_id** | INTEGER (FK) | → cogs_payables.id — populated for OUTGOING rows that pay a COGS pass-through liability (accounting phase 4); UNIQUE with `(date, transaction_type)` where not NULL |
 | account_from, account_to | INTEGER | GL accounts: INCOMING 1500→1910, OUTGOING (supplier) 1910→2400, OUTGOING (payroll) 1910→2930 |
 | voucher_id | INTEGER (FK) | → vouchers.id (of type BANK) |
@@ -409,6 +410,23 @@ The supplier ledger therefore reconciles as: **balance of 2400 = -(UNPAID purcha
 
 RLS on, read-only policy for `analyst`, like every other table.
 
+### vat_settlements
+| Column | Type | Description |
+|---|---|---|
+| id | SERIAL (PK) | |
+| voucher_id | INTEGER (FK, UNIQUE, CASCADE) | → vouchers.id - the settlement voucher (MANUAL, `MVA-oppgjør termin N YYYY (måned–måned)`) dated on the last day of the term |
+| period_year, term | INTEGER | The year and the term 1..6 (jan-feb, mar-apr, may-jun, jul-aug, sep-oct, nov-dec); UNIQUE together |
+| period_start, period_end | DATE | First and last calendar day of the term |
+| payment_date | DATE | The due date moved to the next working day: term 1 → 10 Apr, 2 → 10 Jun, 3 → 31 Aug, 4 → 10 Oct, 5 → 10 Dec, 6 → 10 Feb of the NEXT year |
+| output_vat | NUMERIC(14,2) | Credit turnover of 2700 in the term (read from the ledger, settlement vouchers excluded), positive |
+| input_vat | NUMERIC(14,2) | Debit turnover of 2710 in the term, positive |
+| balance | NUMERIC(14,2) | `output_vat - input_vat`: > 0 is paid to the tax authority, < 0 is refunded (the company's very first term, jan-feb 2019, is a refund: costs, no sales yet) |
+| status | TEXT | `UNPAID` until the booked bank transaction (`bank_transactions.vat_settlement_id`) flips it to `PAID`; a term whose balance is exactly 0 is `PAID` from the start |
+
+Business meaning (accounting phase 5): before it, 2700 and 2710 only ever grew (53 mln NOK output VAT, 3.8 mln input VAT) and nothing was settled with the tax authority. Now, as in Tripletex, each term is closed in two steps. **Last day of the term** (30 Apr for mar-apr): `Dr 2700 output / Cr 2710 input / Cr 2740 difference` (Dr 2740 for a refund) - 2700 and 2710 are back to zero for that term. **Payment date** (10 Jun): `Dr 2740 / Cr 1910` (refund: `Dr 1910 / Cr 2740`). The balance of 2740 is therefore exactly the sum of the settlements still `UNPAID` (on 2026-11-01: 1 928 491,64 = term 2026-T5, due 10 Dec 2026); 2700/2710 hold only the term in progress. The totals are read from the ledger, not recomputed from invoices. Export sheet `Rozliczenia_MVA`; `gl_checks.sql` T12 (2700/2710 = 0 after the term) and T13 (2740 = 0 per term after its payment date).
+
+RLS on, read-only policy for `analyst`, like every other table.
+
 ---
 
 ## Phase 7 — the random life-events layer
@@ -463,7 +481,7 @@ Pure multipliers with no randomness: `fellesferie_activity_multiplier` (July x0.
 
 Two roles, layered:
 
-- **`analyst`** (`NOLOGIN`) — purely technical, defines the target privilege set: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**21/21 tables with an active RLS policy `USING (true)`** — see "Security audit" below, previously 6 reference tables had no RLS at all) + `ALTER DEFAULT PRIVILEGES` (future tables automatically readable, no manual GRANT needed on each migration).
+- **`analyst`** (`NOLOGIN`) — purely technical, defines the target privilege set: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**22/22 tables with an active RLS policy `USING (true)`** — see "Security audit" below, previously 6 reference tables had no RLS at all) + `ALTER DEFAULT PRIVILEGES` (future tables automatically readable, no manual GRANT needed on each migration).
 - **`powerbi_reader`** (`LOGIN`, `CONNECTION LIMIT 3`) — the real role for actually logging in from Power BI (or any other BI tool). Inherits the full set of `analyst`'s privileges/policies via `GRANT analyst TO powerbi_reader` — nothing is duplicated. Created/rotated by `scripts/setup_powerbi_reader.py` (password generated randomly on every run, printed ONLY to stdout, never lands in the repo/`.env`).
 - **`demo_reader`** (`LOGIN`, `CONNECTION LIMIT 2`, `statement_timeout=10s`) — publicly available test access (`docs/API_ACCESS.md`). A separate role from `powerbi_reader` (independent rotation/revocation), but the same `analyst` inheritance mechanism. **Since 2026-09-04 this is also the role the REST API service (`api/`) connects as** — the only role used by `api/db.py` for data queries, never `service_role`/`postgres`.
 - **`api_key_manager`** (`LOGIN`, `CONNECTION LIMIT 5`, `statement_timeout=10s`, 2026-09-04) — does NOT inherit `analyst`, has no access to any table besides `api_keys`/`export_requests` (`GRANT SELECT, INSERT, UPDATE` on `api_keys`, `GRANT SELECT, INSERT` on `export_requests`). Used by `api/auth.py` (key validation + rate limiting), `api/routers/keys.py` (self-service key generation — `INSERT` added in the self-service portal session), and `api/routers/export.py` (the `export_requests` counter). See `scripts/setup_api_backend.py`.

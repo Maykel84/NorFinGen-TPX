@@ -1,7 +1,7 @@
 -- =====================================================================
 -- NorFinGen: testy akceptacyjne księgowania (PostgreSQL / DuckDB)
 -- Tabele = eksporty: gl (Postingi_GL), sales (Faktury_sprzedazy),
---   purch (Faktury_zakupu), cogs (Zobowiazania_COGS, faza 4), pay (Payroll_per_pracownik)
+--   purch (Faktury_zakupu), cogs (Zobowiazania_COGS, faza 4), vat (Rozliczenia_MVA, faza 5), pay (Payroll_per_pracownik)
 -- Każdy test zwraca 0 wierszy = PASS (chyba że opis mówi inaczej).
 -- Założenie: kwoty Wn dodatnie, Ma ujemne (jak w obecnym eksporcie).
 -- =====================================================================
@@ -96,7 +96,11 @@ WHERE COALESCE(w.wn_2940, 0) <= 0;
 SELECT 'T10' AS test, MAX(date) AS ostatni_koszt
 FROM gl
 WHERE (account_number BETWEEN 4000 AND 4999 OR account_number BETWEEN 6000 AND 7999)
-HAVING COALESCE(MAX(date), DATE '1900-01-01') < (SELECT MAX(date) FROM gl) - INTERVAL '7 days';
+HAVING COALESCE(MAX(date), DATE '1900-01-01') < (SELECT MAX(date) FROM gl) - INTERVAL '14 days';
+-- (Faza 5: próg 7 -> 14 dni. Koszty mają teraz realne daty (koniec miesiąca, 5.-25. dzień roboczy, daty faktur), więc zdarza się
+--  przerwa bez żadnego kosztu: w historii najdłuższa to 10 dni, a 200 z 2862 dni ma przerwę > 7. Test ma łapać brak kosztów w bieżącym
+--  miesiącu (październik 2026 przed fazą 0.5b: 31 dni bez kosztów), a nie zwykłą przerwę między końcem miesiąca a 5. dniem.
+--  Test rzeczywistej gęstości: tests/verify_regeneration.py liczy przerwę dla KAŻDEGO dnia historii.)
 
 -- T11: typy i puste kolumny
 SELECT 'T11' AS test, 'purch.postal_code w 100% pusta' AS problem
@@ -104,6 +108,34 @@ WHERE (SELECT COUNT(postal_code) FROM purch) = 0
 UNION ALL
 SELECT 'T11', 'gl.employee_id w 100% pusta (SALARY)'
 WHERE (SELECT COUNT(employee_id) FROM gl WHERE voucher_type = 'SALARY') = 0;
+
+-- T12 (faza 5): rozliczenie MVA, krok 1 — po ostatnim dniu terminu salda 2700 i 2710 ZA TEN OKRES = 0.
+--     (a) dla każdego rozliczonego terminu suma postingów na 2700 i 2710 z dat okresu (razem z voucherem rozliczenia) = 0;
+--     (b) każdy zakończony termin, w którym było jakiekolwiek MVA, MA wiersz w vat (nie został pominięty).
+SELECT 'T12' AS test, v.term AS termin, g.account_number AS konto, ROUND(SUM(g.amount), 2) AS saldo
+FROM vat v JOIN gl g ON g.date BETWEEN v.period_start AND v.period_end AND g.account_number IN (2700, 2710)
+GROUP BY v.term, g.account_number
+HAVING ABS(SUM(g.amount)) > 0.005
+UNION ALL
+SELECT 'T12', EXTRACT(YEAR FROM date) || '-T' || ((EXTRACT(MONTH FROM date)::int + 1) / 2), account_number, ROUND(SUM(amount), 2)
+FROM gl
+WHERE account_number IN (2700, 2710)
+GROUP BY EXTRACT(YEAR FROM date), (EXTRACT(MONTH FROM date)::int + 1) / 2, account_number
+HAVING (MAKE_DATE(EXTRACT(YEAR FROM MIN(date))::int, ((EXTRACT(MONTH FROM MIN(date))::int + 1) / 2) * 2, 1) + INTERVAL '1 month - 1 day')
+           < (SELECT MAX(date) FROM gl)
+   AND NOT EXISTS (SELECT 1 FROM vat v WHERE v.term = EXTRACT(YEAR FROM MIN(date)) || '-T' || ((EXTRACT(MONTH FROM MIN(date))::int + 1) / 2));
+
+-- T13 (faza 5): rozliczenie MVA, krok 2 — po terminie płatności saldo 2740 ZA TEN OKRES = 0 i status PAID.
+--     Powiązanie postingów z terminem: opis vouchera rozliczenia i płatności zawiera "termin N RRRR".
+--     (Saldo skumulowane nie nadaje się: termin 4 jest rozliczany 31.08, zanim termin 3 zostanie zapłacony 2.09.)
+--     Termin z saldem 0 nie ma płatności (status PAID od razu) i nie ma postingów na 2740 — też przechodzi.
+SELECT 'T13' AS test, v.term AS termin, v.status, ROUND(COALESCE(SUM(g.amount), 0), 2) AS saldo_2740
+FROM vat v
+LEFT JOIN gl g ON g.account_number = 2740
+              AND g.description LIKE '%termin ' || SPLIT_PART(v.term, '-T', 2) || ' ' || SPLIT_PART(v.term, '-T', 1) || ' (%'
+WHERE v.payment_date <= (SELECT MAX(date) FROM gl)
+GROUP BY v.term, v.status
+HAVING ABS(COALESCE(SUM(g.amount), 0)) > 0.005 OR v.status <> 'PAID';
 
 -- REGRESJA (faza 0.5a; reguła z decyzji (c) w SPEC, zastępuje pierwotne 211 624 547 na 2026-10-30,
 -- które nie uwzględniało faktur weekendowych gubionych przez przebieg dzienny).

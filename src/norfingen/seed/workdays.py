@@ -26,3 +26,12 @@ def next_working_day(d: date) -> date:
     while not is_working_day(d):
         d += timedelta(days=1)
     return d
+
+
+def previous_working_day(d: date) -> date:
+    """`d` itself if it is a working day, otherwise the preceding Friday.
+
+    For costs booked "by month end" or "mid-month": a weekend date moves BACK so the entry stays in its month."""
+    while not is_working_day(d):
+        d -= timedelta(days=1)
+    return d

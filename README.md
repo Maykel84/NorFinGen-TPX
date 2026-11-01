@@ -102,6 +102,16 @@ may be real, named companies; customers are always fictional. See
 - **Payroll liabilities have their own accounts** (2930 net pay, 2600 withheld tax, 2770 AGA, 2940 feriepenger
   provision); 2700/2710/2740 are reserved for VAT, as in NS 4102.
 
+- **Operating costs are booked on realistic days** (not all on the 1st): canteen subsidy, mileage reimbursement and the
+  COGS accruals (4291/4292) on the last working day of the month (with payroll), representation on a reproducible
+  random working day 5-25, conference trips and the one-off cost spike on a random working day 8-25, customer
+  equipment on the onboarding date (a weekend moves back to Friday). Never on a weekend. The amounts did not change
+  (`opex_amounts` in the golden hash is frozen); the longest stretch without any cost posting is 10 days.
+- **VAT is settled every two months** (mva-oppgjør): on the last day of the term 2700/2710 are moved to 2740, the
+  difference is paid (or refunded) on 10 Apr / 10 Jun / 31 Aug / 10 Oct / 10 Dec / 10 Feb, moved to a working day.
+  See `vat_settlements` in the data dictionary and the `Rozliczenia_MVA` export sheet. The VAT return is treated as
+  always filed on time (no late fees, no corrections).
+
 ## Backlog (deliberately deferred)
 
 Decisions taken while fixing the accounting model (see [docs/SPEC_poprawki_ksiegowe.md](docs/SPEC_poprawki_ksiegowe.md)):

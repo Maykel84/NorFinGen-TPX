@@ -118,7 +118,7 @@ def test_two_payables_falling_due_the_same_day_are_both_paid():
 def test_what_is_left_on_2400_after_the_payments_is_exactly_the_unpaid_payables():
     """gl_checks T8, COGS part, at the source: accruals credited minus payments debited, up to a given day, equals the payables
     not yet paid - so the test can add them to the expected balance (variant B)."""
-    today = date(2026, 11, 1)  # a Sunday: the Oct-1 accrual falls due on Saturday 31 Oct and is paid Monday 2 Nov
+    today = date(2026, 11, 1)  # a Sunday; accruals are booked on the last working day: Sep-30 fell due 30 Oct and is paid
     accrued = paid = unpaid = 0.0
     open_accruals = set()
     for voucher, payable in _accruals():
@@ -131,7 +131,7 @@ def test_what_is_left_on_2400_after_the_payments_is_exactly_the_unpaid_payables(
             unpaid += payable.amount_currency
             open_accruals.add(payable.accrual_date)
     assert round(accrued - paid - unpaid, 2) == 0
-    assert open_accruals == {date(2026, 10, 1), date(2026, 11, 1)}   # exactly the two latest months are still open
+    assert open_accruals == {date(2026, 10, 30)}   # only October is open: due Sun 29 Nov, paid Mon 30 Nov (the November accrual is 30 Nov)
 
 
 def test_l09_is_a_cogs_only_supplier_kept_out_of_the_invoice_and_renegotiation_lists():

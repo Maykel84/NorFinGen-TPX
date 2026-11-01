@@ -38,6 +38,7 @@ from norfingen.generators.voucher import Voucher  # noqa: E402
 from norfingen.generators.opex_generator import cogs_payable_for  # noqa: E402
 from norfingen.models.bank_transaction import BankTransactionType  # noqa: E402
 from norfingen.models.cogs_payable import CogsPayableStatus  # noqa: E402
+from norfingen.models.vat_settlement import VatSettlementStatus  # noqa: E402
 from norfingen.models.order import OrderStatus  # noqa: E402
 from norfingen.models.supplier_invoice import SupplierInvoice  # noqa: E402
 from norfingen.seed.roster import customer_by_id  # noqa: E402
@@ -176,6 +177,8 @@ class FakeStore:
         self.unpaid = set()
         self.vouchers = {}        # (date, description) -> Voucher   (ON CONFLICT (date, description) DO NOTHING)
         self.cogs = {}            # payable id -> CogsPayable (UNPAID until its payment is booked)
+        self.vat = {}             # (year, term) -> VatSettlement (UNPAID until its payment is booked)
+        self.vat_vouchers = {}    # (year, term) -> settlement Voucher
         self.payments = {}        # unique key -> BankTransaction
         self._next_id = 1
         for order in seed_orders:
@@ -228,13 +231,41 @@ class FakeStore:
         return [p for p in self.cogs.values()
                 if p.status == CogsPayableStatus.UNPAID and start <= p.payment_due_date <= as_of]
 
+    def get_vat_period_totals(self, start, end):
+        out = inp = 0.0
+        for v in self.vouchers.values():           # settlement vouchers live elsewhere (self.vat_vouchers)
+            if start <= v.date <= end:
+                for p in v.postings:
+                    if p.account.number == 2700:
+                        out -= p.amount
+                    elif p.account.number == 2710:
+                        inp += p.amount
+        return round(out, 2), round(inp, 2)
+
+    def save_vat_settlement(self, voucher, settlement):
+        key = (settlement.period_year, settlement.term)
+        if key in self.vat:
+            return  # ON CONFLICT DO NOTHING
+        self.vat_vouchers[key] = voucher
+        self.vat[key] = settlement.model_copy(update={"id": self._next_id})
+        self._next_id += 1
+
+    def get_unpaid_vat_settlements(self, as_of, lookback_days=14):
+        start = as_of - timedelta(days=lookback_days)
+        return [s for s in self.vat.values() if s.status == VatSettlementStatus.UNPAID and start <= s.payment_date <= as_of]
+
     def save_bank_transactions(self, pairs):
         for transaction, _voucher in pairs:
             key = (transaction.transaction_type, transaction.order_id, transaction.supplier_invoice_id,
-                   transaction.salary_transaction_id, transaction.cogs_payable_id, transaction.date)
+                   transaction.salary_transaction_id, transaction.cogs_payable_id, transaction.vat_settlement_id,
+                   transaction.date)
             self.payments.setdefault(key, transaction)
             if transaction.transaction_type == BankTransactionType.OUTGOING and transaction.supplier_invoice_id:
                 self.unpaid.discard(transaction.supplier_invoice_id)
+            if transaction.vat_settlement_id:
+                for k, s in self.vat.items():
+                    if s.id == transaction.vat_settlement_id:
+                        self.vat[k] = s.model_copy(update={"status": VatSettlementStatus.PAID})
             if transaction.transaction_type == BankTransactionType.OUTGOING and transaction.cogs_payable_id:
                 payable = self.cogs[transaction.cogs_payable_id]
                 self.cogs[transaction.cogs_payable_id] = payable.model_copy(update={"status": CogsPayableStatus.PAID})
@@ -251,6 +282,8 @@ class FakeStore:
             get_orders_for_payment_window=self.get_orders_for_payment_window,
             get_unpaid_supplier_invoices=self.get_unpaid_supplier_invoices,
             get_unpaid_cogs_payables=self.get_unpaid_cogs_payables, save_cogs_accrual=self.save_cogs_accrual,
+            get_vat_period_totals=self.get_vat_period_totals, save_vat_settlement=self.save_vat_settlement,
+            get_unpaid_vat_settlements=self.get_unpaid_vat_settlements,
             save_orders=self.save_orders, save_all=self.save_all, save_bank_transactions=self.save_bank_transactions,
             save_hour_entries=MagicMock(), save_salary=self.save_salary,
         )
@@ -272,9 +305,10 @@ def _seed():
     return orders, invoices
 
 
-def _run(schedule_days):
+def _run(schedule_days, start=None):
+    start = start or WINDOW_START
     orders, invoices = _seed()
-    store = FakeStore(orders, invoices, watermark=WINDOW_START - timedelta(days=1))
+    store = FakeStore(orders, invoices, watermark=start - timedelta(days=1))
     with patch.multiple(run_daily_module, **store.patches()):
         for day in schedule_days:
             run_daily_module.run_catch_up(today=day)
@@ -416,7 +450,46 @@ def test_no_cogs_payment_is_lost_or_duplicated(weekdays_only_store):
         assert len(got) == 1, f"COGS payable {payable.description} due {payable.payment_due_date}: {len(got)} payments"
         assert got[0].date == due and got[0].amount == payable.amount_currency
         assert payable.status == CogsPayableStatus.PAID
-    assert checked >= 4          # two accounts, 2024-01 / 02 accruals fall due in the window
+    assert checked >= 2          # two accounts; the 2024-02-29 accruals fall due 30 Mar (Saturday) and are paid Monday 1 Apr
     for pid, payable in store.cogs.items():  # nothing is paid before it is due
         for t in payments.get(pid, []):
             assert t.date >= payable.payment_due_date
+
+
+# ---------------------------------------------------------------- phase 5: VAT settlement through the real pipeline
+
+VAT_WINDOW_START = date(2024, 6, 3)    # term 3 (may-jun) ends on SUNDAY 30 Jun 2024; due 31 Aug (Saturday) -> paid Mon 2 Sep
+VAT_WINDOW_END = date(2024, 9, 3)      # a Tuesday
+
+
+@pytest.fixture(scope="module")
+def vat_stores():
+    weekdays = _run(_days(VAT_WINDOW_START, VAT_WINDOW_END, working_only=True), start=VAT_WINDOW_START)
+    every_day = _run(_days(VAT_WINDOW_START, VAT_WINDOW_END, working_only=False), start=VAT_WINDOW_START)
+    return weekdays, every_day
+
+
+def test_vat_term_is_settled_on_its_last_calendar_day_even_when_that_is_a_sunday(vat_stores):
+    weekdays, every_day = vat_stores
+    assert (2024, 3) in weekdays.vat and (2024, 3) in every_day.vat
+    voucher = weekdays.vat_vouchers[(2024, 3)]
+    assert voucher.date == date(2024, 6, 30)              # a Sunday: the Monday catch-up books it with its own date
+    assert (weekdays.vat[(2024, 3)].output_vat, weekdays.vat[(2024, 3)].input_vat) == (
+        every_day.vat[(2024, 3)].output_vat, every_day.vat[(2024, 3)].input_vat)
+    assert weekdays.vat[(2024, 3)].output_vat > 0
+    # term 4 (jul-aug) closes on Saturday 31 Aug and is caught up by the Monday run, with its own date
+    assert weekdays.vat_vouchers[(2024, 4)].date == date(2024, 8, 31)
+    assert weekdays.vat[(2024, 4)].period_end == every_day.vat[(2024, 4)].period_end == date(2024, 8, 31)
+
+
+def test_vat_payment_is_booked_once_on_the_working_day_after_a_weekend_due_date(vat_stores):
+    for store in vat_stores:
+        settlement = store.vat[(2024, 3)]
+        assert settlement.payment_date == date(2024, 9, 2)          # 31 Aug is a Saturday
+        payments = [t for t in store.payments.values() if t.vat_settlement_id == settlement.id]
+        assert len(payments) == 1
+        payment = payments[0]
+        assert payment.date == date(2024, 9, 2) and is_working_day(payment.date)
+        assert payment.amount == abs(settlement.balance)
+        assert (payment.transaction_type == BankTransactionType.OUTGOING) == (settlement.balance > 0)
+        assert settlement.status == VatSettlementStatus.PAID

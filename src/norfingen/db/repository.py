@@ -35,6 +35,7 @@ from norfingen.generators.bank_transaction_generator import OVERDUE_PAYMENT_DELA
 from norfingen.generators.voucher import Voucher
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
 from norfingen.models.cogs_payable import CogsPayable, CogsPayableStatus
+from norfingen.models.vat_settlement import VatSettlement, VatSettlementStatus
 from norfingen.models.base import TripletexRef
 from norfingen.models.hours import HourEntry
 from norfingen.models.order import Order, OrderLine, OrderStatus
@@ -590,9 +591,9 @@ def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Option
     cur.execute(
         """INSERT INTO bank_transactions
                (date, amount, transaction_type, description, customer_id, supplier_id,
-                order_id, supplier_invoice_id, salary_transaction_id, cogs_payable_id,
+                order_id, supplier_invoice_id, salary_transaction_id, cogs_payable_id, vat_settlement_id,
                 account_from, account_to, voucher_id)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT DO NOTHING""",
         (
             transaction.date,
@@ -605,6 +606,7 @@ def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Option
             transaction.supplier_invoice_id,
             transaction.salary_transaction_id,
             transaction.cogs_payable_id,
+            transaction.vat_settlement_id,
             transaction.account_from,
             transaction.account_to,
             voucher_id,
@@ -632,6 +634,11 @@ def save_bank_transactions(transactions: list[tuple[BankTransaction, Voucher]]) 
                 cur.execute(
                     "UPDATE cogs_payables SET status = 'PAID' WHERE id = %s",
                     (transaction.cogs_payable_id,),
+                )
+            if transaction.vat_settlement_id is not None:  # a payment OR a refund: either way the term is closed
+                cur.execute(
+                    "UPDATE vat_settlements SET status = 'PAID' WHERE id = %s",
+                    (transaction.vat_settlement_id,),
                 )
     conn.commit()
 
@@ -706,6 +713,66 @@ def get_unpaid_cogs_payables(as_of: date, lookback_days: Optional[int] = None) -
             status=CogsPayableStatus.UNPAID,
         )
         for pid, accrual_date, due, account, supplier_id, description, amount in rows
+    ]
+
+
+def get_vat_period_totals(period_start: date, period_end: date) -> tuple[float, float]:
+    """(output VAT, input VAT) booked in the ledger in [period_start, period_end], both positive: the credit turnover of
+    2700 and the debit turnover of 2710. The settlement vouchers themselves are left out, so the figures are the same
+    before and after a term has been settled (re-running a day cannot change them)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT COALESCE(SUM(CASE WHEN p.account_number = 2700 THEN -p.amount END), 0),
+                      COALESCE(SUM(CASE WHEN p.account_number = 2710 THEN p.amount END), 0)
+               FROM postings p JOIN vouchers v ON v.id = p.voucher_id
+               WHERE p.account_number IN (2700, 2710) AND v.date BETWEEN %s AND %s
+                 AND NOT EXISTS (SELECT 1 FROM vat_settlements s WHERE s.voucher_id = v.id)""",
+            (period_start, period_end),
+        )
+        output_vat, input_vat = cur.fetchone()
+    conn.commit()
+    return round(float(output_vat), 2), round(float(input_vat), 2)
+
+
+def save_vat_settlement(voucher: Voucher, settlement: VatSettlement) -> None:
+    """Saves the settlement voucher together with its VatSettlement in one transaction. Idempotent: the voucher is
+    unique on (date, description), the settlement on voucher_id (and on (period_year, term))."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        voucher_id = _save_voucher(cur, voucher)
+        cur.execute(
+            """INSERT INTO vat_settlements
+                   (voucher_id, period_year, term, period_start, period_end, payment_date,
+                    output_vat, input_vat, balance, status)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT DO NOTHING""",
+            (voucher_id, settlement.period_year, settlement.term, settlement.period_start, settlement.period_end,
+             settlement.payment_date, settlement.output_vat, settlement.input_vat, settlement.balance,
+             settlement.status.value),
+        )
+    conn.commit()
+
+
+def get_unpaid_vat_settlements(as_of: date, lookback_days: int = 14) -> list[VatSettlement]:
+    """UNPAID settlements whose payment date falls in [as_of - lookback_days, as_of] - the same contract as
+    get_unpaid_cogs_payables(): the payment flips the status, so a settlement never shows up twice."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id, period_year, term, period_start, period_end, payment_date, output_vat, input_vat, balance
+               FROM vat_settlements
+               WHERE status = 'UNPAID' AND payment_date BETWEEN %s AND %s""",
+            (as_of - timedelta(days=lookback_days), as_of),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return [
+        VatSettlement(
+            id=sid, period_year=year, term=term, period_start=start, period_end=end, payment_date=pay,
+            output_vat=float(out), input_vat=float(inp), balance=float(balance), status=VatSettlementStatus.UNPAID,
+        )
+        for sid, year, term, start, end, pay, out, inp, balance in rows
     ]
 
 

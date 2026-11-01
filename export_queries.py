@@ -90,6 +90,16 @@ QUERIES = {
         LEFT JOIN bank_transactions b ON b.cogs_payable_id = cp.id AND b.transaction_type = 'OUTGOING'
         ORDER BY cp.accrual_date, cp.id
     """,
+    # Phase 5: the VAT return of each two-month term. balance = output - input: > 0 is paid to the tax authority, < 0 is
+    # refunded.  status UNPAID = settled on the last day of the term, payment still ahead; paid_date = the bank booking.
+    "Rozliczenia_MVA": """
+        SELECT vs.period_year || '-T' || vs.term AS term, vs.period_start, vs.period_end,
+               vs.output_vat, vs.input_vat, vs.balance, vs.payment_date, vs.status,
+               b.date AS paid_date
+        FROM vat_settlements vs
+        LEFT JOIN bank_transactions b ON b.vat_settlement_id = vs.id
+        ORDER BY vs.period_end
+    """,
     "Payroll_miesiecznie": """
         SELECT TO_CHAR(st.date, 'YYYY-MM') AS month,
                st.date,

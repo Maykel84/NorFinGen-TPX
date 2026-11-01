@@ -67,6 +67,8 @@ from norfingen.db.repository import (  # noqa: E402
     get_orders_for_payment_window,
     get_unpaid_cogs_payables,
     get_unpaid_supplier_invoices,
+    get_unpaid_vat_settlements,
+    get_vat_period_totals,
     get_watermark,
     latest_hour_entry_date,
     save_all,
@@ -75,6 +77,7 @@ from norfingen.db.repository import (  # noqa: E402
     save_hour_entries,
     save_orders,
     save_salary,
+    save_vat_settlement,
     seed_reference_data,
     set_watermark,
 )
@@ -91,6 +94,7 @@ from norfingen.generators.day_events import (  # noqa: E402
     supplier_invoices_dated,
 )
 from norfingen.generators.sales_voucher import build_sales_voucher  # noqa: E402
+from norfingen.generators.vat_settlement import build_vat_settlement, term_bounds, term_ending_on  # noqa: E402
 from norfingen.generators.salary_generator import generate_monthly_salary  # noqa: E402
 from norfingen.generators.supplier_invoice_generator import build_voucher_for_invoice  # noqa: E402
 from norfingen.seed.payroll import active_employees, last_working_day, should_generate_monthly_salary  # noqa: E402
@@ -158,12 +162,24 @@ def process_day(target_date: date, skip_setup: bool = False) -> dict:
             save_all(voucher)
         stats["operating_costs"] += 1
 
+    # 2b. Last day of a VAT term: the balances of 2700 / 2710 move to 2740 (phase 5). After steps 1-2, so that the
+    #     invoices of the very last day of the term are in the ledger when the totals are read.
+    term = term_ending_on(target_date)
+    if term is not None:
+        start, end = term_bounds(*term)
+        built = build_vat_settlement(*term, *get_vat_period_totals(start, end))
+        if built is not None:
+            save_vat_settlement(*built)
+
     # 3. Płatności bankowe — potrzebujemy zamówień/faktur z bazy (nie tylko
     #    dzisiejszych), żeby dopasować payment_terms/payment_due_date == dzisiaj
     pending_orders = get_orders_for_payment_window(target_date)
     pending_invoices = get_unpaid_supplier_invoices(target_date)
     pending_cogs = get_unpaid_cogs_payables(target_date)
-    bank_txns = generate_daily_bank_transactions(year, month, day, pending_orders, pending_invoices, pending_cogs)
+    pending_vat = get_unpaid_vat_settlements(target_date)
+    bank_txns = generate_daily_bank_transactions(
+        year, month, day, pending_orders, pending_invoices, pending_cogs, pending_vat,
+    )
     if bank_txns:
         save_bank_transactions(bank_txns)
         stats["bank_transactions"] = len(bank_txns)

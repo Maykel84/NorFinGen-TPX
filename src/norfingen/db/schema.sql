@@ -304,6 +304,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_unique_cogs_payment
     ON bank_transactions (date, cogs_payable_id, transaction_type)
     WHERE cogs_payable_id IS NOT NULL;
 
+-- ───────────────────────────────────────── Phase 5 — VAT settlement (mva-oppgjør)
+--
+-- Six two-month terms a year. On the last day of a term the balances of 2700 / 2710 are moved to 2740 (a MANUAL
+-- voucher); the difference is paid / refunded on the term's due date. One row per settled term: the totals, the
+-- balance (output - input: > 0 to pay, < 0 refund), the planned payment date and a status that the bank transaction
+-- flips (bank_transactions.vat_settlement_id).
+CREATE TABLE IF NOT EXISTS vat_settlements (
+    id            SERIAL PRIMARY KEY,
+    voucher_id    INTEGER NOT NULL UNIQUE REFERENCES vouchers(id) ON DELETE CASCADE,
+    period_year   INTEGER NOT NULL,
+    term          INTEGER NOT NULL CHECK (term BETWEEN 1 AND 6),
+    period_start  DATE NOT NULL,
+    period_end    DATE NOT NULL,
+    payment_date  DATE NOT NULL,
+    output_vat    NUMERIC(14, 2) NOT NULL,
+    input_vat     NUMERIC(14, 2) NOT NULL,
+    balance       NUMERIC(14, 2) NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'UNPAID',
+    UNIQUE (period_year, term)
+);
+CREATE INDEX IF NOT EXISTS idx_vat_settlements_payment ON vat_settlements(payment_date) WHERE status = 'UNPAID';
+
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS vat_settlement_id INTEGER REFERENCES vat_settlements(id);
+CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_unique_vat_payment
+    ON bank_transactions (date, vat_settlement_id, transaction_type)
+    WHERE vat_settlement_id IS NOT NULL;
+
 -- ───────────────────────────────────────── Phase 0.5a — daily pipeline watermark
 --
 -- run_daily used to match events on the EXACT current date, so any day the
@@ -451,6 +478,9 @@ CREATE POLICY analyst_read_only ON projects FOR SELECT TO analyst USING (true);
 ALTER TABLE cogs_payables ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS analyst_read_only ON cogs_payables;
 CREATE POLICY analyst_read_only ON cogs_payables FOR SELECT TO analyst USING (true);
+ALTER TABLE vat_settlements ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS analyst_read_only ON vat_settlements;
+CREATE POLICY analyst_read_only ON vat_settlements FOR SELECT TO analyst USING (true);
 
 -- ─────────────────────────────────────────────────── Step 2 — read-only access (Power BI)
 --

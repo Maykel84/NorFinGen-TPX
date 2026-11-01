@@ -55,6 +55,10 @@ _COLUMNS: dict[str, list[str]] = {
         "payable_id", "accrual_date", "payment_due_date", "account_number", "supplier_id",
         "supplier_name", "description", "amount_currency", "status", "paid_date",
     ],
+    "Rozliczenia_MVA": [
+        "term", "period_start", "period_end", "output_vat", "input_vat", "balance",
+        "payment_date", "status", "paid_date",
+    ],
     "Payroll_miesiecznie": ["month", "date", "headcount", "total_net_payroll"],
     "Payroll_per_pracownik": [
         "date", "month", "employee_id", "employee_name", "department_name",
@@ -153,6 +157,18 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
             LEFT JOIN bank_transactions b ON b.cogs_payable_id = cp.id AND b.transaction_type = 'OUTGOING'
             WHERE cp.accrual_date BETWEEN $1 AND $2
             ORDER BY cp.accrual_date, cp.id
+            """,
+            params,
+        ),
+        "Rozliczenia_MVA": (
+            """
+            SELECT vs.period_year || '-T' || vs.term AS term, vs.period_start, vs.period_end,
+                   vs.output_vat, vs.input_vat, vs.balance, vs.payment_date, vs.status,
+                   b.date AS paid_date
+            FROM vat_settlements vs
+            LEFT JOIN bank_transactions b ON b.vat_settlement_id = vs.id
+            WHERE vs.period_end BETWEEN $1 AND $2
+            ORDER BY vs.period_end
             """,
             params,
         ),

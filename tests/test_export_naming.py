@@ -82,3 +82,16 @@ def test_cogs_liabilities_have_their_own_export_sheet():
     for column in columns:
         assert column in QUERIES["Zobowiazania_COGS"], column
     assert "LEFT JOIN" in QUERIES["Zobowiazania_COGS"].upper()   # an unpaid payable must not vanish from the sheet
+
+
+def test_vat_settlements_have_their_own_export_sheet():
+    """Accounting phase 5: one row per settled VAT term - term, output VAT, input VAT, balance, payment date, status. The same
+    columns in the local export and in the REST API's copy; an unpaid term must not vanish (LEFT JOIN to the bank)."""
+    from api.export_data import _COLUMNS
+
+    columns = ("term", "period_start", "period_end", "output_vat", "input_vat", "balance",
+               "payment_date", "status", "paid_date")
+    assert list(_COLUMNS["Rozliczenia_MVA"]) == list(columns)
+    for column in columns:
+        assert column.split(".")[-1] in QUERIES["Rozliczenia_MVA"], column
+    assert "LEFT JOIN" in QUERIES["Rozliczenia_MVA"].upper()

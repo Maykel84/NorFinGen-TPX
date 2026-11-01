@@ -43,7 +43,8 @@ from norfingen.generators.order_generator import apply_annual_inflation
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.base import TripletexRef
 from norfingen.models.cogs_payable import CogsPayable
-from norfingen.seed.payroll import active_employees, first_working_day_of_month
+from norfingen.seed.payroll import active_employees, first_working_day_of_month, last_working_day
+from norfingen.seed.workdays import is_working_day, next_working_day, previous_working_day
 from norfingen.seed.roster import (
     CONFERENCE_HOTEL_RATES,
     CUSTOMERS,
@@ -89,6 +90,21 @@ MONTH_NAMES_NO = [
     "januar", "februar", "mars", "april", "mai", "juni",
     "juli", "august", "september", "oktober", "november", "desember",
 ]
+
+
+def _random_working_day(year: int, month: int, first_day: int, last_day: int, key: str) -> date:
+    """A reproducible working day of the month in [first_day, last_day]. Its own stream per (month, key): the amount
+    streams are untouched, so moving a cost to another day never moves an amount (golden hash of amounts)."""
+    rng = random.Random(f"opex-date-{year}-{month}-{key}")
+    days = [date(year, month, d) for d in range(first_day, last_day + 1) if is_working_day(date(year, month, d))]
+    return rng.choice(days)
+
+
+def _onboarding_booking_date(onboarding: date) -> date:
+    """The onboarding date itself; a weekend moves to the preceding Friday, or to the following Monday when that
+    would leave the month (the monthly slice is keyed by month)."""
+    shifted = previous_working_day(onboarding)
+    return shifted if shifted.month == onboarding.month else next_working_day(onboarding)
 
 
 def _simple_cost_voucher(on_date: date, account_number: int, description: str, amount: float) -> Voucher:
@@ -205,7 +221,8 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     should_generate_service_equipment_purchase checks only the month, so
     the extra `customer.onboarding_date.year == year` condition here
     prevents the cost from repeating every year)."""
-    on_date = date(year, month, 1)
+    on_date = date(year, month, 1)  # month anchor for "who is active"; NOT the booking date of the entries below
+    month_end = last_working_day(year, month)  # payroll day: month-end entries are booked together with payroll
     month_label = f"{MONTH_NAMES_NO[month - 1]} {year}"
     vouchers: list[Voucher] = []
 
@@ -216,7 +233,7 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     employee_count = len(active_employees(first_working_day_of_month(year, month)))
     if employee_count > 0:
         canteen_cost = calc_canteen_cost(employee_count)
-        vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_CANTEEN, f"Kantinetilskudd {month_label}", canteen_cost))
+        vouchers.append(_simple_cost_voucher(month_end, ACCOUNT_CANTEEN, f"Kantinetilskudd {month_label}", canteen_cost))
 
     # Phase 7, Task 2c — active_customers() only knows the static
     # churn_date; we additionally apply event_aware_is_customer_active, so
@@ -231,11 +248,12 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     representation_base = calc_representation_cost(customers)
     if representation_base > 0:
         representation_cost = apply_annual_inflation(representation_base, year)
-        vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_REPRESENTATION, f"Representasjon {month_label}", representation_cost))
+        vouchers.append(_simple_cost_voucher(
+            _random_working_day(year, month, 5, 25, "representation"), ACCOUNT_REPRESENTATION, f"Representasjon {month_label}", representation_cost))
 
     transport_cost = calc_client_visit_transport(customers, month)
     if transport_cost > 0:
-        vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_TRANSPORT, f"Kjøregodtgjørelse — kundebesøk {month_label}", transport_cost))
+        vouchers.append(_simple_cost_voucher(month_end, ACCOUNT_TRANSPORT, f"Kjøregodtgjørelse — kundebesøk {month_label}", transport_cost))
 
     # Phase 6 — S02 COGS pass-through (replaces the flat Azure cost from
     # Phase 2). Phase 7, Task 2c — calc_azure_cogs_monthly computes the cost
@@ -254,7 +272,7 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     if azure_cogs_base > 0:
         azure_cogs_cost = apply_annual_inflation(azure_cogs_base, year)
         vouchers.append(_cogs_accrual_voucher(
-            on_date, ACCOUNT_AZURE_COGS, f"Videresalgskostnad Microsoft/Azure {month_label}", azure_cogs_cost,
+            month_end, ACCOUNT_AZURE_COGS, f"Videresalgskostnad Microsoft/Azure {month_label}", azure_cogs_cost,
         ))
 
     # Phase 6, second calibration — S01 COGS pass-through (all segments, see
@@ -263,19 +281,20 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     if s01_cogs_base > 0:
         s01_cogs_cost = apply_annual_inflation(s01_cogs_base, year)
         vouchers.append(_cogs_accrual_voucher(
-            on_date, ACCOUNT_S01_COGS, f"Driftskostnad Managed IT Support {month_label}", s01_cogs_cost,
+            month_end, ACCOUNT_S01_COGS, f"Driftskostnad Managed IT Support {month_label}", s01_cogs_cost,
         ))
 
     conference_rng = random.Random(f"conference-{year}-{month}")
     trip = generate_conference_trip(year, month, conference_rng)
     if trip is not None:
-        vouchers.append(_simple_cost_voucher(on_date, ACCOUNT_TRANSPORT, trip["description"], trip["amount"]))
+        vouchers.append(_simple_cost_voucher(
+            _random_working_day(year, month, 8, 25, "conference"), ACCOUNT_TRANSPORT, trip["description"], trip["amount"]))
 
     for customer in CUSTOMERS:
         if customer.onboarding_date.year == year and should_generate_service_equipment_purchase(customer, month):
             equipment_cost = calc_service_equipment_cost(customer)
             vouchers.append(_simple_cost_voucher(
-                customer.onboarding_date, ACCOUNT_SERVICE_EQUIPMENT,
+                _onboarding_booking_date(customer.onboarding_date), ACCOUNT_SERVICE_EQUIPMENT,
                 f"Driftsmateriell for kundeleveranse — {customer.number}", equipment_cost,
             ))
 
@@ -286,7 +305,7 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     cost_spike = unprofitable_quarter_cost_spike(year, month)
     if cost_spike is not None:
         vouchers.append(_simple_cost_voucher(
-            on_date, ACCOUNT_UNEXPECTED_COST, f"Uforutsett driftskostnad — svakt kvartal {month_label}", cost_spike,
+            _random_working_day(year, month, 8, 25, "cost-spike"), ACCOUNT_UNEXPECTED_COST, f"Uforutsett driftskostnad — svakt kvartal {month_label}", cost_spike,
         ))
 
     return vouchers

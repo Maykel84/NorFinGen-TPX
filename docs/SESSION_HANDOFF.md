@@ -1385,3 +1385,15 @@ Płatność listy płac (BANK) rozlicza 2930/2600/2770 (stałe w jednym miejscu:
 
 **Do wdrożenia (po fazie 6):** migracja zawiera teraz też `cogs_payables`, kolumnę `bank_transactions.cogs_payable_id`, indeks, politykę RLS, dostawcę L09 (seed) i konta 2600/2940 (seed); historia GL do regeneracji. Pokażę pełny SQL przed uruchomieniem.
 
+## Poprawki księgowe wg SPEC — faza 5: realne daty kosztów i rozliczenie MVA (2026-11-01)
+
+**Krok 1, daty kosztów (opcja A, tabela zatwierdzona):** wszystkie koszty miesięczne leżały na 1. dniu kalendarzowym (także w weekend). Teraz: dopłata do stołówki, kilometrówki i naliczenia COGS 4291/4292 w **ostatni dzień roboczy miesiąca**; reprezentacja w losowy dzień roboczy 5.–25.; wyjazd konferencyjny i jednorazowy „Uforutsett driftskostnad” w losowy dzień roboczy 8.–25.; sprzęt dla klienta w dniu onboardingu (weekend → poprzedni piątek, a gdyby to wypadło w poprzednim miesiącu, następny poniedziałek). Daty losują osobne `random.Random("opex-date-…")`, więc strumienie kwot się nie ruszyły. **Golden hash rozdzielony:** `opex_amounts` (opisy + postingi bez dat) = `40e3213e20e9d7e9` i `cogs_payable_amounts` = `5488bc97aba376c9` policzone na kodzie SPRZED zmiany i niezmienione; `opex_vouchers` (z datami) przypięty na nowo (`867bb3256bfef71d`, było `892715817cd39468`), `cogs_payables` (`95bc7368c3ec8242`, było `deb851ce53b3f9b9`). Zamówienia, faktury, płace, sprzedaż i godziny: hashe bez zmian.
+
+**Krok 2, MVA:** tabela `vat_settlements` + `bank_transactions.vat_settlement_id` (+ indeks, RLS i polityka), model `VatSettlement`, `generators/vat_settlement.py`, repozytorium (`get_vat_period_totals`, `save_vat_settlement`, `get_unpaid_vat_settlements`), krok 2b w `process_day` (po fakturach dnia, przed płatnościami). **Ostatni dzień kalendarzowy terminu:** `Dr 2700 / Cr 2710 / Cr 2740` (voucher MANUAL); **termin płatności** (10.04, 10.06, 31.08, 10.10, 10.12, 10.02 roku następnego, weekend → następny dzień roboczy): `Dr 2740 / Cr 1910` z wierszem w `bank_transactions`, a zwrot (VAT naliczony > należny) odwrotnie. Sumy czytane z księgi (wyłączając vouchery rozliczeń), nie liczone z faktur. Arkusz eksportu `Rozliczenia_MVA` (lokalnie i w API). Pierwszy termin firmy (sty–lut 2019) to zwrot 87 412,11 NOK: koszty bez sprzedaży.
+
+**Zmiana akceptacyjna:** T10 próg 7 → 14 dni (zgłoszone użytkownikowi): realne daty dają przerwy do 10 dni bez kosztu (200 z 2862 dni > 7); sprawdzane dla KAŻDEGO dnia historii w `verify_regeneration`.
+
+**Wynik lokalnej regeneracji (do 2026-11-01):** `gl_checks` 15/16 (T12, T13 PASS, T5/T6 PASS; tylko T11 → faza 6); `verify_regeneration` 45/45 (w tym identyczność kosztów ≤ 2026-09-30 z produkcją co do miesiąca, konta, opisu i kwoty); 47 rozliczeń; saldo 2740 = −1 928 491,64 = otwarty termin 2026-T5 (płatność 10.12.2026); 2700/2710 trzymają tylko bieżący termin. 524 + 19 nowych testów zielone.
+
+**Do wdrożenia (po fazie 6):** migracja zawiera teraz też `vat_settlements`, kolumnę `bank_transactions.vat_settlement_id`, indeksy i politykę RLS.
+

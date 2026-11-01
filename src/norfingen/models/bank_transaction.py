@@ -34,5 +34,6 @@ class BankTransaction(BaseModel):
     supplier_invoice_id: Optional[int] = None  # linked purchase invoice
     salary_transaction_id: Optional[int] = None  # linked payroll run (Step 2, payroll OUTGOING fix)
     cogs_payable_id: Optional[int] = None  # linked COGS pass-through liability (phase 4)
+    vat_settlement_id: Optional[int] = None  # linked VAT settlement (phase 5)
     account_from: int  # source account
     account_to: int  # destination account
