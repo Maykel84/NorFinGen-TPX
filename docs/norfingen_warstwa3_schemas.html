@@ -187,7 +187,7 @@
       <table>
         <thead><tr><th>voucherType</th><th>Źródło W2</th><th>Tworzony przez</th><th>Etap</th></tr></thead>
         <tbody>
-          <tr><td class="mono-val">INVOICE</td><td>Order z <span class="mono-val">invoiceDate</span></td><td><span style="color:var(--green)">Tripletex automatycznie</span></td><td>W2 (teraz)</td></tr>
+          <tr><td class="mono-val">OUTGOING_INVOICE</td><td>Order z <span class="mono-val">invoiceDate</span></td><td>generator jawnie <span style="color:var(--amber)">(faza 3)</span></td><td>faza 3 SPEC</td></tr>
           <tr><td class="mono-val">INCOMING_INVOICE</td><td>SupplierInvoice</td><td>generator jawnie</td><td>W2 (teraz)</td></tr>
           <tr><td class="mono-val">SALARY</td><td>SalaryTransaction + Feriepenger</td><td>generator jawnie</td><td>W2 (teraz)</td></tr>
           <tr><td class="mono-val">BANK</td><td>Płatności bankowe</td><td>generator jawnie</td><td>Etap 4</td></tr>
@@ -219,8 +219,8 @@
           <tr><td class="field-name">amount</td><td class="field-type">number</td><td><span class="tag tag-req">tak</span></td><td class="field-value"><span style="color:var(--red)">+ debet</span> / <span style="color:var(--green)">− kredyt</span> w NOK</td></tr>
           <tr><td class="field-name">amountCurrency</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">= amount (wszystko w NOK)</td></tr>
           <tr><td class="field-name">currency</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value mono-val">{code: "NOK"}</td></tr>
-          <tr><td class="field-name">vatType</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value">tylko na postingach VAT-owych (strona DR)</td></tr>
-          <tr><td class="field-name">vatAmount</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">kwota VAT — embedded w postingu, nie osobny posting</td></tr>
+          <tr><td class="field-name">vatType</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value">na linii kosztu / przychodu — informacja, jaki VAT w niej siedzi; sam VAT to osobny posting (2710 / 2700)</td></tr>
+          <tr><td class="field-name">vatAmount</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">kwota VAT zawarta w linii (informacyjnie) — NIE bierze udziału w bilansie; VAT jest własnym postingiem</td></tr>
           <tr><td class="field-name">vatAmountCurrency</td><td class="field-type">number</td><td><span class="tag tag-no">nie</span></td><td class="field-value">= vatAmount</td></tr>
           <tr><td class="field-name">customer</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value"><strong>wymagane</strong> dla konta 1500 — AR aging</td></tr>
           <tr><td class="field-name">supplier</td><td class="field-type">object ref</td><td><span class="tag tag-no">nie</span></td><td class="field-value"><strong>wymagane</strong> dla konta 2400 — AP aging</td></tr>
@@ -240,25 +240,28 @@
   <!-- VAT RULE -->
   <div class="entity-section type-ledger" id="vat-rule">
     <div class="entity-header"><h2>Zasada VAT w Postingach</h2></div>
-    <p class="entity-desc">VAT nie jest osobnym postingiem — jest polem <code style="font-family:var(--font-mono);color:var(--blue)">vatAmount</code> na postingu debetowym. Konto 2770 zasilane jest przez Tripletex automatycznie.</p>
+    <p class="entity-desc">VAT jest <strong>osobnym postingiem</strong>, tak jak w prawdziwym Tripletex (linie VAT powstają z kodu VAT postingu): VAT naliczony z faktury zakupu to własna linia <code style="font-family:var(--font-mono);color:var(--blue)">Wn 2710</code>, VAT należny ze sprzedaży — własna linia <code style="font-family:var(--font-mono);color:var(--blue)">Ma 2700</code>. Pole <code style="font-family:var(--font-mono);color:var(--blue)">vatAmount</code> zostaje na linii kosztu/przychodu jako informacja, ale nie jest składnikiem bilansu. Voucher bilansuje się <strong>co do grosza</strong>.</p>
 
     <div class="table-wrap">
       <table>
         <thead><tr><th>Posting</th><th>amount</th><th>vatType</th><th>vatAmount</th><th>Uwaga</th></tr></thead>
         <tbody>
-          <tr><td>DR 1500 (sprzedaż)</td><td class="mono-val" style="color:var(--red)">+150 000</td><td class="mono-val">vatCode "3"</td><td class="mono-val" style="color:var(--amber)">+30 000</td><td style="font-size:11px">kwota brutto incl. VAT</td></tr>
-          <tr><td>CR 3000 (przychód)</td><td class="mono-val" style="color:var(--green)">−120 000</td><td class="mono-val" style="color:var(--text-dim)">null</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">kwota netto excl. VAT</td></tr>
-          <tr><td>DR 6xxx (zakup)</td><td class="mono-val" style="color:var(--red)">+100 000</td><td class="mono-val">vatCode "1"</td><td class="mono-val" style="color:var(--amber)">+25 000</td><td style="font-size:11px">kwota netto excl. VAT</td></tr>
-          <tr><td>CR 2400 (zobowiązanie)</td><td class="mono-val" style="color:var(--green)">−125 000</td><td class="mono-val" style="color:var(--text-dim)">null</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">kwota brutto incl. VAT</td></tr>
+          <tr><td>Wn 1500 (sprzedaż) <span style="color:var(--amber);font-size:10px">faza 3</span></td><td class="mono-val" style="color:var(--red)">+150 000</td><td class="mono-val" style="color:var(--text-dim)">null</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">brutto</td></tr>
+          <tr><td>Ma 3000 (przychód)</td><td class="mono-val" style="color:var(--green)">−120 000</td><td class="mono-val">vatCode "3"</td><td class="mono-val" style="color:var(--amber)">30 000</td><td style="font-size:11px">netto</td></tr>
+          <tr><td>Ma 2700 (VAT należny)</td><td class="mono-val" style="color:var(--green)">−30 000</td><td class="mono-val">vatCode "3"</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">brutto − netto</td></tr>
+          <tr><td>Wn 6xxx (zakup)</td><td class="mono-val" style="color:var(--red)">+100 000</td><td class="mono-val">vatCode "1"</td><td class="mono-val" style="color:var(--amber)">25 000</td><td style="font-size:11px">netto</td></tr>
+          <tr><td>Wn 2710 (VAT naliczony)</td><td class="mono-val" style="color:var(--red)">+25 000</td><td class="mono-val">vatCode "1"</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">brutto − netto</td></tr>
+          <tr><td>Ma 2400 (zobowiązanie)</td><td class="mono-val" style="color:var(--green)">−125 000</td><td class="mono-val" style="color:var(--text-dim)">null</td><td class="mono-val" style="color:var(--text-dim)">null</td><td style="font-size:11px">brutto</td></tr>
         </tbody>
       </table>
     </div>
     <div class="callout callout-blue">
-      <strong>Konto 2770 Skyldig merverdiavgift:</strong> Tripletex zasila je automatycznie na podstawie <span style="font-family:var(--font-mono)">vatAmount</span>. Generator nie tworzy ręcznie postingu na 2770. Rozliczane osobnym MANUAL Voucherem przy składaniu kwartalnej deklaracji MVA.
+      <strong>Konta VAT (NS 4102):</strong> 2700 Utgående merverdiavgift (należny), 2710 Inngående merverdiavgift (naliczony), 2740 Oppgjørskonto merverdiavgift (rozliczenie). Konto 2770 to <em>Skyldig arbeidsgiveravgift</em> (AGA), nie VAT. Rozliczenie VAT per dwumiesięczny termin (przeniesienie sald 2700 i 2710 na 2740 i przelew do/z Skatteetaten) wchodzi w fazie 5.
     </div>
     <div class="callout callout-red">
-      <strong>Zaokrąglenia:</strong> Generator oblicza <span style="font-family:var(--font-mono)">round(netto × 0.25, 2)</span> — nie odwrotnie z brutto. Tolerancja Tripletex: ±1 NOK.
+      <strong>Zaokrąglenia:</strong> linia VAT = <span style="font-family:var(--font-mono)">brutto − netto</span>, oba już zaokrąglone do grosza — voucher bilansuje się dokładnie z konstrukcji. Niezależne <span style="font-family:var(--font-mono)">round(netto × 0.25, 2)</span> mogłoby chybić o grosz. Dawna zasada "vatAmount wyrównuje różnicę, tolerancja ±1 NOK" została uchylona: zostawiała całą księgę niezbilansowaną o sumę VAT naliczonego (3,7 mln NOK).
     </div>
+  </div>
   </div>
 
   <hr class="divider">
@@ -272,17 +275,17 @@
       <div class="pattern-header">
         <span class="pattern-num">W1</span>
         <span class="pattern-title">Faktura sprzedaży</span>
-        <span class="pattern-source">← Order z invoiceDate</span>
-        <span class="pattern-type ptype-auto">auto Tripletex</span>
+        <span class="pattern-source">← Order z invoiceDate · wdrożenie: faza 3 SPEC</span>
+        <span class="pattern-type ptype-manual">generator jawnie</span>
       </div>
       <div class="pattern-body">
-        <div class="p-voucher-row"><span class="p-label">voucherType</span>INVOICE &emsp; <span class="p-label">date</span>= orderDate &emsp; <span class="p-label">description</span>"Faktura [nr] — [customer.name]"</div>
-        <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">1500</span><span class="p-account-name">Kundefordringer</span><span class="p-amount dr">+ kwota incl. VAT</span></div>
-        <div class="posting-meta">customer={K0x} · invoice={order_id} · department={1 Salg}</div>
-        <div class="posting-vat">vatType: "3" (25%) · vatAmount: + kwota VAT</div>
-        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">3000/3100</span><span class="p-account-name">Salgsinntekter / Lisensintekter</span><span class="p-amount cr">− kwota excl. VAT</span></div>
-        <div class="posting-meta">department={1 Salg} · vatType: null</div>
-        <div class="balance-row"><span>Balans:</span><span class="balance-ok">✓ (incl. VAT) − (excl. VAT) = VAT → pole vatAmount</span></div>
+        <div class="p-voucher-row"><span class="p-label">voucherType</span>OUTGOING_INVOICE &emsp; <span class="p-label">date</span>= invoiceDate &emsp; <span class="p-label">description</span>"Faktura [nr] — [customer.name]"</div>
+        <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">1500</span><span class="p-account-name">Kundefordringer</span><span class="p-amount dr">+ kwota brutto</span></div>
+        <div class="posting-meta">customer={K0x} · invoice={order_id}</div>
+        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">3000/3100</span><span class="p-account-name">Salgsinntekter / Lisensintekter</span><span class="p-amount cr">− kwota netto</span></div>
+        <div class="posting-vat">vatType: "3" (25%) · vatAmount: kwota VAT (informacyjnie)</div>
+        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2700</span><span class="p-account-name">Utgående merverdiavgift</span><span class="p-amount cr">− brutto − netto</span></div>
+        <div class="balance-row"><span>Balans:</span><span class="balance-ok">✓ brutto = netto + VAT, co do grosza</span></div>
       </div>
     </div>
 
@@ -297,10 +300,12 @@
         <div class="p-voucher-row"><span class="p-label">voucherType</span>INCOMING_INVOICE &emsp; <span class="p-label">date</span>= invoiceDate &emsp; <span class="p-label">description</span>"[L0x]-YYYY-NNN — [supplier.name]"</div>
         <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">6xxx/7xxx</span><span class="p-account-name">Koszt operacyjny</span><span class="p-amount dr">+ kwota excl. VAT</span></div>
         <div class="posting-meta">supplier={L0x} · department={N}</div>
-        <div class="posting-vat">vatType: "1" (25%) · vatAmount: + kwota VAT</div>
+        <div class="posting-vat">vatType: "1" (25%) · vatAmount: kwota VAT (informacyjnie)</div>
+        <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">2710</span><span class="p-account-name">Inngående merverdiavgift</span><span class="p-amount dr">+ brutto − netto</span></div>
+        <div class="posting-meta">supplier={L0x}</div>
         <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2400</span><span class="p-account-name">Leverandørgjeld</span><span class="p-amount cr">− kwota incl. VAT</span></div>
         <div class="posting-meta">supplier={L0x}</div>
-        <div class="balance-row"><span>Balans:</span><span class="balance-ok">✓ (excl. VAT) − (incl. VAT) skompensowane przez vatAmount</span></div>
+        <div class="balance-row"><span>Balans:</span><span class="balance-ok">✓ netto + VAT (2710) = brutto, co do grosza</span></div>
       </div>
     </div>
 
@@ -315,7 +320,9 @@
         <div class="p-voucher-row"><span class="p-label">voucherType</span>INCOMING_INVOICE &emsp; <span class="p-label">date</span>= invoiceDate &emsp; <span class="p-label">description</span>"Sandvik IT — środek trwały [opis]"</div>
         <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">1200</span><span class="p-account-name">Maskiner og anlegg</span><span class="p-amount dr">+ kwota excl. VAT</span></div>
         <div class="posting-meta">supplier={L05}</div>
-        <div class="posting-vat">vatType: "1" (25%) · vatAmount: + kwota VAT</div>
+        <div class="posting-vat">vatType: "1" (25%) · vatAmount: kwota VAT (informacyjnie)</div>
+        <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">2710</span><span class="p-account-name">Inngående merverdiavgift</span><span class="p-amount dr">+ brutto − netto</span></div>
+        <div class="posting-meta">supplier={L05}</div>
         <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2400</span><span class="p-account-name">Leverandørgjeld</span><span class="p-amount cr">− kwota incl. VAT</span></div>
         <div class="posting-meta">supplier={L05}</div>
         <div class="balance-row"><span>Balans:</span><span class="balance-ok">✓ identyczny pattern co W2 — inne konto DR</span></div>
@@ -428,8 +435,8 @@
     <p class="entity-desc">Cztery warunki sprawdzane przez generator przed każdym <code style="font-family:var(--font-mono);color:var(--blue)">POST /v2/ledger/voucher</code>.</p>
 
     <div class="validation-block">
-      <span class="v-comment"># 1. Balans — suma amount wszystkich postingów = 0</span><br>
-      <span class="v-keyword">assert</span> <span class="v-fn">sum</span>(p.amount <span class="v-keyword">for</span> p <span class="v-keyword">in</span> postings) == <span class="v-num">0</span>, <span class="v-err">"Voucher niezbalansowany"</span><br>
+      <span class="v-comment"># 1. Balans — suma amount wszystkich postingów = 0, co do grosza (VAT jest postingiem, nie wyjątkiem)</span><br>
+      <span class="v-keyword">assert</span> <span class="v-fn">abs</span>(<span class="v-fn">sum</span>(p.amount <span class="v-keyword">for</span> p <span class="v-keyword">in</span> postings)) &lt;= <span class="v-num">0.005</span>, <span class="v-err">"Voucher niezbalansowany"</span><br>
       <br>
       <span class="v-comment"># 2. Minimum 2 postingi</span><br>
       <span class="v-keyword">assert</span> <span class="v-fn">len</span>(postings) >= <span class="v-num">2</span>, <span class="v-err">"Voucher wymaga min. 2 postingów"</span><br>
@@ -437,10 +444,8 @@
       <span class="v-comment"># 3. Każdy posting ma konto GL</span><br>
       <span class="v-keyword">assert</span> <span class="v-fn">all</span>(p.account <span class="v-keyword">is not None</span> <span class="v-keyword">for</span> p <span class="v-keyword">in</span> postings), <span class="v-err">"Brak konta GL w postingu"</span><br>
       <br>
-      <span class="v-comment"># 4. Zgodność vatAmount ze stawką (tolerancja ±1 NOK)</span><br>
-      <span class="v-keyword">if</span> posting.vatType <span class="v-keyword">is not None</span>:<br>
-      &nbsp;&nbsp;&nbsp;&nbsp;expected = <span class="v-fn">round</span>(amount_excl_vat * vat_rate, <span class="v-num">2</span>)<br>
-      &nbsp;&nbsp;&nbsp;&nbsp;<span class="v-keyword">assert</span> <span class="v-fn">abs</span>(posting.vatAmount - expected) &lt;= <span class="v-num">1.0</span>, <span class="v-err">"Niezgodność vatAmount"</span>
+      <span class="v-comment"># 4. Linia VAT = brutto − netto (oba zaokrąglone do grosza); brak linii przy VAT = 0</span><br>
+      <span class="v-keyword">assert</span> vat_posting.amount == <span class="v-fn">round</span>(gross - net, <span class="v-num">2</span>), <span class="v-err">"Niezgodność linii VAT"</span>
     </div>
   </div>
 
@@ -452,7 +457,7 @@
     <p class="entity-desc">Szacunkowy wolumen Voucherów i Postingów dla pełnego rosteru — rok po merger (od 2022-09).</p>
 
     <div class="vol-grid">
-      <div class="vol-card"><div class="vol-type">INVOICE (auto)</div><div class="vol-count" style="color:var(--green)">~133</div><div class="vol-desc">← Order · ~11 klientów × 12 + consulting</div></div>
+      <div class="vol-card"><div class="vol-type">OUTGOING_INVOICE</div><div class="vol-count" style="color:var(--green)">~133</div><div class="vol-desc">← Order · ~11 klientów × 12 + consulting</div></div>
       <div class="vol-card"><div class="vol-type">INCOMING_INVOICE</div><div class="vol-count" style="color:var(--amber)">~48</div><div class="vol-desc">← SupplierInvoice · 8 dostawców</div></div>
       <div class="vol-card"><div class="vol-type">SALARY lista płac</div><div class="vol-count" style="color:var(--teal)">12</div><div class="vol-desc">← SalaryTransaction · 1 per miesiąc</div></div>
       <div class="vol-card"><div class="vol-type">SALARY AGA</div><div class="vol-count" style="color:var(--teal)">12</div><div class="vol-desc">← SalaryTransaction · osobny Voucher</div></div>
@@ -465,9 +470,9 @@
         <thead><tr><th>Metryka</th><th>Wartość / rok</th><th>Uwaga</th></tr></thead>
         <tbody>
           <tr><td>Łączne Vouchery</td><td class="mono-val">~208</td><td style="font-size:11px;color:var(--text-muted)">bez BANK (Etap 4)</td></tr>
-          <tr><td>Postingi (śr. 2,3 per Voucher)</td><td class="mono-val">~475–500</td><td style="font-size:11px;color:var(--text-muted)">INVOICE: 2 · SupplierInvoice: 2 · SALARY: 3</td></tr>
-          <tr><td>Postingi z polami subledger</td><td class="mono-val">~280</td><td style="font-size:11px;color:var(--text-muted)">konta 1500, 2400, 2710, 2740</td></tr>
-          <tr><td>Postingi z vatAmount</td><td class="mono-val">~181</td><td style="font-size:11px;color:var(--text-muted)">133 sprzedaż + 48 zakup</td></tr>
+          <tr><td>Postingi (śr. 2,3 per Voucher)</td><td class="mono-val">~475–500</td><td style="font-size:11px;color:var(--text-muted)">OUTGOING_INVOICE: 3 · INCOMING_INVOICE: 3 · SALARY: 3</td></tr>
+          <tr><td>Postingi z polami subledger</td><td class="mono-val">~280</td><td style="font-size:11px;color:var(--text-muted)">konta 1500, 2400</td></tr>
+          <tr><td>Postingi z vatAmount</td><td class="mono-val">~181</td><td style="font-size:11px;color:var(--text-muted)">133 sprzedaż + 48 zakup (informacyjnie, obok osobnych linii VAT)</td></tr>
           <tr><td>Backfill historyczny (2019–2022)</td><td class="mono-val">~750</td><td style="font-size:11px;color:var(--text-muted)">szacunek — zależy od rosteru per okres</td></tr>
         </tbody>
       </table>

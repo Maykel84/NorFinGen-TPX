@@ -26,7 +26,7 @@ from datetime import date
 
 from norfingen.generators.company_events import equipment_investment_trigger, supplier_cost_multiplier
 from norfingen.generators.order_generator import apply_annual_inflation
-from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid, expected_vat_amount
+from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.base import TripletexRef
 from norfingen.models.supplier_invoice import SupplierInvoice
 from norfingen.seed.roster import SUPPLIERS, SupplierSeed, numeric_id, supplier_by_number
@@ -198,34 +198,57 @@ def _account_for_invoice(supplier: SupplierSeed, netto: float) -> int:
     return supplier.gl_account
 
 
+ACCOUNT_INPUT_VAT = 2710  # Inngående merverdiavgift - input VAT, a receivable from Skatteetaten
+ACCOUNT_SUPPLIER_LEDGER = 2400  # Leverandørgjeld
+
+
 def build_voucher_for_invoice(invoice: SupplierInvoice, supplier: SupplierSeed) -> Voucher:
-    """Builds an INCOMING_INVOICE Voucher for a SupplierInvoice — created
-    explicitly by the generator (patterns W2/W3): DR cost/capitalization
-    account (excl. VAT, vatType "1") / CR 2400 Leverandørgjeld (incl. VAT)."""
+    """Builds an INCOMING_INVOICE Voucher for a SupplierInvoice - created
+    explicitly by the generator (patterns W2/W3):
+
+        Dr cost / capitalization account   net            (vatType "1")
+        Dr 2710 Inngående merverdiavgift   VAT            (own posting, phase 2)
+        Cr 2400 Leverandørgjeld            gross
+
+    The VAT line is gross - net, both already rounded to the cent, so the voucher
+    balances exactly by construction (an independent round(net x 0.25) could miss
+    by a cent). A zero-VAT invoice gets no 2710 line. `net` and `gross` are the very
+    figures this function posted before phase 2, so no cost line changes."""
     netto = round(invoice.amountExcludingVatCurrency, 2)
+    brutto = round(invoice.amountCurrency, 2)
+    vat_amount = round(brutto - netto, 2)
     account_number = _account_for_invoice(supplier, netto)
-    vat_amount = expected_vat_amount(netto)
+
+    postings = [
+        Posting(
+            date=invoice.invoiceDate,
+            account=acct(account_number),
+            amount=netto,
+            vatType=invoice.vatType if vat_amount else None,
+            vatAmount=vat_amount or None,
+            supplier=invoice.supplier,
+        ),
+    ]
+    if vat_amount:
+        postings.append(Posting(
+            date=invoice.invoiceDate,
+            account=acct(ACCOUNT_INPUT_VAT),
+            amount=vat_amount,
+            vatType=invoice.vatType,
+            supplier=invoice.supplier,
+        ))
+    postings.append(Posting(
+        date=invoice.invoiceDate,
+        account=acct(ACCOUNT_SUPPLIER_LEDGER),
+        amount=-brutto,
+        supplier=invoice.supplier,
+    ))
 
     voucher = Voucher(
         date=invoice.invoiceDate,
         description=f"{invoice.invoiceNumber} — {supplier.name}",
         voucherType=VoucherType.INCOMING_INVOICE,
-        postings=[
-            Posting(
-                date=invoice.invoiceDate,
-                account=acct(account_number),
-                amount=netto,
-                vatType=invoice.vatType,
-                vatAmount=vat_amount,
-                supplier=invoice.supplier,
-            ),
-            Posting(
-                date=invoice.invoiceDate,
-                account=acct(2400),
-                amount=-round(invoice.amountCurrency, 2),
-                supplier=invoice.supplier,
-            ),
-        ],
+        postings=postings,
     )
     assert_voucher_valid(voucher)
     return voucher

@@ -81,6 +81,12 @@ def main() -> int:
         same("""select v.date::text, v.description, p.account_number, p.amount from vouchers v join postings p on p.voucher_id=v.id
                 where v.voucher_type='OPERATING_COST' and v.date<=%s""", "operating cost / COGS postings")
         same("select date::text, employee_id, project_id, activity_type, hours from hour_entries where date<=%s", "hour entries")
+        # Phase 2 added the input-VAT line (Dr 2710) to every purchase-invoice voucher. Without that line the
+        # voucher is exactly what production holds: cost at net, 2400 at gross - so no cost figure moved.
+        same("""select v.date::text, v.description, p.account_number, p.amount from vouchers v join postings p on p.voucher_id=v.id
+                where v.voucher_type='INCOMING_INVOICE' and p.account_number<>2710 and v.date<=%s""",
+             "purchase-invoice vouchers without the 2710 line", note=" (cost + 2400)")
+
         # Phase 1 renumbered the payroll liabilities (tests/golden_fingerprint.PHASE1_TO_LEGACY_ACCOUNTS):
         # map the new accounts back and the postings must equal the reference exactly - same dates, same
         # amounts, only the account numbers moved. Drop this mapping once production is regenerated.
@@ -124,6 +130,13 @@ def main() -> int:
           local.one("""select count(*) from bank_transactions b join (select order_id, sum(amount_currency) g from order_lines group by order_id) l
                        on l.order_id=b.order_id where b.transaction_type='INCOMING' and b.amount<>l.g""") == 0)
     check("no order paid twice", local.one("select count(*) from (select order_id from bank_transactions where transaction_type='INCOMING' group by 1 having count(*)>1) t") == 0)
+    check("the whole ledger sums to zero (gl_checks T1)", abs(f(local.one("select coalesce(sum(amount),0) from postings"))) < 0.005,
+          str(local.one("select sum(amount) from postings")))
+    worst = local.all("select v.voucher_type, max(abs(s)) from (select voucher_id, sum(amount) s from postings group by 1) t join vouchers v on v.id=t.voucher_id group by 1 order by 1")
+    check("every voucher of every type balances to the cent (gl_checks T2)", all(f(w[1]) < 0.005 for w in worst), str([(w[0], f(w[1])) for w in worst]))
+    vat_gl = f(local.one("select sum(amount) from postings where account_number=2710 and amount>0"))
+    vat_inv = f(local.one("select sum(vat_amount_currency) from supplier_invoices"))
+    check("input VAT in the GL == VAT on the purchase invoices (gl_checks T6)", abs(vat_gl - vat_inv) <= 1.0, f"GL {vat_gl:,.2f} | invoices {vat_inv:,.2f} | diff {vat_gl - vat_inv:+.2f}")
     check("every bank transaction has its voucher", local.one("select count(*) from bank_transactions where voucher_id is null") == 0)
 
     # supplier invoices: status follows the payments, and nothing is paid before it is due

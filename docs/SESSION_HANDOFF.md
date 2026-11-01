@@ -1328,3 +1328,21 @@ Płatność listy płac (BANK) rozlicza 2930/2600/2770 (stałe w jednym miejscu:
 
 **Wdrożenie na Supabase:** brak zmian w schemacie (tylko dane referencyjne kont, dostarczone przez seed). Ale historia GL musi zostać zregenerowana (TRUNCATE + `run_backfill.py`), bo postingi płacowe w bazie mają stare konta.
 
+## Poprawki księgowe wg SPEC — faza 2: VAT naliczony jako osobny posting, ścisły bilans (2026-11-01)
+
+**Stan wyjściowy (zmierzony przed zmianą):** wszystkie typy voucherów bilansowały się już co do grosza (max |suma| = 0,00 dla BANK, SALARY, OPERATING_COST, MANUAL); niezbilansowane były wyłącznie `INCOMING_INVOICE` (757 z 757), każdy dokładnie o swój VAT. Dlatego ścisłe zero było wykonalne bez ruszania reszty historii.
+
+**Zmiany:**
+- `build_voucher_for_invoice`: `Wn koszt (netto) + Wn 2710 (VAT) / Ma 2400 (brutto)`; linia VAT = brutto − netto (oba już zaokrąglone do grosza), więc dokument bilansuje się dokładnie z konstrukcji; brak linii 2710 przy VAT = 0. Koszt i Ma 2400 to dokładnie te same kwoty co wcześniej — **żaden wynik P&L się nie ruszył**.
+- `Voucher.validate_balance()`: ścisłe zero z tolerancją pół grosza (`BALANCE_TOLERANCE = 0.005`, wyłącznie szum zmiennoprzecinkowy); dawny wyjątek "różnica = vatAmount" usunięty. `vatAmount` na postingu zostaje jako informacja (nie jest składnikiem bilansu). Komunikat błędu pokazuje kwotę niezbilansowania.
+- `VoucherType.INVOICE` (martwy, nigdzie nieużywany — wyszukiwanie pokazało tylko definicję, komentarze i dokumentację) zastąpiony przez `OUTGOING_INVOICE` (używany od fazy 3). `generate_daily_orders`-owy komentarz w `order_generator` poprawiony: moduł nadal nie tworzy voucherów sprzedaży do fazy 3.
+
+**Dowody:**
+- Voucher faktury zakupu bez linii 2710 jest **identyczny z produkcyjnym, posting po postingu** (1490 postingów ≤ 2026-09-30); historia zamówień, faktur, kosztów, godzin i płac bez zmian; REG_A/B/C PASS.
+- Na regeneracji lokalnej: cała księga sumuje się do **0,00**; każdy typ vouchera bilansuje się co do grosza; Wn 2710 = suma `supplier_invoices.vat_amount_currency` = 3 772 531,83 NOK (różnica +0,00; per faktura największa rozbieżność między postingiem a polem ≤ 0,011).
+- Testy: 488 zielonych (+1 pominięty); nowy `test_phase2_input_vat.py` (trzy nogi i bilans każdej faktury z 8 lat, "dodano tylko linię VAT", zgodność z VAT faktury, Ma 2400 = kwota płatności, brak linii przy VAT 0, VAT nie usprawiedliwia już niezbilansowania, grosz różnicy odrzucany a szum nie). Mutacja (VAT na złe konto) wykryta.
+
+**`gl_checks.sql`:** T1 PASS, T2 PASS, T6 PASS (wcześniej FAIL); poprzednio PASS: T7, T9, T10*, REG_A/B/C. Pozostają: T3, T4, T5 (faza 3), T8 (faza 4), T11 (faza 6). *T10 przechodzi tylko dzięki dacie (1. listopada) — faza 5.
+
+**Dokumentacja:** `DATA_DICTIONARY` (vouchers, postings, `vat_amount`, nota o fazie 2); `norfingen_warstwa3_schemas.html` przepisany: sekcja "Zasada VAT" (VAT jako osobny posting, konta 2700/2710/2740, 2770 to AGA, zaokrąglenia), wzorce W1 (sprzedaż, oznaczona jako faza 3), W2, W3 (linia 2710), reguły walidacji 1 i 4, tabela typów i wolumen; `warstwa1` — uwaga o VAT. Stwierdzenie "vouchers nie zawierają przychodu ze sprzedaży" w `DATA_DICTIONARY` zostaje prawdziwe do fazy 3 (oznaczone).
+

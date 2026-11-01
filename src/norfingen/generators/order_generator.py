@@ -1,8 +1,10 @@
 """Order + OrderLine generator (Layer 2).
 
-Order.invoiceDate = orderDate triggers automatic Voucher (INVOICE) creation
-by Tripletex — this module does NOT create Vouchers manually (unlike
-supplier_invoice_generator and salary_generator).
+In real Tripletex, Order.invoiceDate = orderDate triggers an automatic sales
+Voucher. NorFinGen does not call the API, so this module still creates no
+Voucher: the sales voucher (OUTGOING_INVOICE: Dr 1500 / Cr 3000 / Cr 2700) is
+phase 3 of docs/SPEC_poprawki_ksiegowe.md. (The VoucherType.INVOICE that used to
+stand for it was never used and has been removed.)
 
 Patterns from roster.CUSTOMERS.order_pattern:
   A/B/C — subscription customers (cadence per invoice_day/payment_terms). The

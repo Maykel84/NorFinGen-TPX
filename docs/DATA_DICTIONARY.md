@@ -2,7 +2,7 @@
 
 Description of all 20 tables in the Supabase schema (`src/norfingen/db/schema.sql`). Default currency: **NOK**. All tables have RLS enabled (Phase 1) — access from `run_backfill.py`/`run_daily.py` goes through the `postgres` role (bypasses RLS), read-only access through the `analyst` role.
 
-**The most important limitation of the whole model**: `Order.invoiceDate` in real Tripletex automatically creates a Voucher (accounts 3000/3100, revenue). NorFinGen **does not call the real Tripletex API** — that Voucher never gets created locally. Consequence: **`vouchers`/`postings` never contain sales revenue** — only costs (payroll, suppliers, bank). Every P&L query must compute revenue from `orders`/`order_lines`, and costs from `vouchers`/`postings` separately, and join them manually (see examples in the session history — `WITH p AS (...orders...), k AS (...postings...)`).
+**The most important limitation of the whole model** *(removed by accounting phase 3 of `docs/SPEC_poprawki_ksiegowe.md`; until then it stands)*: `Order.invoiceDate` in real Tripletex automatically creates a Voucher (accounts 3000/3100, revenue). NorFinGen **does not call the real Tripletex API** — that Voucher never gets created locally. Consequence: **`vouchers`/`postings` never contain sales revenue** — only costs (payroll, suppliers, bank). Every P&L query must compute revenue from `orders`/`order_lines`, and costs from `vouchers`/`postings` separately, and join them manually (see examples in the session history — `WITH p AS (...orders...), k AS (...postings...)`).
 
 ---
 
@@ -273,7 +273,7 @@ Business meaning: the breakdown of a payslip into its components. In June: norma
 | id | SERIAL (PK) | |
 | date | DATE | Booking date |
 | description | TEXT | Description (natural key together with `date`, UNIQUE) |
-| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL / **OPERATING_COST (Phase 3)**. **Never INVOICE** (see the limitation at the top of this document) |
+| voucher_type | TEXT | INCOMING_INVOICE / SALARY / BANK / MANUAL / OPERATING_COST. `OUTGOING_INVOICE` (a sales invoice, accounting phase 3) replaces the old `INVOICE`, which was defined but never used and has been removed. No sales voucher exists yet (see the limitation at the top of this document) |
 
 Business meaning: the header of an accounting entry. **Contains no sales revenue** — only costs (purchase invoices, payroll, bank movements, Phase 3: canteen/representation/transport/implementation equipment) and founding capital. `OPERATING_COST` (Phase 3, `generators/opex_generator.py`) — cash costs with no matching source document (unlike `INCOMING_INVOICE`, which always has a `SupplierInvoice`).
 
@@ -283,9 +283,11 @@ Business meaning: the header of an accounting entry. **Contains no sales revenue
 | id | SERIAL (PK) | |
 | voucher_id | INTEGER (FK, CASCADE) | → vouchers.id |
 | account_number | INTEGER (FK) | → accounts.number |
-| amount | NUMERIC(14,2) | **+ = debit, - = credit**. The sum of postings in a voucher ≈ 0 (with a VAT tolerance, see `validate_balance()`) |
-| vat_amount | NUMERIC(14,2) | Only on the debit posting, embedded (not a separate posting) |
+| amount | NUMERIC(14,2) | **+ = debit, - = credit**. The postings of a voucher sum to **exactly zero, to the cent** (`validate_balance()`, tolerance half a cent). VAT is a posting of its own, not an exception to the balance |
+| vat_amount | NUMERIC(14,2) | Information only: the VAT contained in a cost / revenue line. It is **not** part of the balance, and summing it double-counts - the VAT is its own posting (Dr 2710 on a purchase invoice, Cr 2700 on a sale) |
 | customer_id / supplier_id / employee_id / department_id | INTEGER (FK) | Analytical dimensions — populated depending on the posting type (e.g. customer_id for account 1500; employee_id is never populated today and is dropped from the GL export) |
+
+**Accounting phase 2 - input VAT is its own posting.** Every purchase-invoice voucher (`INCOMING_INVOICE`) is now `Dr cost (net) + Dr 2710 Inngående merverdiavgift (VAT) / Cr 2400 Leverandørgjeld (gross)`. The VAT line is gross - net, both already rounded to the cent, so the voucher balances exactly by construction. A zero-VAT invoice gets no 2710 line. Before this the voucher was `Dr cost (net) / Cr 2400 (gross)` with the VAT only in `vat_amount`: it was out of balance by exactly its VAT, `validate_balance()` excused that, and the ledger as a whole was out of balance by the sum of input VAT (3.77 mln NOK). Cost lines and the 2400 credit are unchanged (the purchase-invoice vouchers without the 2710 line are identical to the previous ones, posting by posting), so no P&L figure moved. The sum of Dr 2710 equals the sum of `supplier_invoices.vat_amount_currency` to the grosz.
 
 Business meaning: a single line of an accounting entry (DR/CR). For cost analysis: filter `account_number BETWEEN 5000 AND 5999` (payroll) or `BETWEEN 6000 AND 7999` (operating costs).
 
