@@ -21,6 +21,8 @@ def _patch_repository(**overrides):
         seed_reference_data=MagicMock(),
         get_orders_for_payment_window=MagicMock(return_value=[]),
         get_unpaid_supplier_invoices=MagicMock(return_value=[]),
+        get_unpaid_cogs_payables=MagicMock(return_value=[]),
+        save_cogs_accrual=MagicMock(),
         save_orders=MagicMock(),
         save_all=MagicMock(),
         save_bank_transactions=MagicMock(),
@@ -114,8 +116,10 @@ def test_run_daily_saves_operating_costs_and_cogs_on_the_first():
     with patch.multiple(run_daily_module, **mocks):
         stats = run_daily_module.run_daily(date(2024, 2, 1))
 
+    # COGS accruals go through save_cogs_accrual (they get a payable), the cash costs through save_all
     costs = [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.OPERATING_COST]
-    assert stats["operating_costs"] == len(costs) >= 3  # canteen, representation, S01/S02 COGS
+    costs += [c.args[0] for c in mocks["save_cogs_accrual"].call_args_list]
+    assert stats["operating_costs"] == len(costs) >= 4  # canteen, representation, S01 COGS, S02 COGS
     assert all(v.date == date(2024, 2, 1) for v in costs)
 
 
@@ -167,3 +171,27 @@ def test_run_daily_books_no_sales_voucher_on_a_day_without_invoices():
     with patch.multiple(run_daily_module, **mocks):
         run_daily_module.run_daily(date(2024, 1, 30))
     assert not [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.OUTGOING_INVOICE]
+
+
+# --- phase 4: a COGS accrual is saved together with its payable --------------------------------------
+
+def test_run_daily_saves_each_cogs_accrual_with_its_payable_and_the_cash_costs_without_one():
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        run_daily_module.run_daily(date(2024, 2, 1))
+
+    accruals = mocks["save_cogs_accrual"].call_args_list
+    assert len(accruals) == 2                                             # 4291 and 4292
+    for call in accruals:
+        voucher, payable = call.args
+        assert payable.account_number in (4291, 4292) and payable.accrual_date == voucher.date == date(2024, 2, 1)
+        assert payable.payment_due_date == date(2024, 3, 2)
+    cash_costs = [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.OPERATING_COST]
+    assert cash_costs and all(not any(p.account.number == 2400 for p in v.postings) for v in cash_costs)
+
+
+def test_run_daily_looks_up_the_unpaid_cogs_payables_when_it_books_payments():
+    mocks = _patch_repository()
+    with patch.multiple(run_daily_module, **mocks):
+        run_daily_module.run_daily(date(2024, 3, 4))
+    mocks["get_unpaid_cogs_payables"].assert_called_once_with(date(2024, 3, 4))

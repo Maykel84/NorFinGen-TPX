@@ -34,6 +34,7 @@ from norfingen.config import settings
 from norfingen.generators.bank_transaction_generator import OVERDUE_PAYMENT_DELAY_DAYS
 from norfingen.generators.voucher import Voucher
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
+from norfingen.models.cogs_payable import CogsPayable, CogsPayableStatus
 from norfingen.models.base import TripletexRef
 from norfingen.models.hours import HourEntry
 from norfingen.models.order import Order, OrderLine, OrderStatus
@@ -49,7 +50,7 @@ from norfingen.seed.roster import (
     PRODUCTS,
     PROJECTS,
     SERVICES,
-    SUPPLIERS,
+    ALL_SUPPLIERS,
     numeric_id,
 )
 
@@ -297,7 +298,7 @@ def seed_reference_data() -> None:
                 ),
             )
 
-        for supplier in SUPPLIERS:
+        for supplier in ALL_SUPPLIERS:
             cur.execute(
                 """INSERT INTO suppliers (id, name, supplier_number, country_id, currency_id, organization_number)
                    VALUES (%s, %s, %s, %s, %s, %s)
@@ -589,8 +590,9 @@ def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Option
     cur.execute(
         """INSERT INTO bank_transactions
                (date, amount, transaction_type, description, customer_id, supplier_id,
-                order_id, supplier_invoice_id, salary_transaction_id, account_from, account_to, voucher_id)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                order_id, supplier_invoice_id, salary_transaction_id, cogs_payable_id,
+                account_from, account_to, voucher_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT DO NOTHING""",
         (
             transaction.date,
@@ -602,6 +604,7 @@ def _save_bank_transaction(cur, transaction: BankTransaction, voucher_id: Option
             transaction.order_id,
             transaction.supplier_invoice_id,
             transaction.salary_transaction_id,
+            transaction.cogs_payable_id,
             transaction.account_from,
             transaction.account_to,
             voucher_id,
@@ -624,6 +627,11 @@ def save_bank_transactions(transactions: list[tuple[BankTransaction, Voucher]]) 
                 cur.execute(
                     "UPDATE supplier_invoices SET status = 'PAID' WHERE id = %s",
                     (transaction.supplier_invoice_id,),
+                )
+            if transaction.transaction_type == BankTransactionType.OUTGOING and transaction.cogs_payable_id is not None:
+                cur.execute(
+                    "UPDATE cogs_payables SET status = 'PAID' WHERE id = %s",
+                    (transaction.cogs_payable_id,),
                 )
     conn.commit()
 
@@ -652,6 +660,53 @@ def save_hour_entries(entries: list[HourEntry]) -> None:
         for entry in entries:
             _save_hour_entry(cur, entry)
     conn.commit()
+
+
+def save_cogs_accrual(voucher: Voucher, payable: CogsPayable) -> None:
+    """Saves a COGS accrual voucher together with its payable (phase 4) in one transaction - a voucher whose
+    liability never becomes payable is exactly the gap this table closes. Idempotent: the voucher is unique on
+    (date, description) and the payable on voucher_id."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        voucher_id = _save_voucher(cur, voucher)
+        cur.execute(
+            """INSERT INTO cogs_payables
+                   (voucher_id, supplier_id, account_number, accrual_date, payment_due_date,
+                    description, amount_currency, status)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (voucher_id) DO NOTHING""",
+            (voucher_id, payable.supplier_id, payable.account_number, payable.accrual_date,
+             payable.payment_due_date, payable.description, payable.amount_currency, payable.status.value),
+        )
+    conn.commit()
+
+
+def get_unpaid_cogs_payables(as_of: date, lookback_days: Optional[int] = None) -> list[CogsPayable]:
+    """UNPAID COGS payables whose due date falls in [as_of - lookback_days, as_of] - the same window and the same
+    contract as get_unpaid_supplier_invoices(): save_bank_transactions() flips the status once the payment is booked,
+    so a payable, once processed, never shows up again. (The default window is resolved here, not in the
+    signature: the constant it uses is defined further down the module.)"""
+    if lookback_days is None:
+        lookback_days = MAX_PAYMENT_TERMS_DAYS + PAYMENT_WEEKEND_SHIFT_MARGIN_DAYS
+    conn = get_connection()
+    start = as_of - timedelta(days=lookback_days)
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id, accrual_date, payment_due_date, account_number, supplier_id, description, amount_currency
+               FROM cogs_payables
+               WHERE status = 'UNPAID' AND payment_due_date BETWEEN %s AND %s""",
+            (start, as_of),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return [
+        CogsPayable(
+            id=pid, accrual_date=accrual_date, payment_due_date=due, account_number=account,
+            supplier_id=supplier_id, description=description, amount_currency=float(amount),
+            status=CogsPayableStatus.UNPAID,
+        )
+        for pid, accrual_date, due, account, supplier_id, description, amount in rows
+    ]
 
 
 DAILY_PIPELINE_WATERMARK = "daily_pipeline"

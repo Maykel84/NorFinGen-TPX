@@ -301,6 +301,7 @@ def test_excel_export_produces_valid_workbook_with_expected_sheets():
         "PL_miesiecznie",
         "Faktury_sprzedazy",
         "Faktury_zakupu",
+        "Zobowiazania_COGS",
         "Payroll_miesiecznie",
         "Payroll_per_pracownik",
         "Postingi_GL",

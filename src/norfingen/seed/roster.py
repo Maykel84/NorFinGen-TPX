@@ -53,7 +53,7 @@ class CustomerSeed:
 
 @dataclass(frozen=True)
 class SupplierSeed:
-    number: str  # "L01" - "L08"
+    number: str  # "L01" - "L09"
     name: str
     cost_category: str
     gl_account: int  # cost account DR (6xxx/7xxx)
@@ -496,6 +496,27 @@ SUPPLIERS: list[SupplierSeed] = [
     SupplierSeed("L08", "Gjensidige Forsikring ASA", "Insurance", 7500, "quarterly_jan_apr_jul_oct", 38_000, 38_000,
                  real_org_number="995568217"),
 ]
+
+# Suppliers that exist ONLY as the counterparty of the COGS pass-through liabilities (accounts 4291/4292, see
+# opex_generator._cogs_accrual_voucher). They are deliberately NOT in SUPPLIERS: that list is what the
+# purchase-invoice generator iterates (it would raise on an unknown rhythm) and what company_events draws the
+# SUPPLIER_RENEGOTIATION victim from (rng.choice over SUPPLIERS) - adding a ninth entry there would shift that draw and
+# with it the whole price history. L09 never issues an invoice and is never renegotiated.
+#
+# L09 Ingram Micro AS (accounting phase 4): the distributor through which a managed-service provider buys RMM/EDR/
+# ticketing tool licences and spare hardware to resell - what account 4292 stands for. Chosen from candidates checked
+# against data.brreg.no (exact legal name, active, no bankruptcy/winding-up): org.nr 961425905, 0667 Oslo, NACE 46.500.
+# A real company as a SUPPLIER is allowed by docs/DATA_SAFETY.md (money flows from the fictional company to it).
+COGS_SUPPLIERS: list[SupplierSeed] = [
+    SupplierSeed("L09", "Ingram Micro AS", "IT tools and equipment resale (COGS pass-through)", 4292,
+                 "monthly_cogs_accrual", 0.0, 0.0, real_org_number="961425905"),
+]
+
+ALL_SUPPLIERS: list[SupplierSeed] = [*SUPPLIERS, *COGS_SUPPLIERS]
+
+# The supplier each COGS account is owed to: 4291 Videresalgskostnad Microsoft/Azure -> L01 Microsoft Norge AS (the
+# same supplier that bills the licences), 4292 Driftskostnad Managed IT Support (RMM/EDR/verktøy) -> L09 Ingram Micro AS.
+COGS_SUPPLIER_BY_ACCOUNT: dict[int, str] = {4291: "L01", 4292: "L09"}
 
 
 # Phase 4 — one project per customer (1:1, PRJnnn <-> Knnn same number), not
@@ -983,7 +1004,7 @@ def customer_by_id(customer_id: int) -> CustomerSeed:
 
 
 def supplier_by_number(number: str) -> SupplierSeed:
-    for s in SUPPLIERS:
+    for s in ALL_SUPPLIERS:
         if s.number == number:
             return s
     raise KeyError(f"Unknown supplier number: {number}")
@@ -1033,7 +1054,7 @@ def project_for_customer(customer: CustomerSeed) -> ProjectSeed:
 
 def numeric_id(code: str) -> int:
     """Converts a seed code (E07, K03, L05, P02, PRJ001) to a Layer 1/2
-    numeric id (Employee 1-17, Customer 1-50, Supplier 1-8, Product 1-7,
+    numeric id (Employee 1-17, Customer 1-50, Supplier 1-9, Product 1-7,
     Project 1-50 — Phase 4 expanded Customer/Project, Phase 6 shrank
     Employee back down to 17 — assigned sequentially in documentation
     order). Handles both single-letter (E/K/L/P) and multi-letter (PRJ)

@@ -67,3 +67,18 @@ def test_sales_invoice_export_flags_the_deliberate_test_traps():
     # the REST API copy lists exactly the columns of the local query
     for column in _COLUMNS["Faktury_sprzedazy"]:
         assert column in QUERIES["Faktury_sprzedazy"], column
+
+
+def test_cogs_liabilities_have_their_own_export_sheet():
+    """Accounting phase 4 (variant B): the COGS pass-through liabilities sit on 2400 beside the purchase invoices but have no
+    invoice, so they get a sheet of their own - otherwise the supplier ledger cannot be reconciled (gl_checks T8). Same columns
+    in the local export and in the REST API's copy; `status` is the open/paid flag, `paid_date` the bank payment."""
+    from api.export_data import _COLUMNS
+
+    assert "Zobowiazania_COGS" in QUERIES
+    columns = ("payable_id", "accrual_date", "payment_due_date", "account_number", "supplier_id", "supplier_name",
+               "description", "amount_currency", "status", "paid_date")
+    assert list(_COLUMNS["Zobowiazania_COGS"]) == list(columns)
+    for column in columns:
+        assert column in QUERIES["Zobowiazania_COGS"], column
+    assert "LEFT JOIN" in QUERIES["Zobowiazania_COGS"].upper()   # an unpaid payable must not vanish from the sheet

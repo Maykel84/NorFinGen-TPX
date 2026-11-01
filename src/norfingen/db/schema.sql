@@ -279,6 +279,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS hour_entries_unique_null_project
     ON hour_entries (date, employee_id, activity_type)
     WHERE project_id IS NULL;
 
+-- ───────────────────────────────────────── Accounting phase 4 — COGS liabilities
+--
+-- The monthly COGS pass-through cost (4291 Microsoft/Azure resale, 4292 RMM/EDR tools) is an accrual voucher
+-- Dr 4291|4292 / Cr 2400, with no SupplierInvoice behind it - so it could never be paid and 88 mln NOK sat on 2400
+-- (gl_checks T8). One row per accrual makes it a payable: a due date, an amount, a status. The payment is an ordinary
+-- supplier payment (Dr 2400 / Cr 1910) linked through bank_transactions.cogs_payable_id, and it flips the status.
+CREATE TABLE IF NOT EXISTS cogs_payables (
+    id                SERIAL PRIMARY KEY,
+    voucher_id        INTEGER NOT NULL UNIQUE REFERENCES vouchers(id) ON DELETE CASCADE,
+    supplier_id       INTEGER REFERENCES suppliers(id),
+    account_number    INTEGER NOT NULL REFERENCES accounts(number),
+    accrual_date      DATE NOT NULL,
+    payment_due_date  DATE NOT NULL,
+    description       TEXT NOT NULL,
+    amount_currency   NUMERIC(14, 2) NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'UNPAID'
+);
+CREATE INDEX IF NOT EXISTS idx_cogs_payables_due ON cogs_payables(payment_due_date) WHERE status = 'UNPAID';
+-- (RLS and the analyst policy for this table sit with the other policies below: the analyst role is created there.)
+
+ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS cogs_payable_id INTEGER REFERENCES cogs_payables(id);
+CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_unique_cogs_payment
+    ON bank_transactions (date, cogs_payable_id, transaction_type)
+    WHERE cogs_payable_id IS NOT NULL;
+
 -- ───────────────────────────────────────── Phase 0.5a — daily pipeline watermark
 --
 -- run_daily used to match events on the EXACT current date, so any day the
@@ -423,6 +448,9 @@ DROP POLICY IF EXISTS analyst_read_only ON services;
 CREATE POLICY analyst_read_only ON services FOR SELECT TO analyst USING (true);
 DROP POLICY IF EXISTS analyst_read_only ON projects;
 CREATE POLICY analyst_read_only ON projects FOR SELECT TO analyst USING (true);
+ALTER TABLE cogs_payables ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS analyst_read_only ON cogs_payables;
+CREATE POLICY analyst_read_only ON cogs_payables FOR SELECT TO analyst USING (true);
 
 -- ─────────────────────────────────────────────────── Step 2 — read-only access (Power BI)
 --

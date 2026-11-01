@@ -31,7 +31,7 @@ calc_s01_cogs_monthly, and SESSION_HANDOFF.md for the full derivation).
 from __future__ import annotations
 
 import random
-from datetime import date
+from datetime import date, timedelta
 
 from norfingen.generators.client_events import (
     customer_event_state_asof,
@@ -41,6 +41,8 @@ from norfingen.generators.client_events import (
 from norfingen.generators.company_events import ACCOUNT_UNEXPECTED_COST, unprofitable_quarter_cost_spike
 from norfingen.generators.order_generator import apply_annual_inflation
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
+from norfingen.models.base import TripletexRef
+from norfingen.models.cogs_payable import CogsPayable
 from norfingen.seed.payroll import active_employees, first_working_day_of_month
 from norfingen.seed.roster import (
     CONFERENCE_HOTEL_RATES,
@@ -52,6 +54,8 @@ from norfingen.seed.roster import (
     calc_client_visit_transport,
     calc_representation_cost,
     calc_s01_cogs_monthly,
+    COGS_SUPPLIER_BY_ACCOUNT,
+    numeric_id,
 )
 
 ACCOUNT_BANK = 1910
@@ -64,6 +68,11 @@ ACCOUNT_TRANSPORT = 7000  # Reisekostnader — an existing account (shared with 
 ACCOUNT_SERVICE_EQUIPMENT = 4290  # Driftsmateriell for kundeleveranse (COGS)
 ACCOUNT_AZURE_COGS = 4291  # Videresalgskostnad Microsoft/Azure (COGS, Phase 6)
 ACCOUNT_S01_COGS = 4292  # Driftskostnad Managed IT Support — RMM/EDR/tools (COGS, Phase 6, 2nd calibration)
+
+# Phase 4: a COGS accrual is a liability to a supplier, so it has a due date like any purchase invoice. 30 days from the
+# accrual, the same term the purchase invoices use (SupplierInvoice.paymentDueDate), moved to the next working day when
+# the payment is booked. Suppliers are paid on the due date - there is no late-payment model for them - so COGS follows.
+COGS_PAYMENT_TERMS_DAYS = 30
 
 CONFERENCE_MONTHS = {3, 9, 11}
 CONFERENCE_PROBABILITY = 0.6
@@ -107,17 +116,42 @@ def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, 
     bank_transaction (a deliberate Phase 6 simplification — see
     SESSION_HANDOFF.md)."""
     amount = round(amount, 2)
+    # The supplier dimension on 2400 is what accounts-payable ageing needs: 4291 -> L01 Microsoft Norge, 4292 -> L09
+    # Ingram Micro (roster.COGS_SUPPLIER_BY_ACCOUNT).
+    supplier = TripletexRef(id=numeric_id(COGS_SUPPLIER_BY_ACCOUNT[account_number]))
     voucher = Voucher(
         date=on_date,
         description=description,
         voucherType=VoucherType.OPERATING_COST,
         postings=[
             Posting(date=on_date, account=acct(account_number), amount=amount),
-            Posting(date=on_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=-amount),
+            Posting(date=on_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=-amount, supplier=supplier),
         ],
     )
     assert_voucher_valid(voucher)
     return voucher
+
+
+def cogs_payable_for(voucher: Voucher) -> CogsPayable | None:
+    """The payable that goes with a COGS accrual voucher - None for every other operating-cost voucher.
+
+    An accrual is recognised by its credit to 2400 (the cash costs - canteen, transport, equipment - credit the bank,
+    1910, and are paid the moment they are booked). Amount = what was credited to 2400, so paying the payable clears
+    the liability to the cent."""
+    if voucher.voucherType != VoucherType.OPERATING_COST:
+        return None
+    credit = next((p for p in voucher.postings if p.account.number == ACCOUNT_LEVERANDORGJELD and p.amount < 0), None)
+    if credit is None:
+        return None
+    cost = next(p for p in voucher.postings if p.amount > 0)
+    return CogsPayable(
+        accrual_date=voucher.date,
+        payment_due_date=voucher.date + timedelta(days=COGS_PAYMENT_TERMS_DAYS),
+        account_number=cost.account.number,
+        supplier_id=credit.supplier.id,
+        description=voucher.description or "",
+        amount_currency=round(-credit.amount, 2),
+    )
 
 
 def generate_conference_trip(year: int, month: int, rng: random.Random) -> dict | None:

@@ -1,7 +1,7 @@
 -- =====================================================================
 -- NorFinGen: testy akceptacyjne księgowania (PostgreSQL / DuckDB)
 -- Tabele = eksporty: gl (Postingi_GL), sales (Faktury_sprzedazy),
---   purch (Faktury_zakupu), pay (Payroll_per_pracownik)
+--   purch (Faktury_zakupu), cogs (Zobowiazania_COGS, faza 4), pay (Payroll_per_pracownik)
 -- Każdy test zwraca 0 wierszy = PASS (chyba że opis mówi inaczej).
 -- Założenie: kwoty Wn dodatnie, Ma ujemne (jak w obecnym eksporcie).
 -- =====================================================================
@@ -65,15 +65,19 @@ FROM gl
 WHERE voucher_type = 'SALARY' AND account_number IN (2700, 2710, 2740)
 GROUP BY account_number;
 
--- T8: saldo dostawców 2400 = minus suma nieopłaconych faktur zakupu (brutto)
---     Po fazie 4 zaległe koszty COGS muszą mieć flagę i być doliczone do oczekiwanej kwoty.
+-- T8: saldo dostawców 2400 = minus suma nieopłaconych zobowiązań wobec dostawców (brutto):
+--     nieopłacone faktury zakupu (purch) + nieopłacone zobowiązania COGS (cogs, wariant B z SPEC; status UNPAID = flaga).
+--     Zobowiązania COGS (konta 4291/4292) nie mają faktury zakupu, więc bez arkusza cogs saldo 2400 nie dałoby się uzgodnić.
 SELECT 'T8' AS test, ROUND(SUM(amount), 2) AS saldo_2400,
-       -(SELECT ROUND(COALESCE(SUM(amount_currency), 0), 2) FROM purch WHERE status = 'UNPAID') AS expected
+       -(SELECT ROUND(COALESCE(SUM(amount_currency), 0), 2) FROM purch WHERE status = 'UNPAID')
+       -(SELECT ROUND(COALESCE(SUM(amount_currency), 0), 2) FROM cogs WHERE status = 'UNPAID') AS expected
 FROM gl
 WHERE account_number = 2400
-HAVING ABS(SUM(amount) + COALESCE((SELECT SUM(amount_currency) FROM purch WHERE status = 'UNPAID'), 0)) > 1;
--- (COALESCE added in phase 0.5a: when no purchase invoice is UNPAID the subquery is NULL and the original
---  HAVING was NULL -> 0 rows -> a vacuous PASS even with an 88 mln NOK unpaid COGS balance on 2400.)
+HAVING ABS(SUM(amount)
+         + COALESCE((SELECT SUM(amount_currency) FROM purch WHERE status = 'UNPAID'), 0)
+         + COALESCE((SELECT SUM(amount_currency) FROM cogs WHERE status = 'UNPAID'), 0)) > 1;
+-- (COALESCE dodane w fazie 0.5a: gdy żadna faktura nie jest UNPAID, podzapytanie jest NULL, HAVING staje się NULL i oryginalny
+--  test przechodził pozornie nawet przy 88 mln NOK niezapłaconego COGS na 2400. Faza 4: dodany arkusz cogs.)
 
 -- T9: REGRESJA ŚWIADOMEGO ZAŁOŻENIA — w każdym czerwcu od 2020 r. feriepenger są
 --     wypłacane z rezerwy 2940 (Wn). Pensja (5000) w czerwcu może wystąpić tylko u osób

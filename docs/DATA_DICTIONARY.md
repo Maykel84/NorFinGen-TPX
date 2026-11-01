@@ -1,6 +1,6 @@
 # NorFinGen — Data Dictionary
 
-Description of all 20 tables in the Supabase schema (`src/norfingen/db/schema.sql`). Default currency: **NOK**. All tables have RLS enabled (Phase 1) — access from `run_backfill.py`/`run_daily.py` goes through the `postgres` role (bypasses RLS), read-only access through the `analyst` role.
+Description of all 21 tables in the Supabase schema (`src/norfingen/db/schema.sql`). Default currency: **NOK**. All tables have RLS enabled (Phase 1) — access from `run_backfill.py`/`run_daily.py` goes through the `postgres` role (bypasses RLS), read-only access through the `analyst` role.
 
 **The ledger now holds the sales side too (accounting phase 3, `docs/SPEC_poprawki_ksiegowe.md`).** In real Tripletex `Order.invoiceDate` automatically creates a sales Voucher; NorFinGen does not call the API, so until phase 3 that Voucher did not exist locally and `vouchers`/`postings` held only costs and customer payments (account 1500 stood at -185 mln NOK). Now every invoice books `Dr 1500 Kundefordringer (gross) / Cr 3000 Salgsinntekt (net) / Cr 2700 Utgående merverdiavgift (VAT)` on its invoice date - a voucher of type `OUTGOING_INVOICE`, weekends included. Revenue is still read from `orders`/`order_lines` in the BI views and in `PL_miesiecznie` (the cost side sums only accounts 4000-7999, so nothing is counted twice); the ledger's Cr 3000 equals that revenue in every month, to the grosz, and that equality is a test (gl_checks T4), not a coincidence.
 
@@ -86,14 +86,16 @@ Limitation: no employee departures (staff turnover) — once hired, an employee 
 ### suppliers
 | Column | Type | Description |
 |---|---|---|
-| id | INTEGER (PK) | 1-8, `numeric_id("L01")..("L08")` |
+| id | INTEGER (PK) | 1-9, `numeric_id("L01")..("L09")` |
 | name | TEXT | Supplier name |
-| supplier_number | TEXT | Code "L01"-"L08" |
+| supplier_number | TEXT | Code "L01"-"L09" |
 | organization_number, email, phone_number, address_line1, postal_code, city, bank_account_number | TEXT | Never populated (NULL) |
 | is_private_individual, is_wholesaler, show_products | BOOLEAN | Always `false` |
 | country_id, currency_id | INTEGER | Always 161 / 1 |
 
 Business meaning: 8 cost suppliers (Microsoft, Telenor, Reitan, Statsbygg, Sandvik, Thommessen, Avis, Nordic Insurance) — each with its own invoicing rhythm and amount variance (higher for Avis in Q1/Q3, Sandvik seasonality).
+
+**Accounting phase 4 - L09 Ingram Micro AS** (org.nr 961425905, a real distributor, verified against data.brreg.no) is the supplier the COGS account 4292 (RMM/EDR/ticketing tools and spare hardware, resold to customers) is owed to; 4291 (Microsoft/Azure resale) is owed to L01. L09 never issues an invoice and is never renegotiated, so it is kept OUT of `roster.SUPPLIERS` (which the invoice generator and the SUPPLIER_RENEGOTIATION draw iterate - a ninth entry there would shift the draw and the whole price history) and lives in `roster.COGS_SUPPLIERS`; `roster.ALL_SUPPLIERS` is what is seeded and looked up.
 
 **`postal_code` stays NULL even after the export fix (2026-07)** — `SupplierSeed` (roster.py) never had a `city` field (unlike `CustomerSeed`), so there's nothing to derive a postal code from without inventing new address data. A deliberate limitation, not an oversight — see `SESSION_HANDOFF.md` section 10.
 
@@ -316,6 +318,7 @@ Business meaning: a single line of an accounting entry (DR/CR). For cost analysi
 | customer_id / supplier_id | INTEGER (FK) | Populated depending on direction |
 | order_id / supplier_invoice_id | INTEGER (FK) | The linked source document |
 | **salary_transaction_id** | INTEGER (FK) | → salary_transactions.id — populated for OUTGOING rows that are payroll payouts (addendum: "Fix: orphaned records + payroll OUTGOING") |
+| **cogs_payable_id** | INTEGER (FK) | → cogs_payables.id — populated for OUTGOING rows that pay a COGS pass-through liability (accounting phase 4); UNIQUE with `(date, transaction_type)` where not NULL |
 | account_from, account_to | INTEGER | GL accounts: INCOMING 1500→1910, OUTGOING (supplier) 1910→2400, OUTGOING (payroll) 1910→2930 |
 | voucher_id | INTEGER (FK) | → vouchers.id (of type BANK) |
 
@@ -387,6 +390,25 @@ Business meaning: a container for consultant hours per customer — used exclusi
 
 Business meaning: internal bookkeeping (phase 0.5a), not business data. `run_daily` processes every calendar day in `(watermark, today]` and moves the watermark only after a day is fully committed, so a day the cron missed (every weekend: the workflow runs Mon-Fri) is caught up on the next run instead of being lost. The watermark only moves forward (`GREATEST` on upsert). RLS is on with no policy: the read-only roles see nothing. `run_backfill.py --mode daily` sets it to its end date.
 
+### cogs_payables
+| Column | Type | Description |
+|---|---|---|
+| id | SERIAL (PK) | |
+| voucher_id | INTEGER (FK, UNIQUE, CASCADE) | → vouchers.id - the accrual voucher (`Dr 4291|4292 / Cr 2400`); one payable per accrual |
+| supplier_id | INTEGER (FK) | → suppliers.id - L01 for 4291, L09 for 4292 (`roster.COGS_SUPPLIER_BY_ACCOUNT`); the same supplier sits on the 2400 posting |
+| account_number | INTEGER (FK) | 4291 or 4292 - the cost account that was debited |
+| accrual_date | DATE | The accrual voucher's date |
+| payment_due_date | DATE | `accrual_date + 30 days` (`opex_generator.COGS_PAYMENT_TERMS_DAYS`); paid on the next working day |
+| description | TEXT | The accrual voucher's description (e.g. `Videresalgskostnad Microsoft/Azure oktober 2026`) |
+| amount_currency | NUMERIC(14,2) | NOK; COGS is booked without VAT, so net = gross. Equals the credit on 2400 to the cent |
+| status | TEXT | `UNPAID` / `PAID` - flipped to PAID only by the booked payment (a `bank_transactions` row with `cogs_payable_id`) |
+
+Business meaning (accounting phase 4, `docs/SPEC_poprawki_ksiegowe.md`, variant B): the monthly COGS pass-through cost is booked as an accrual (`Dr 4291|4292 / Cr 2400 Leverandørgjeld`) but, unlike a purchase invoice, has no `supplier_invoices` row behind it - so it could never be paid, and 88 mln NOK stayed on 2400 for good. This table makes each accrual a payable: a due date, an amount, a status. It is paid exactly like a purchase invoice (`Dr 2400 / Cr 1910` on the due date, moved to the next working day when that is a weekend; no late-payment model for suppliers), and `save_bank_transactions` flips the status.
+
+The supplier ledger therefore reconciles as: **balance of 2400 = -(UNPAID purchase invoices + UNPAID COGS payables)**, to the cent. On 2026-11-01: 4 935 621,86 = 268 988,46 + 4 666 633,40 (the October and November accruals, both still open). The `Zobowiazania_COGS` export sheet lists the payables with `status` as the open/paid flag and `paid_date`; `gl_checks.sql` T8 adds them to the expected balance. Giving COGS real purchase invoices instead (variant A) is on the README backlog.
+
+RLS on, read-only policy for `analyst`, like every other table.
+
 ---
 
 ## Phase 7 — the random life-events layer
@@ -441,7 +463,7 @@ Pure multipliers with no randomness: `fellesferie_activity_multiplier` (July x0.
 
 Two roles, layered:
 
-- **`analyst`** (`NOLOGIN`) — purely technical, defines the target privilege set: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**20/20 tables with an active RLS policy `USING (true)`** — see "Security audit" below, previously 6 reference tables had no RLS at all) + `ALTER DEFAULT PRIVILEGES` (future tables automatically readable, no manual GRANT needed on each migration).
+- **`analyst`** (`NOLOGIN`) — purely technical, defines the target privilege set: `GRANT SELECT ON ALL TABLES IN SCHEMA public` (**21/21 tables with an active RLS policy `USING (true)`** — see "Security audit" below, previously 6 reference tables had no RLS at all) + `ALTER DEFAULT PRIVILEGES` (future tables automatically readable, no manual GRANT needed on each migration).
 - **`powerbi_reader`** (`LOGIN`, `CONNECTION LIMIT 3`) — the real role for actually logging in from Power BI (or any other BI tool). Inherits the full set of `analyst`'s privileges/policies via `GRANT analyst TO powerbi_reader` — nothing is duplicated. Created/rotated by `scripts/setup_powerbi_reader.py` (password generated randomly on every run, printed ONLY to stdout, never lands in the repo/`.env`).
 - **`demo_reader`** (`LOGIN`, `CONNECTION LIMIT 2`, `statement_timeout=10s`) — publicly available test access (`docs/API_ACCESS.md`). A separate role from `powerbi_reader` (independent rotation/revocation), but the same `analyst` inheritance mechanism. **Since 2026-09-04 this is also the role the REST API service (`api/`) connects as** — the only role used by `api/db.py` for data queries, never `service_role`/`postgres`.
 - **`api_key_manager`** (`LOGIN`, `CONNECTION LIMIT 5`, `statement_timeout=10s`, 2026-09-04) — does NOT inherit `analyst`, has no access to any table besides `api_keys`/`export_requests` (`GRANT SELECT, INSERT, UPDATE` on `api_keys`, `GRANT SELECT, INSERT` on `export_requests`). Used by `api/auth.py` (key validation + rate limiting), `api/routers/keys.py` (self-service key generation — `INSERT` added in the self-service portal session), and `api/routers/export.py` (the `export_requests` counter). See `scripts/setup_api_backend.py`.

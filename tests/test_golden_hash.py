@@ -29,6 +29,9 @@ GOLDEN = {
     # revenue it books equals the 209 030 662 of the regression rule (to the cent: the exact figure is 661.93).
     # (Pinned after pg_round2 was corrected to the psycopg2 literal path: the first value, 47c32992810ab004, had 137
     # gross amounts one cent off the stored ones. Revenue - the net side - was already right and did not move.)
+    # Phase 4: one payable per COGS accrual (4291 / 4292): 182 over 91 months, due 30 days after the accrual. The opex /
+    # salary / sales hashes above did not move: the payables are new, no existing amount changed.
+    "cogs_payables": (182, "deb851ce53b3f9b9"),
     "sales_vouchers": (1853, "d87b271c20eb9788"),
     "revenue_in_gl": 209_030_661.93,
     # With the phase-1 accounts mapped back to the old ones this is the hash frozen BEFORE phase 1 (see

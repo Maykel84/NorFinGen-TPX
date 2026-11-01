@@ -1365,3 +1365,23 @@ Płatność listy płac (BANK) rozlicza 2930/2600/2770 (stałe w jednym miejscu:
 
 **`gl_checks.sql`:** T3, T4, T5 PASS (wcześniej FAIL); razem 12/14 PASS. Zostają: T8 (faza 4: płatności COGS, zobowiązania COGS w teście) i T11 (faza 6). T10 nadal przechodzi tylko przez datę 1. dnia miesiąca (faza 5). REG_A/B/C PASS.
 
+## Poprawki księgowe wg SPEC — faza 4: płatności COGS i zobowiązania w teście T8 (2026-11-01)
+
+**Decyzje (Twoje):** nowa tabela `cogs_payables`; 4291 → L01 Microsoft Norge, 4292 → nowy dostawca **L09 Ingram Micro AS** (org.nr 961425905, prawdziwy dystrybutor, zweryfikowany w Brønnøysund spośród czterech kandydatów); przychód zostaje w całości na 3000; wdrożenie na Supabase po fazie 6, jednorazowo.
+
+**Stan wyjściowy:** miesięczne naliczenie COGS (`Wn 4291|4292 / Ma 2400`) nie miało dokumentu, więc żadna płatność nie powstawała i 88 mln NOK stało na 2400 na stałe (T8).
+
+**Zmiany:**
+- Tabela `cogs_payables` (voucher naliczenia, dostawca, konto, termin = naliczenie + 30 dni, kwota, status UNPAID/PAID) + kolumna `bank_transactions.cogs_payable_id` + unikalny indeks płatności; RLS i polityka dla `analyst`. Schemat sprawdzony na świeżej bazie, dwa razy (idempotentnie). **Złapany błąd kolejności:** polityka dla `analyst` stała przed utworzeniem tej roli, więc zepsułaby świeżą bazę — przeniesiona do bloku z pozostałymi politykami.
+- Płatność COGS = zwykła płatność dostawcy (`Wn 2400 / Ma 1910`) w terminie, przesunięta na następny dzień roboczy; zmienia status zobowiązania. Wymiar dostawcy na postingu 2400 (wiekowanie): 4291 → L01, 4292 → L09. Zobowiązanie powstaje razem z naliczeniem (`save_cogs_accrual`, jedna transakcja); koszty gotówkowe (stołówka, reprezentacja, transport) nadal idą od razu z banku i zobowiązania nie dostają.
+- `L09` w osobnej liście `COGS_SUPPLIERS` (a nie w `SUPPLIERS`): `company_events` losuje ofiarę `SUPPLIER_RENEGOTIATION` przez `rng.choice` po `SUPPLIERS`, więc dziewiąty element przesunąłby losowanie i całą historię cen. `ALL_SUPPLIERS` jest tym, co seedujemy i wyszukujemy.
+- Eksport: nowy arkusz `Zobowiazania_COGS` (lokalnie i w kopii API; `status` = flaga otwarte/zapłacone, `paid_date`). `gl_checks.sql` T8 dodaje `cogs` do oczekiwanego salda (wariant B); `run_gl_checks.py` tworzy widok `cogs`.
+
+**Wynik regeneracji lokalnej:** `gl_checks` **13/14 PASS** (T8 PASS; zostaje T11, faza 6); `verify_regeneration` **34/34 PASS**. Saldo 2400 = −4 935 621,86 = nieopłacone faktury zakupu 268 988,46 + nieopłacone zobowiązania COGS 4 666 633,40 (naliczenia z 1.10 i 1.11, oba jeszcze przed terminem), co do grosza. 186 naliczeń = 186 zobowiązań. Wiekowanie 2400 per dostawca kompletne (każdy posting na 2400 ma dostawcę; L09 ma 3,46 mln otwartych, L01 1,26 mln). Golden hashe kosztów (`892715817cd39468`), płac i sprzedaży **bez zmian**; nowy przypięty: `cogs_payables` (182 do 2026-09-30). Historia ≤ 2026-09-30 nadal identyczna z produkcją.
+
+**Testy:** 519 zielonych (+1 pominięty). Nowe: `test_phase4_cogs_payables.py` (tylko 4291/4292 stają się zobowiązaniami, a koszty gotówkowe nie; kwota zobowiązania = kredyt na 2400 co do grosza; termin +30 dni; płatność czyści zobowiązanie per dostawca; przesunięcie weekendowe; dwa zobowiązania tego samego dnia obie płacone; L09 poza `SUPPLIERS`), rozszerzone `test_catch_up.py` (cron tylko pon.–pt. z catch-upem == codzienny również dla COGS; żadna płatność COGS nie ginie ani nie dubluje się), `test_run_daily.py`, `test_export_naming.py`.
+
+**Incydent bezpieczeństwa testów (naprawiony, nic nie zapisano):** gdy dodałem nowe funkcje repozytorium, atrapy w testach ich jeszcze nie znały, więc pierwsze niezałatane wywołanie **połączyło się z bazą z `.env`, czyli z produkcją** (`DATABASE_URL` nie był ustawiony w tej powłoce). Zapytanie padło na nieistniejącej tabeli, zanim cokolwiek zostało zapisane; sprawdziłem produkcję tylko do odczytu: brak `cogs_payables`, `generation_state`, voucherów sprzedaży, dostawcy L09, kont 2600/2940, brak moich sesji, ostatni zapis w `bank_transactions` to cron z 30.10. **Luka była realna, więc ją zamknąłem:** `tests/conftest.py` podmienia `settings.DATABASE_URL` na adres odmawiający połączeń na czas całego zestawu (żaden niezałatany test nie dotknie żadnej bazy), a `test_no_database_in_unit_tests.py` to pilnuje. Testy z prawdziwym Postgresem używają osobnej zmiennej `NORFINGEN_TEST_PG_URL` i łączą się jawnie.
+
+**Do wdrożenia (po fazie 6):** migracja zawiera teraz też `cogs_payables`, kolumnę `bank_transactions.cogs_payable_id`, indeks, politykę RLS, dostawcę L09 (seed) i konta 2600/2940 (seed); historia GL do regeneracji. Pokażę pełny SQL przed uruchomieniem.
+

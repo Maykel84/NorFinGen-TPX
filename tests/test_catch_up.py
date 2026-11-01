@@ -35,7 +35,9 @@ from norfingen.generators.money import pg_round2  # noqa: E402
 from norfingen.generators.order_generator import generate_monthly_orders  # noqa: E402
 from norfingen.generators.supplier_invoice_generator import generate_monthly_supplier_invoices  # noqa: E402
 from norfingen.generators.voucher import Voucher  # noqa: E402
+from norfingen.generators.opex_generator import cogs_payable_for  # noqa: E402
 from norfingen.models.bank_transaction import BankTransactionType  # noqa: E402
+from norfingen.models.cogs_payable import CogsPayableStatus  # noqa: E402
 from norfingen.models.order import OrderStatus  # noqa: E402
 from norfingen.models.supplier_invoice import SupplierInvoice  # noqa: E402
 from norfingen.seed.roster import customer_by_id  # noqa: E402
@@ -173,6 +175,7 @@ class FakeStore:
         self.invoices = {}        # invoice id -> SupplierInvoice
         self.unpaid = set()
         self.vouchers = {}        # (date, description) -> Voucher   (ON CONFLICT (date, description) DO NOTHING)
+        self.cogs = {}            # payable id -> CogsPayable (UNPAID until its payment is booked)
         self.payments = {}        # unique key -> BankTransaction
         self._next_id = 1
         for order in seed_orders:
@@ -212,13 +215,29 @@ class FakeStore:
         else:
             raise TypeError(type(obj))
 
+    def save_cogs_accrual(self, voucher, payable):
+        if (voucher.date, voucher.description) in self.vouchers:
+            return  # ON CONFLICT DO NOTHING
+        self.vouchers[(voucher.date, voucher.description)] = voucher
+        self.cogs[self._next_id] = payable.model_copy(update={"id": self._next_id})
+        self._next_id += 1
+
+    def get_unpaid_cogs_payables(self, as_of, lookback_days=None):
+        lookback_days = lookback_days or (repository.MAX_PAYMENT_TERMS_DAYS + repository.PAYMENT_WEEKEND_SHIFT_MARGIN_DAYS)
+        start = as_of - timedelta(days=lookback_days)
+        return [p for p in self.cogs.values()
+                if p.status == CogsPayableStatus.UNPAID and start <= p.payment_due_date <= as_of]
+
     def save_bank_transactions(self, pairs):
         for transaction, _voucher in pairs:
             key = (transaction.transaction_type, transaction.order_id, transaction.supplier_invoice_id,
-                   transaction.salary_transaction_id, transaction.date)
+                   transaction.salary_transaction_id, transaction.cogs_payable_id, transaction.date)
             self.payments.setdefault(key, transaction)
             if transaction.transaction_type == BankTransactionType.OUTGOING and transaction.supplier_invoice_id:
                 self.unpaid.discard(transaction.supplier_invoice_id)
+            if transaction.transaction_type == BankTransactionType.OUTGOING and transaction.cogs_payable_id:
+                payable = self.cogs[transaction.cogs_payable_id]
+                self.cogs[transaction.cogs_payable_id] = payable.model_copy(update={"status": CogsPayableStatus.PAID})
 
     def save_salary(self, transaction, vouchers):
         return self._next_id
@@ -231,6 +250,7 @@ class FakeStore:
             latest_hour_entry_date=MagicMock(return_value=None),
             get_orders_for_payment_window=self.get_orders_for_payment_window,
             get_unpaid_supplier_invoices=self.get_unpaid_supplier_invoices,
+            get_unpaid_cogs_payables=self.get_unpaid_cogs_payables, save_cogs_accrual=self.save_cogs_accrual,
             save_orders=self.save_orders, save_all=self.save_all, save_bank_transactions=self.save_bank_transactions,
             save_hour_entries=MagicMock(), save_salary=self.save_salary,
         )
@@ -286,6 +306,10 @@ def test_weekdays_only_cron_equals_every_day_cron(every_day_store, weekdays_only
     assert {i.invoiceNumber for i in weekdays_only_store.invoices.values()} == {
         i.invoiceNumber for i in every_day_store.invoices.values()}
     assert set(weekdays_only_store.vouchers) == set(every_day_store.vouchers)
+    assert {(p.accrual_date, p.account_number) for p in weekdays_only_store.cogs.values()} == {
+        (p.accrual_date, p.account_number) for p in every_day_store.cogs.values()}
+    paid = lambda store: sorted((p.accrual_date, p.account_number) for p in store.cogs.values() if p.status == CogsPayableStatus.PAID)
+    assert paid(weekdays_only_store) == paid(every_day_store)
     assert weekdays_only_store.unpaid and len(weekdays_only_store.unpaid) == len(every_day_store.unpaid)
 
 
@@ -370,3 +394,29 @@ def test_no_supplier_payment_is_lost_or_duplicated(weekdays_only_store):
         assert got[0].date == due
         assert iid not in store.unpaid
     assert checked > 8
+
+
+def test_no_cogs_payment_is_lost_or_duplicated(weekdays_only_store):
+    """Phase 4: every COGS accrual whose (shifted) due date is inside the window has exactly one payment, on that date, for the
+    accrued amount, and its payable is PAID - a weekday-only cron with catch-up loses none (the weekend-due ones included)."""
+    store = weekdays_only_store
+    payments = {}
+    for t in store.payments.values():
+        if t.transaction_type == BankTransactionType.OUTGOING and t.cogs_payable_id:
+            payments.setdefault(t.cogs_payable_id, []).append(t)
+
+    checked = shifted = 0
+    for pid, payable in store.cogs.items():
+        due = next_working_day(payable.payment_due_date)
+        if not (WINDOW_START <= due <= WINDOW_END):
+            continue
+        checked += 1
+        shifted += not is_working_day(payable.payment_due_date)
+        got = payments.get(pid, [])
+        assert len(got) == 1, f"COGS payable {payable.description} due {payable.payment_due_date}: {len(got)} payments"
+        assert got[0].date == due and got[0].amount == payable.amount_currency
+        assert payable.status == CogsPayableStatus.PAID
+    assert checked >= 4          # two accounts, 2024-01 / 02 accruals fall due in the window
+    for pid, payable in store.cogs.items():  # nothing is paid before it is due
+        for t in payments.get(pid, []):
+            assert t.date >= payable.payment_due_date

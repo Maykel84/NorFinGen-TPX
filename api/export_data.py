@@ -12,12 +12,12 @@ właściciela — zob. `api/db.py`). Zapytania SQL poniżej są tym samym
 zestawieniem co `export_queries.QUERIES`, przepisanym na `asyncpg`
 ($1/$2 placeholders) i rozszerzonym o filtr zakresu dat.
 
-CSV: `demo_reader`/`export_queries` produkuje PIĘĆ różnie ukształtowanych
-zestawień (P&L miesięczny, faktury sprzedaży, faktury zakupu, payroll
-miesięczny, payroll per pracownik, postingi GL) — tak jak lokalny
-`export_csv.py` od zawsze zapisuje je jako pięć osobnych plików, a nie jeden
+CSV: `demo_reader`/`export_queries` produkuje SIEDEM różnie ukształtowanych
+zestawień (P&L miesięczny, faktury sprzedaży, faktury zakupu, zobowiązania
+COGS, payroll miesięczny, payroll per pracownik, postingi GL) — tak jak lokalny
+`export_csv.py` od zawsze zapisuje je jako osobne pliki, a nie jeden
 spłaszczony CSV (nie dają się sensownie połączyć w jedną tabelę bez utraty
-struktury). `/export/csv` zwraca więc ZIP tych pięciu CSV — świadome
+struktury). `/export/csv` zwraca więc ZIP tych CSV — świadome
 odstępstwo od szkicu w prompcie (który zakładał pojedynczy plik .csv),
 udokumentowane w docs/SESSION_HANDOFF.md. `/export/excel` zwraca dokładnie
 to samo jako jeden wieloarkuszowy .xlsx (bez tego kompromisu — Excel
@@ -50,6 +50,10 @@ _COLUMNS: dict[str, list[str]] = {
         "invoice_number", "supplier_id", "invoice_date", "payment_due_date",
         "supplier_name", "postal_code", "amount_excluding_vat_currency",
         "vat_amount_currency", "amount_currency", "status",
+    ],
+    "Zobowiazania_COGS": [
+        "payable_id", "accrual_date", "payment_due_date", "account_number", "supplier_id",
+        "supplier_name", "description", "amount_currency", "status", "paid_date",
     ],
     "Payroll_miesiecznie": ["month", "date", "headcount", "total_net_payroll"],
     "Payroll_per_pracownik": [
@@ -135,6 +139,20 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
             JOIN suppliers s ON s.id = si.supplier_id
             WHERE si.invoice_date BETWEEN $1 AND $2
             ORDER BY si.invoice_date
+            """,
+            params,
+        ),
+        "Zobowiazania_COGS": (
+            """
+            SELECT cp.id AS payable_id, cp.accrual_date, cp.payment_due_date,
+                   cp.account_number, cp.supplier_id, s.name AS supplier_name,
+                   cp.description, cp.amount_currency, cp.status,
+                   b.date AS paid_date
+            FROM cogs_payables cp
+            JOIN suppliers s ON s.id = cp.supplier_id
+            LEFT JOIN bank_transactions b ON b.cogs_payable_id = cp.id AND b.transaction_type = 'OUTGOING'
+            WHERE cp.accrual_date BETWEEN $1 AND $2
+            ORDER BY cp.accrual_date, cp.id
             """,
             params,
         ),

@@ -20,7 +20,7 @@ from datetime import date, timedelta
 
 from norfingen.generators.backfill import months_range
 from norfingen.generators.hours_generator import generate_daily_hours, is_working_day
-from norfingen.generators.opex_generator import generate_monthly_opex
+from norfingen.generators.opex_generator import cogs_payable_for, generate_monthly_opex
 from norfingen.generators.order_generator import generate_monthly_orders
 from norfingen.generators.salary_generator import generate_monthly_salary
 from norfingen.generators.sales_voucher import build_sales_voucher
@@ -43,7 +43,7 @@ def digest(rows) -> str:
 
 
 def build(cutoff: date = CUTOFF) -> dict:
-    orders, invoices, opex, salary_v, salary_v_legacy, hours, sales_v = [], [], [], [], [], [], []
+    orders, invoices, opex, salary_v, salary_v_legacy, hours, sales_v, cogs = [], [], [], [], [], [], [], []
     gross = 0.0
     gl_revenue = 0.0
     for year, month in months_range(START, cutoff):
@@ -64,6 +64,10 @@ def build(cutoff: date = CUTOFF) -> dict:
         for v in generate_monthly_opex(year, month):
             if is_date_generatable(v.date, cutoff):
                 opex.append((v.date.isoformat(), v.description, tuple((p.account.number, p.amount) for p in v.postings)))
+                payable = cogs_payable_for(v)  # phase 4
+                if payable is not None:
+                    cogs.append((payable.accrual_date.isoformat(), payable.payment_due_date.isoformat(),
+                                 payable.account_number, payable.supplier_id, payable.amount_currency))
         if should_generate_monthly_salary(year, month, cutoff):
             txn, vouchers = generate_monthly_salary(year, month)
             for v in vouchers:
@@ -87,6 +91,7 @@ def build(cutoff: date = CUTOFF) -> dict:
         "orders": (len(orders), digest(orders)),
         "supplier_invoices": (len(invoices), digest(invoices)),
         "opex_vouchers": (len(opex), digest(opex)),
+        "cogs_payables": (len(cogs), digest(cogs)),  # phase 4: one per 4291/4292 accrual
         "sales_vouchers": (len(sales_v), digest(sales_v)),  # phase 3: Dr 1500 / Cr 3000 / Cr 2700 per invoice
         "revenue_in_gl": round(gl_revenue, 2),
         "salary_vouchers": (len(salary_v_legacy), digest(salary_v_legacy)),  # accounts mapped back: the pre-phase-1 hash

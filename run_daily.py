@@ -32,10 +32,12 @@ Dla każdego dnia kalendarzowego (process_day) — TEN SAM kod dla historii
    K06, extra consulting, duży projekt, skutki zdarzeń klienta) wraz z voucherem
    sprzedaży OUTGOING_INVOICE (Wn 1500 / Ma 3000 / Ma 2700, faza 3)
 2. Faktury zakupu datowane tego dnia + ich vouchery; COGS i koszty operacyjne
-   datowane tego dnia (day_events)
+   datowane tego dnia (day_events); naliczenie COGS dostaje własne zobowiązanie
+   (cogs_payables, faza 4), żeby dało się je zapłacić
 3. Płatności bankowe z terminem (po przesunięciu na dzień roboczy) przypadającym
-   tego dnia — wpłaty klientów i płatności dostawców; po zaksięgowaniu faktura
-   zakupu zmienia status UNPAID -> PAID (jedyna droga do PAID)
+   tego dnia — wpłaty klientów, płatności dostawców i zobowiązań COGS; po
+   zaksięgowaniu faktura zakupu / zobowiązanie COGS zmienia status UNPAID -> PAID
+   (jedyna droga do PAID)
 4. Godziny pracy konsultantów, jeśli to dzień roboczy (generate_daily_hours)
 5. Lista płac, jeśli to ostatni dzień roboczy miesiąca (generate_monthly_salary)
 
@@ -63,11 +65,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from norfingen.db.repository import (  # noqa: E402
     ensure_schema,
     get_orders_for_payment_window,
+    get_unpaid_cogs_payables,
     get_unpaid_supplier_invoices,
     get_watermark,
     latest_hour_entry_date,
     save_all,
     save_bank_transactions,
+    save_cogs_accrual,
     save_hour_entries,
     save_orders,
     save_salary,
@@ -80,6 +84,7 @@ from norfingen.generators.bank_transaction_generator import (  # noqa: E402
     generate_payroll_bank_transaction,
 )
 from norfingen.generators.hours_generator import generate_daily_hours  # noqa: E402
+from norfingen.generators.opex_generator import cogs_payable_for  # noqa: E402
 from norfingen.generators.day_events import (  # noqa: E402
     operating_vouchers_dated,
     orders_dated,
@@ -146,14 +151,19 @@ def process_day(target_date: date, skip_setup: bool = False) -> dict:
         save_all(build_voucher_for_invoice(invoice, supplier_by_number(invoice.invoiceNumber.split("-")[0])))
         stats["supplier_invoices"] += 1
     for voucher in operating_vouchers_dated(target_date):
-        save_all(voucher)
+        payable = cogs_payable_for(voucher)
+        if payable is not None:
+            save_cogs_accrual(voucher, payable)  # COGS pass-through: the liability gets its payable (phase 4)
+        else:
+            save_all(voucher)
         stats["operating_costs"] += 1
 
     # 3. Płatności bankowe — potrzebujemy zamówień/faktur z bazy (nie tylko
     #    dzisiejszych), żeby dopasować payment_terms/payment_due_date == dzisiaj
     pending_orders = get_orders_for_payment_window(target_date)
     pending_invoices = get_unpaid_supplier_invoices(target_date)
-    bank_txns = generate_daily_bank_transactions(year, month, day, pending_orders, pending_invoices)
+    pending_cogs = get_unpaid_cogs_payables(target_date)
+    bank_txns = generate_daily_bank_transactions(year, month, day, pending_orders, pending_invoices, pending_cogs)
     if bank_txns:
         save_bank_transactions(bank_txns)
         stats["bank_transactions"] = len(bank_txns)

@@ -169,6 +169,38 @@ def main() -> int:
     print()
     check("the export flags exactly the OVERDUE and WRITTEN_OFF invoices", local.one("select count(*) from orders where (status in ('OVERDUE','WRITTEN_OFF')) is distinct from (status <> 'PAID')") == 0)
 
+    # ---- phase 4: COGS liabilities
+    n_accruals = local.one("""select count(*) from vouchers v where v.voucher_type='OPERATING_COST'
+                              and exists (select 1 from postings p where p.voucher_id=v.id and p.account_number=2400 and p.amount<0)""")
+    n_payables = local.one("select count(*) from cogs_payables")
+    check("every COGS accrual (Cr 2400) has exactly one payable", n_accruals == n_payables == local.one("select count(distinct voucher_id) from cogs_payables"),
+          f"{n_accruals} accruals, {n_payables} payables")
+    check("payable amount == the credit booked on 2400, to the cent", local.one(
+        """select count(*) from cogs_payables cp join (select voucher_id, -sum(amount) c from postings where account_number=2400 and amount<0 group by 1) k
+           on k.voucher_id=cp.voucher_id where cp.amount_currency <> k.c""") == 0)
+    check("COGS payable is PAID <=> it has an OUTGOING payment", local.one(
+        """select count(*) from cogs_payables cp where (cp.status='PAID') <>
+           exists (select 1 from bank_transactions b where b.cogs_payable_id=cp.id and b.transaction_type='OUTGOING')""") == 0)
+    check("COGS payments: working day, on/after the due date, exactly the payable amount, one per payable", local.one(
+        """select count(*) from bank_transactions b join cogs_payables cp on cp.id=b.cogs_payable_id
+           where extract(isodow from b.date) in (6,7) or b.date < cp.payment_due_date or b.amount <> cp.amount_currency""") == 0
+        and local.one("select count(*) from (select cogs_payable_id from bank_transactions where cogs_payable_id is not null group by 1 having count(*)>1) t") == 0)
+    check("no COGS payable still UNPAID although its (shifted) due date has passed", local.one(
+        """select count(*) from cogs_payables where status='UNPAID' and payment_due_date + (case extract(isodow from payment_due_date)
+           when 6 then 2 when 7 then 1 else 0 end) <= current_date""") == 0)
+    bal_2400 = f(local.one("select sum(amount) from postings where account_number=2400"))
+    open_inv = f(local.one("select coalesce(sum(amount_currency),0) from supplier_invoices where status='UNPAID'"))
+    open_cogs = f(local.one("select coalesce(sum(amount_currency),0) from cogs_payables where status='UNPAID'"))
+    check("balance of 2400 == -(UNPAID purchase invoices + UNPAID COGS payables), to the cent (gl_checks T8)",
+          abs(bal_2400 + open_inv + open_cogs) < 0.005,
+          f"2400 balance {bal_2400:,.2f} | purchase invoices {open_inv:,.2f} + COGS {open_cogs:,.2f} = {open_inv + open_cogs:,.2f}")
+    per_supplier = local.all("""select s.supplier_number, s.name, round(-sum(p.amount),2) from postings p join suppliers s on s.id=p.supplier_id
+                                where p.account_number=2400 group by 1,2 order by 1""")
+    print("\nAccounts-payable ageing on 2400 (what is still owed, per supplier):")
+    for r in per_supplier:
+        print(f"   {r[0]} {r[1]:32} {f(r[2]):>14,.2f}")
+    check("every posting on 2400 carries a supplier (ageing is complete)", local.one("select count(*) from postings where account_number=2400 and supplier_id is null") == 0)
+    print()
     check("every bank transaction has its voucher", local.one("select count(*) from bank_transactions where voucher_id is null") == 0)
 
     # supplier invoices: status follows the payments, and nothing is paid before it is due

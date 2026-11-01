@@ -76,6 +76,20 @@ QUERIES = {
         JOIN suppliers s ON s.id = si.supplier_id
         ORDER BY si.invoice_date
     """,
+    # Accounting phase 4: the COGS pass-through liabilities (accounts 4291 / 4292) that sit on 2400 next to the purchase
+    # invoices, one row per monthly accrual. They have no purchase invoice behind them, so without this sheet the
+    # supplier ledger (2400) cannot be reconciled to Faktury_zakupu: GL balance on 2400 = -(UNPAID purchase invoices
+    # + UNPAID rows here).  status UNPAID = flagged as open; paid_date = the bank payment, NULL while unpaid.
+    "Zobowiazania_COGS": """
+        SELECT cp.id AS payable_id, cp.accrual_date, cp.payment_due_date,
+               cp.account_number, cp.supplier_id, s.name AS supplier_name,
+               cp.description, cp.amount_currency, cp.status,
+               b.date AS paid_date
+        FROM cogs_payables cp
+        JOIN suppliers s ON s.id = cp.supplier_id
+        LEFT JOIN bank_transactions b ON b.cogs_payable_id = cp.id AND b.transaction_type = 'OUTGOING'
+        ORDER BY cp.accrual_date, cp.id
+    """,
     "Payroll_miesiecznie": """
         SELECT TO_CHAR(st.date, 'YYYY-MM') AS month,
                st.date,

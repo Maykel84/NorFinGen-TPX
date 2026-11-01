@@ -48,6 +48,8 @@ from norfingen.generators.sales_voucher import order_gross_amount
 from norfingen.generators.salary_generator import ACCOUNT_FORSKUDDSTREKK, ACCOUNT_SKYLDIG_AGA, ACCOUNT_SKYLDIG_LONN
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
+from norfingen.models.base import TripletexRef
+from norfingen.models.cogs_payable import CogsPayable
 from norfingen.models.order import Order, OrderStatus
 from norfingen.models.salary import SalaryTransaction
 from norfingen.models.supplier_invoice import SupplierInvoice
@@ -134,6 +136,7 @@ def generate_daily_bank_transactions(
     day: int,
     orders: list[Order],
     supplier_invoices: list[SupplierInvoice],
+    cogs_payables: list[CogsPayable] = (),
 ) -> list[tuple[BankTransaction, Voucher]]:
     """Generates bank payments falling exactly on a given day — matches
     among the `orders`/`supplier_invoices` from previous months (payment
@@ -164,6 +167,12 @@ def generate_daily_bank_transactions(
         if invoice.paymentDueDate is not None and next_working_day(invoice.paymentDueDate) == today:
             results.append(build_outgoing_payment(invoice))
 
+    # Phase 4: the COGS pass-through liabilities are paid like purchase invoices - on the due date, moved to the
+    # next working day.
+    for payable in cogs_payables:
+        if next_working_day(payable.payment_due_date) == today:
+            results.append(build_cogs_payment(payable))
+
     return results
 
 
@@ -193,6 +202,38 @@ def build_outgoing_payment(invoice: SupplierInvoice) -> tuple[BankTransaction, V
         postings=[
             Posting(date=payment_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=amount, supplier=invoice.supplier),
             Posting(date=payment_date, account=acct(ACCOUNT_BANK), amount=-amount, supplier=invoice.supplier),
+        ],
+    )
+    assert_voucher_valid(voucher)
+    return transaction, voucher
+
+
+def build_cogs_payment(payable: CogsPayable) -> tuple[BankTransaction, Voucher]:
+    """The company pays a COGS pass-through liability (phase 4): Dr 2400 Leverandorgjeld / Cr 1910 Bankinnskudd, on the
+    due date moved to the next working day. Same shape as build_outgoing_payment for a purchase invoice; the supplier
+    dimension on 2400 is the one the accrual put there, so the ageing clears per supplier."""
+    assert payable.id is not None, "build_cogs_payment: payable.id must be a real ID from the database"
+    amount = round(payable.amount_currency, 2)
+    payment_date = next_working_day(payable.payment_due_date)
+    supplier = TripletexRef(id=payable.supplier_id)
+
+    transaction = BankTransaction(
+        date=payment_date,
+        amount=amount,
+        transaction_type=BankTransactionType.OUTGOING,
+        description=f"Utbetaling {payable.description}",
+        supplier_id=payable.supplier_id,
+        cogs_payable_id=payable.id,
+        account_from=ACCOUNT_BANK,
+        account_to=ACCOUNT_LEVERANDORGJELD,
+    )
+    voucher = Voucher(
+        date=payment_date,
+        description=f"Utbetaling {payable.description}",
+        voucherType=VoucherType.BANK,
+        postings=[
+            Posting(date=payment_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=amount, supplier=supplier),
+            Posting(date=payment_date, account=acct(ACCOUNT_BANK), amount=-amount, supplier=supplier),
         ],
     )
     assert_voucher_valid(voucher)

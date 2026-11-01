@@ -74,6 +74,7 @@ def main() -> int:
     cur.execute(f"CREATE VIEW gl AS {GL_VIEW}")
     cur.execute(f"CREATE VIEW sales AS {_strip_order_by(QUERIES['Faktury_sprzedazy'])}")
     cur.execute(f"CREATE VIEW purch AS {_strip_order_by(QUERIES['Faktury_zakupu'])}")
+    cur.execute(f"CREATE VIEW cogs AS {_strip_order_by(QUERIES['Zobowiazania_COGS'])}")
     cur.execute(f"CREATE VIEW pay AS {_strip_order_by(QUERIES['Payroll_per_pracownik'])}")
 
     results = []
