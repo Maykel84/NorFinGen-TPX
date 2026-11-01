@@ -47,7 +47,7 @@ def test_generate_payroll_bank_transaction_for_historical_month(year, month):
     assert bank_transaction.amount > 0
 
     # Voucher musi się bilansować (suma postingów = 0) i dotykać wyłącznie
-    # kont bilansowych (zobowiązania 2700/2710/2740 + bank 1910) — NIGDY
+    # kont bilansowych (zobowiązania 2930/2600/2770 + bank 1910) — NIGDY
     # kont P&L (4xxx/5xxx/6xxx/7xxx) — bo ta naprawa nie może zmienić marży.
     assert abs(sum(p.amount for p in voucher.postings)) < 0.01
     for posting in voucher.postings:
@@ -67,7 +67,7 @@ def test_generate_payroll_bank_transaction_requires_real_id():
 
 def test_payroll_bank_transaction_total_matches_liability_postings():
     """Kwota płatności = dokładnie suma tego, co zaksięgowano jako
-    zobowiązanie (2710+2740+2700) w oryginalnych voucherach listy płac —
+    zobowiązanie (2930+2600+2770) w oryginalnych voucherach listy płac —
     nie inna, niezależnie policzona wartość (zob. docstring funkcji:
     unika duplikowania logiki obliczeniowej)."""
     transaction, vouchers = generate_monthly_salary(2025, 3)

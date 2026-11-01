@@ -683,10 +683,10 @@
     <div class="voucher-block">
       <div style="font-family:var(--font-mono);font-size:12px;line-height:2;color:var(--text-muted)">
         Brutto (lønn)<br>
-        &nbsp;&nbsp;├─ <span class="v-dr">Skattetrekk (~33%)</span> &nbsp;→&nbsp; <span class="v-ac">2740</span> &nbsp;→&nbsp; przelew → <span class="v-ac">1940</span> (skattetrekkskonto)<br>
-        &nbsp;&nbsp;└─ <span class="v-cr">Netto (wypłata)</span> &nbsp;→&nbsp; <span class="v-ac">2710</span> &nbsp;→&nbsp; przelew → <span class="v-ac">1910</span> (driftskonto)<br><br>
+        &nbsp;&nbsp;├─ <span class="v-dr">Skattetrekk (~33%)</span> &nbsp;→&nbsp; <span class="v-ac">2600</span> &nbsp;→&nbsp; przelew → <span class="v-ac">1940</span> (skattetrekkskonto)<br>
+        &nbsp;&nbsp;└─ <span class="v-cr">Netto (wypłata)</span> &nbsp;→&nbsp; <span class="v-ac">2930</span> &nbsp;→&nbsp; przelew → <span class="v-ac">1910</span> (driftskonto)<br><br>
         Osobno: <span style="color:var(--teal)">AGA pracodawcy (14,1% od brutto)</span><br>
-        &nbsp;&nbsp;DR <span class="v-ac">5400</span> → CR <span class="v-ac">2700</span> → przelew → <span class="v-ac">1910</span>
+        &nbsp;&nbsp;DR <span class="v-ac">5400</span> → CR <span class="v-ac">2770</span> → przelew → <span class="v-ac">1910</span>
       </div>
     </div>
 
@@ -801,14 +801,20 @@
           <tr><td>Miesiąc wypłaty</td><td><span class="special-badge">Czerwiec</span></td><td>branżowy standard w Norwegii</td></tr>
           <tr><td>Skattetrekk w czerwcu</td><td class="mono-val">0%</td><td>feriepenger zwolnione z potrącenia</td></tr>
           <tr><td>AGA od feriepenger</td><td class="mono-val">14,1%</td><td>naliczane przy wypłacie</td></tr>
-          <tr><td>Konto rezerwy</td><td class="mono-val">2930 Skyldige feriepenger</td><td>zobowiązanie bilansowe</td></tr>
+          <tr><td>Konto rezerwy</td><td class="mono-val">2940 Skyldige feriepenger</td><td>zobowiązanie bilansowe</td></tr>
         </tbody>
       </table>
     </div>
 
+    <div class="callout">
+      <strong>Faza 1 (SPEC poprawki księgowe):</strong> konta zobowiązań płacowych są teraz zgodne z NS 4102 —
+      2930 Skyldig lønn (netto), 2600 Forskuddstrekk (podatek), 2770 Skyldig AGA, 2940 Skyldige feriepenger. Numery w tej sekcji zostały
+      zaktualizowane, ale <em>struktura</em> poniżej (Tryb B, bez miesięcznej rezerwy) jest historyczna: aktualny model to miesięczna
+      rezerwa feriepenger Dr 5099 / Ma 2940 rozwiązywana w czerwcu — zob. <code>docs/DATA_DICTIONARY.md</code> i <code>salary_generator.py</code>.
+    </div>
     <div class="subsection-label">Tryb księgowania — Tryb B (uproszczony, używany przez NorFinGen)</div>
     <div class="callout">
-      Przez 11 miesięcy — zwykły payroll, brak rezerwy miesięcznej. W czerwcu — osobny Voucher feriepenger. Tryb A (miesięczna rezerwa na 2930) możliwy do wprowadzenia w Etapie 4.
+      Przez 11 miesięcy — zwykły payroll, brak rezerwy miesięcznej. W czerwcu — osobny Voucher feriepenger. Tryb A (miesięczna rezerwa na 2940) możliwy do wprowadzenia w Etapie 4.
     </div>
 
     <div class="subsection-label">Agregaty feriepenger — pełny roster (16 os.)</div>
@@ -858,23 +864,23 @@
     <div class="voucher-block">
       <div class="v-title">SalaryTransaction — lista płac (voucherType: SALARY)</div>
       <span class="v-dr">DR</span> <span class="v-ac">5000</span> Lønn, fast &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne brutto 16 pracowników</span><br>
-      <span class="v-cr">CR</span> <span class="v-ac">2710</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne netto</span><br>
-      <span class="v-cr">CR</span> <span class="v-ac">2740</span> Skyldig skattetrekk &nbsp;&nbsp;<span class="v-cm">łączne potrącenie</span>
+      <span class="v-cr">CR</span> <span class="v-ac">2930</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne netto</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2600</span> Forskuddstrekk &nbsp;&nbsp;<span class="v-cm">łączne potrącenie</span>
     </div>
 
     <div class="voucher-block">
       <div class="v-title">SalaryTransaction — AGA (voucherType: SALARY)</div>
       <span class="v-dr">DR</span> <span class="v-ac">5400</span> Arbeidsgiveravgift &nbsp;&nbsp;<span class="v-cm">łączne AGA (14,1% brutto)</span><br>
-      <span class="v-cr">CR</span> <span class="v-ac">2700</span> Skyldig AGA &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne AGA</span>
+      <span class="v-cr">CR</span> <span class="v-ac">2770</span> Skyldig AGA &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne AGA</span>
     </div>
 
     <div class="voucher-block">
       <div class="v-title">Czerwiec — Feriepenger (voucherType: SALARY)</div>
       <span class="v-dr">DR</span> <span class="v-ac">5000</span> Feriepenger &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">brutto_rok_poprz. × 12%</span><br>
-      <span class="v-cr">CR</span> <span class="v-ac">2710</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">= feriepenger (brak skattetrekk)</span><br>
+      <span class="v-cr">CR</span> <span class="v-ac">2930</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">= feriepenger (brak skattetrekk)</span><br>
       <br>
       <span class="v-dr">DR</span> <span class="v-ac">5400</span> AGA feriepenger &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">feriepenger × 14,1%</span><br>
-      <span class="v-cr">CR</span> <span class="v-ac">2700</span> Skyldig AGA &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">AGA od feriepenger</span>
+      <span class="v-cr">CR</span> <span class="v-ac">2770</span> Skyldig AGA &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">AGA od feriepenger</span>
     </div>
 
     <div class="voucher-block">
@@ -885,10 +891,10 @@
 
     <div class="voucher-block">
       <div class="v-title">Wypłata netto + przelew skattetrekk (voucherType: BANK) [opcjonalne W4]</div>
-      <span class="v-dr">DR</span> <span class="v-ac">2710</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne netto</span><br>
+      <span class="v-dr">DR</span> <span class="v-ac">2930</span> Skyldig lønn &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="v-cm">łączne netto</span><br>
       <span class="v-cr">CR</span> <span class="v-ac">1910</span> Bankinnskudd, driftskonto<br>
       <br>
-      <span class="v-dr">DR</span> <span class="v-ac">2740</span> Skyldig skattetrekk &nbsp;&nbsp;<span class="v-cm">łączny skattetrekk</span><br>
+      <span class="v-dr">DR</span> <span class="v-ac">2600</span> Forskuddstrekk &nbsp;&nbsp;<span class="v-cm">łączny skattetrekk</span><br>
       <span class="v-cr">CR</span> <span class="v-ac">1940</span> Bankinnskudd, skattetrekkskonto
     </div>
 
@@ -953,13 +959,13 @@
             <td>SalaryTransaction + Payslip</td>
             <td><span style="color:var(--green);font-family:var(--font-mono);font-size:11px">✓ gotowe</span></td>
             <td>jawnie — dwa Vouchery (lista + AGA)</td>
-            <td class="mono-val">5000, 5400, 2710, 2740, 2700</td>
+            <td class="mono-val">5000, 5400, 2930, 2600, 2770</td>
           </tr>
           <tr>
             <td>Feriepenger</td>
             <td><span style="color:var(--green);font-family:var(--font-mono);font-size:11px">✓ gotowe</span></td>
             <td>jawnie — czerwiec, osobny Voucher</td>
-            <td class="mono-val">5000, 5400, 2710, 2700, 2930</td>
+            <td class="mono-val">5000, 5400, 2930, 2770, 2940</td>
           </tr>
         </tbody>
       </table>

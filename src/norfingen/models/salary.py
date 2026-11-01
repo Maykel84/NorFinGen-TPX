@@ -3,8 +3,8 @@
 POST /v2/salaryV2/transaction · POST /v2/salaryV2/payslip
 
 One SalaryTransaction per month, one Payslip per employee. The generator
-creates Vouchers explicitly — two separate ones: payroll (5000/2710/2740) +
-employer's social security contribution/AGA (5400/2700). June has a different
+creates Vouchers explicitly — two separate ones: payroll (5000/2930/2600) +
+employer's social security contribution/AGA (5400/2770). June has a different
 pattern (see norfingen.seed.payroll): wage type 920 is absent, wage type 260
 (feriepenger/holiday pay) is calculated from the previous year's gross pay.
 """

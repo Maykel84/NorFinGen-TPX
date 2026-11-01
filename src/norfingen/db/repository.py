@@ -67,17 +67,26 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (1940, "Bankinnskudd, skattetrekkskonto", "ASSETS", None),
     (2000, "Aksjekapital", "EQUITY_AND_LIABILITY", None),
     (2400, "Leverandørgjeld", "EQUITY_AND_LIABILITY", None),
-    (2700, "Skyldig arbeidsgiveravgift", "EQUITY_AND_LIABILITY", None),
-    (2710, "Skyldig lønn", "EQUITY_AND_LIABILITY", None),
-    (2740, "Skyldig skattetrekk", "EQUITY_AND_LIABILITY", None),
-    (2770, "Skyldig merverdiavgift", "EQUITY_AND_LIABILITY", None),
-    (2930, "Skyldige feriepenger", "EQUITY_AND_LIABILITY", None),
+    # Phase 1 (docs/SPEC_poprawki_ksiegowe.md) - the 27xx/29xx liabilities follow NS 4102. Until
+    # then the payroll liabilities sat on the VAT accounts (2700/2710/2740) and the VAT account
+    # (2770) was named after VAT; both are renamed here and payroll moves to its own accounts:
+    #   2600 Forskuddstrekk (withheld tax)      2930 Skyldig lønn (net pay owed)
+    #   2770 Skyldig AGA (one account: the AGA on the feriepenger provision is NOT split off to 2780 -
+    #        a deliberate simplification, see README)       2940 Skyldige feriepenger (the provision)
+    # 2700/2710/2740 are the VAT accounts: outgoing / incoming VAT and the settlement account.
+    (2600, "Forskuddstrekk", "EQUITY_AND_LIABILITY", None),
+    (2700, "Utgående merverdiavgift", "EQUITY_AND_LIABILITY", None),
+    (2710, "Inngående merverdiavgift", "EQUITY_AND_LIABILITY", None),
+    (2740, "Oppgjørskonto merverdiavgift", "EQUITY_AND_LIABILITY", None),
+    (2770, "Skyldig arbeidsgiveravgift", "EQUITY_AND_LIABILITY", None),
+    (2930, "Skyldig lønn", "EQUITY_AND_LIABILITY", None),
+    (2940, "Skyldige feriepenger", "EQUITY_AND_LIABILITY", None),
     (3000, "Salgsinntekter, IT-tjenester", "OPERATING_INCOME", 3),
     (3100, "Lisensintekter", "OPERATING_INCOME", 3),
     (5000, "Lønn, fast", "OPERATING_EXPENSE", None),
     # 2026-09-21 correction — feriepenger is accrued monthly (12% of normal
-    # gross), not conjured up in June: DR 5099 / CR 2930 every month, drawn
-    # down (DR 2930) instead of hitting 5000 again when actually paid out in
+    # gross), not conjured up in June: DR 5099 / CR 2940 every month, drawn
+    # down (DR 2940) instead of hitting 5000 again when actually paid out in
     # June (see seed/payroll.py::calc_feriepenger_provision).
     (5099, "Avsetning feriepenger", "OPERATING_EXPENSE", None),
     (5400, "Arbeidsgiveravgift", "OPERATING_EXPENSE", None),
@@ -224,10 +233,14 @@ def seed_reference_data() -> None:
                 vat_type,
             )
 
+        # DO UPDATE, not DO NOTHING: the seed is the source of truth for the chart of accounts, so a
+        # renamed account (phase 1: 2700/2710/2740/2770/2930 changed meaning) reaches an existing
+        # database on the next run instead of keeping its old name forever.
         for account in ACCOUNTS_SEED:
             cur.execute(
                 "INSERT INTO accounts (number, name, type, vat_type_id) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT (number) DO NOTHING",
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (number) DO UPDATE "
+                "SET name = EXCLUDED.name, type = EXCLUDED.type, vat_type_id = EXCLUDED.vat_type_id",
                 account,
             )
 

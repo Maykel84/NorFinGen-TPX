@@ -20,10 +20,10 @@ DR/CR patterns:
 
   Payroll payout (Step 2 — gap fix: payroll never generated a bank
   transaction, since Tier 2, not a Phase 6 regression):
-    DR 2710 Skyldig lønn               +employees' net pay
-    DR 2740 Skyldig skattetrekk        +tax withholding (if >0, not always —
+    DR 2930 Skyldig lønn               +employees' net pay
+    DR 2600 Forskuddstrekk             +tax withholding (if >0, not always —
                                           e.g. long-tenured employees have 0 in June)
-    DR 2700 Skyldig arbeidsgiveravgift +AGA
+    DR 2770 Skyldig arbeidsgiveravgift +AGA
     CR 1910 Bankinnskudd driftskonto   -total
     date = salary_transaction.date (payout day = the day cash leaves the
            bank, unlike invoices there's no separate payment term here)
@@ -45,6 +45,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from norfingen.generators.money import pg_round2
+from norfingen.generators.salary_generator import ACCOUNT_FORSKUDDSTREKK, ACCOUNT_SKYLDIG_AGA, ACCOUNT_SKYLDIG_LONN
 from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
 from norfingen.models.bank_transaction import BankTransaction, BankTransactionType
 from norfingen.models.order import Order, OrderStatus
@@ -56,10 +57,11 @@ from norfingen.seed.workdays import next_working_day
 ACCOUNT_BANK = 1910  # Bankinnskudd, driftskonto
 ACCOUNT_KUNDEFORDRINGER = 1500
 ACCOUNT_LEVERANDORGJELD = 2400
-ACCOUNT_SKYLDIG_LONN = 2710
-ACCOUNT_SKYLDIG_SKATTETREKK = 2740
-ACCOUNT_SKYLDIG_AGA = 2700
-PAYROLL_LIABILITY_ACCOUNTS = (ACCOUNT_SKYLDIG_LONN, ACCOUNT_SKYLDIG_SKATTETREKK, ACCOUNT_SKYLDIG_AGA)
+# Phase 1: the payroll liabilities have their own NS 4102 accounts (2930/2600/2770), defined once in
+# salary_generator, so the voucher that books the liability and the one that pays it cannot disagree.
+# The feriepenger liability (2940) is deliberately NOT here: it is not paid with the payroll.
+ACCOUNT_SKYLDIG_SKATTETREKK = ACCOUNT_FORSKUDDSTREKK
+PAYROLL_LIABILITY_ACCOUNTS = (ACCOUNT_SKYLDIG_LONN, ACCOUNT_FORSKUDDSTREKK, ACCOUNT_SKYLDIG_AGA)
 
 OVERDUE_PAYMENT_DELAY_DAYS = 90  # OVERDUE pays payment_terms + 90 days, not on time
 
@@ -207,7 +209,7 @@ def generate_payroll_bank_transaction(
     """The company pays out payroll — a bank account outflow (Step 2, gap
     fix: payroll never generated a BankTransaction, see the module-level
     docstring). Amounts are NOT recomputed from scratch — they're pulled
-    from the liability postings (2710/2740/2700) of the `vouchers` returned
+    from the liability postings (2930/2600/2770) of the `vouchers` returned
     by `salary_generator.generate_monthly_salary()` (the same two vouchers
     as always: payroll + AGA), so the payout is guaranteed to match, down
     to the øre, what was actually booked as a liability — no risk of drift

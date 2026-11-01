@@ -63,7 +63,7 @@ class Posting(BaseModel):
     vatAmount: Optional[float] = None  # only on the DR posting — embedded, not a separate posting
     customer: Optional[TripletexRef] = None  # required for account 1500 (AR aging)
     supplier: Optional[TripletexRef] = None  # required for account 2400 (AP aging)
-    employee: Optional[TripletexRef] = None  # required for accounts 2710/2740 (employee card)
+    employee: Optional[TripletexRef] = None  # employee card for payroll liabilities 2930/2600 (not populated today)
     department: Optional[TripletexRef] = None  # for accounts 5000/5400/3000/3100 (departmental reports)
     url: Optional[str] = None
 

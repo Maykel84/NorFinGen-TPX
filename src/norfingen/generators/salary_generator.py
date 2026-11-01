@@ -1,15 +1,15 @@
 """Monthly payroll run generator (Layer 2 + Layer 3).
 
 Every month, three vouchers:
-1. Payroll: DR 5000 (normal/gap salary) + DR 2930 (June only — feriepenger
-   drawdown) / CR 2710 / CR 2740.
-2. AGA: DR 5400 / CR 2700 — TWO components, both accrued in the year
+1. Payroll: DR 5000 (normal/gap salary) + DR 2940 (June only — feriepenger
+   drawdown) / CR 2930 Skyldig lønn (net pay) / CR 2600 Forskuddstrekk (tax).
+2. AGA: DR 5400 / CR 2770 Skyldig arbeidsgiveravgift — TWO components, both accrued in the year
    EARNED (opptjeningsprinsippet): AGA on the actual salary paid this month
    (excluding, in June, the feriepenger portion — its AGA was already
    recognized the previous year via #3) + AGA on this month's feriepenger
    provision (calc_aga(calc_feriepenger_provision(...)) — "det samme
    gjelder arbeidsgiveravgift av feriepenger").
-3. Feriepenger provision (2026-09-21 correction): DR 5099 / CR 2930 — 12% of
+3. Feriepenger provision (2026-09-21 correction): DR 5099 / CR 2940 — 12% of
    that month's NORMAL gross (calc_feriepenger_provision), accrued every
    month including June, funding NEXT year's payout.
 
@@ -24,7 +24,7 @@ is paid out as a regular, taxed salary.
 Feriepenger bookkeeping (2026-09-21 correction — see payroll.py's module
 docstring for the full rationale): the feriepenger portion of June's payout
 no longer hits account 5000 a second time — it draws down the SAME
-liability (2930) that voucher #3 built up over the preceding 12 months, and
+liability (2940) that voucher #3 built up over the preceding 12 months, and
 its AGA is not recomputed in June either (also already accrued monthly the
 year before). Recreating the "pay salary AND feriepenger, double the cost"
 bug this project already fixed once (via a second, uncoordinated
@@ -72,6 +72,14 @@ from norfingen.seed.payroll import (
 )
 from norfingen.seed.roster import EmployeeSeed, numeric_id
 
+# Phase 1 (docs/SPEC_poprawki_ksiegowe.md): payroll liabilities live on their own NS 4102 accounts,
+# not on the VAT accounts 2700/2710/2740 where they sat before. bank_transaction_generator pays the
+# first three; the feriepenger liability (2940) is only drawn down in June, never paid at payroll.
+ACCOUNT_SKYLDIG_LONN = 2930         # net pay owed to employees
+ACCOUNT_FORSKUDDSTREKK = 2600       # tax withheld, owed to Skatteetaten
+ACCOUNT_SKYLDIG_AGA = 2770          # employer's contribution (also on the feriepenger provision - no 2780)
+ACCOUNT_FERIEPENGER_LIABILITY = 2940
+
 MONTH_NAMES_NO = [
     "januar", "februar", "mars", "april", "mai", "juni",
     "juli", "august", "september", "oktober", "november", "desember",
@@ -103,7 +111,7 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
     june = is_june(month)
 
     payslips: list[Payslip] = []
-    salary_total = feriepenger_drawdown_total = 0.0  # DR 5000 / DR 2930 (June only)
+    salary_total = feriepenger_drawdown_total = 0.0  # DR 5000 / DR 2940 (June only)
     netto_total = skattetrekk_total = aga_total = 0.0
     provision_total = 0.0  # DR 5099, every month
 
@@ -185,11 +193,11 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
     if salary_total:
         payroll_voucher_postings.append(Posting(date=pay_date, account=acct(5000), amount=round(salary_total, 2)))
     if feriepenger_drawdown_total:
-        payroll_voucher_postings.append(Posting(date=pay_date, account=acct(2930), amount=round(feriepenger_drawdown_total, 2)))
-    payroll_voucher_postings.append(Posting(date=pay_date, account=acct(2710), amount=-round(netto_total, 2)))
+        payroll_voucher_postings.append(Posting(date=pay_date, account=acct(ACCOUNT_FERIEPENGER_LIABILITY), amount=round(feriepenger_drawdown_total, 2)))
+    payroll_voucher_postings.append(Posting(date=pay_date, account=acct(ACCOUNT_SKYLDIG_LONN), amount=-round(netto_total, 2)))
     if skattetrekk_total:
         payroll_voucher_postings.append(
-            Posting(date=pay_date, account=acct(2740), amount=-round(skattetrekk_total, 2))
+            Posting(date=pay_date, account=acct(ACCOUNT_FORSKUDDSTREKK), amount=-round(skattetrekk_total, 2))
         )
     payroll_voucher = Voucher(
         date=pay_date,
@@ -206,7 +214,7 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
         voucherType=VoucherType.SALARY,
         postings=[
             Posting(date=pay_date, account=acct(5400), amount=round(aga_total, 2)),
-            Posting(date=pay_date, account=acct(2700), amount=-round(aga_total, 2)),
+            Posting(date=pay_date, account=acct(ACCOUNT_SKYLDIG_AGA), amount=-round(aga_total, 2)),
         ],
     )
     assert_voucher_valid(aga_voucher)
@@ -218,7 +226,7 @@ def generate_monthly_salary(year: int, month: int) -> tuple[SalaryTransaction, l
         voucherType=VoucherType.SALARY,
         postings=[
             Posting(date=pay_date, account=acct(5099), amount=round(provision_total, 2)),
-            Posting(date=pay_date, account=acct(2930), amount=-round(provision_total, 2)),
+            Posting(date=pay_date, account=acct(ACCOUNT_FERIEPENGER_LIABILITY), amount=-round(provision_total, 2)),
         ],
     )
     assert_voucher_valid(provision_voucher)

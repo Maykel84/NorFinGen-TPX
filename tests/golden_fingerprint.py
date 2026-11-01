@@ -30,13 +30,19 @@ from norfingen.seed.roster import numeric_id
 CUTOFF = date(2026, 9, 30)
 START = date(2019, 1, 1)
 
+# Phase 1 moved the payroll liabilities off the VAT accounts. The move is a bijection, so the
+# ORIGINAL frozen salary hash can still be checked: map the new accounts back to the old ones and the
+# amounts/dates/structure must hash exactly as before. That proves phase 1 changed account numbers
+# and nothing else. (new -> old)
+PHASE1_TO_LEGACY_ACCOUNTS = {2930: 2710, 2600: 2740, 2770: 2700, 2940: 2930}
+
 
 def digest(rows) -> str:
     return hashlib.sha256("\n".join(sorted(json.dumps(r, default=str) for r in rows)).encode()).hexdigest()[:16]
 
 
 def build(cutoff: date = CUTOFF) -> dict:
-    orders, invoices, opex, salary_v, hours = [], [], [], [], []
+    orders, invoices, opex, salary_v, salary_v_legacy, hours = [], [], [], [], [], []
     gross = 0.0
     for year, month in months_range(START, cutoff):
         for o in generate_monthly_orders(year, month):
@@ -56,6 +62,8 @@ def build(cutoff: date = CUTOFF) -> dict:
             txn, vouchers = generate_monthly_salary(year, month)
             for v in vouchers:
                 salary_v.append((v.date.isoformat(), v.description, tuple((p.account.number, p.amount) for p in v.postings)))
+                salary_v_legacy.append((v.date.isoformat(), v.description, tuple(
+                    (PHASE1_TO_LEGACY_ACCOUNTS.get(p.account.number, p.account.number), p.amount) for p in v.postings)))
             for payslip in txn.payslips:
                 for spec in payslip.specifications:
                     if spec.wageType.id in (100, 260):  # Fast lønn + Feriepenger
@@ -73,7 +81,8 @@ def build(cutoff: date = CUTOFF) -> dict:
         "orders": (len(orders), digest(orders)),
         "supplier_invoices": (len(invoices), digest(invoices)),
         "opex_vouchers": (len(opex), digest(opex)),
-        "salary_vouchers": (len(salary_v), digest(salary_v)),
+        "salary_vouchers": (len(salary_v_legacy), digest(salary_v_legacy)),  # accounts mapped back: the pre-phase-1 hash
+        "salary_vouchers_phase1_accounts": (len(salary_v), digest(salary_v)),  # the real accounts (2930/2600/2770/2940)
         "hour_entries": (len(hours), digest(hours)),
         "revenue_net": round(sum(o[3] for o in orders)),
         "payroll_gross": round(gross),

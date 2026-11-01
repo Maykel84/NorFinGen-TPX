@@ -723,11 +723,13 @@
         <tbody>
           <tr><td class="mono-val">2000</td><td>Aksjekapital</td><td>Kapitał zakładowy 30 000 NOK (tylko backfill)</td></tr>
           <tr><td class="mono-val">2400</td><td>Leverandørgjeld</td><td>Zobowiązania wobec dostawców (Supplier AP)</td></tr>
-          <tr><td class="mono-val">2700</td><td>Skyldig arbeidsgiveravgift</td><td>Należna składka pracodawcy (AGA)</td></tr>
-          <tr><td class="mono-val">2710</td><td>Skyldig lønn</td><td>Należna wypłata netto</td></tr>
-          <tr><td class="mono-val">2740</td><td>Skyldig skattetrekk</td><td>Potrącony zaliczkowy podatek dochodowy</td></tr>
-          <tr><td class="mono-val">2770</td><td>Skyldig merverdiavgift</td><td>Należny VAT do Skatteetaten</td></tr>
-          <tr><td class="mono-val">2930</td><td>Skyldige feriepenger</td><td>Rezerwa urlopowa — naliczone, nie wypłacone</td></tr>
+          <tr><td class="mono-val">2600</td><td>Forskuddstrekk</td><td>Potrącony zaliczkowy podatek dochodowy (skattetrekk), do przelewu do Skatteetaten</td></tr>
+          <tr><td class="mono-val">2700</td><td>Utgående merverdiavgift</td><td>VAT należny ze sprzedaży (25%)</td></tr>
+          <tr><td class="mono-val">2710</td><td>Inngående merverdiavgift</td><td>VAT naliczony z faktur zakupu</td></tr>
+          <tr><td class="mono-val">2740</td><td>Oppgjørskonto merverdiavgift</td><td>Rozliczenie VAT per termin (2700 i 2710 przenoszone tu, potem przelew do/z Skatteetaten)</td></tr>
+          <tr><td class="mono-val">2770</td><td>Skyldig arbeidsgiveravgift</td><td>Należna składka pracodawcy (AGA), także od rezerwy feriepenger (świadomie jedno konto, bez 2780)</td></tr>
+          <tr><td class="mono-val">2930</td><td>Skyldig lønn</td><td>Należna wypłata netto</td></tr>
+          <tr><td class="mono-val">2940</td><td>Skyldige feriepenger</td><td>Rezerwa urlopowa — naliczana co miesiąc, rozwiązywana w czerwcu</td></tr>
         </tbody>
       </table>
     </div>
@@ -849,24 +851,24 @@
           <tr>
             <td>Wynagrodzenie brutto</td>
             <td><span class="dr">5000</span></td>
-            <td><span class="cr">2710</span></td>
+            <td><span class="cr">2930</span></td>
             <td style="color:var(--text-dim)">brak</td>
           </tr>
           <tr>
             <td>AGA pracodawcy (14,1%)</td>
             <td><span class="dr">5400</span></td>
-            <td><span class="cr">2700</span></td>
+            <td><span class="cr">2770</span></td>
             <td style="color:var(--text-dim)">brak</td>
           </tr>
           <tr>
             <td>Podatek dochodowy (potrącenie)</td>
-            <td><span class="dr">2710</span></td>
-            <td><span class="cr">2740</span></td>
+            <td><span class="dr">2930</span></td>
+            <td><span class="cr">2600</span></td>
             <td style="color:var(--text-dim)">brak</td>
           </tr>
           <tr>
             <td>Przelew bankowy (do dostawcy / payroll)</td>
-            <td><span class="dr">2400 / 2710</span></td>
+            <td><span class="dr">2400 / 2930</span></td>
             <td><span class="cr">1910</span></td>
             <td style="color:var(--text-dim)">brak</td>
           </tr>
@@ -878,7 +880,7 @@
           </tr>
           <tr>
             <td>Rozliczenie VAT</td>
-            <td><span class="dr">2770</span></td>
+            <td><span class="dr">2740</span></td>
             <td><span class="cr">1910</span></td>
             <td style="color:var(--text-dim)">brak</td>
           </tr>
@@ -887,7 +889,7 @@
     </div>
 
     <div class="callout">
-      <strong>Uwaga dla Warstwy 3:</strong> Kwota VAT jest osobnym polem <span style="font-family:var(--font-mono)">vatAmount</span> w Postingu — nie generuje osobnego wiersza postingu. Konto 2770 (VAT payable) jest rozliczane osobnym voucherem przy składaniu deklaracji MVA (kwartalnie lub miesięcznie).
+      <strong>Uwaga dla Warstwy 3:</strong> Kwota VAT jest osobnym polem <span style="font-family:var(--font-mono)">vatAmount</span> w Postingu — nie generuje osobnego wiersza postingu. Konto 2740 (Oppgjørskonto MVA) jest rozliczane osobnym voucherem przy składaniu deklaracji MVA (kwartalnie lub miesięcznie).
     </div>
   </div>
 

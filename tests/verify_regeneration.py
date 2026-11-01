@@ -68,10 +68,10 @@ def main() -> int:
           round(f(local.one("select sum(ss.amount) from salary_specifications ss join payslips p on p.id=ss.payslip_id join salary_transactions st on st.id=p.transaction_id where ss.wage_type_id in (100,260) and st.date<=%s", (frozen,)))) == FROZEN_PAYROLL_GROSS)
 
     if ref:
-        def same(sql, label, norm=lambda r: tuple(f(x) for x in r)):
-            a = {norm(r) for r in local.all(sql, (frozen,))}
-            b = {norm(r) for r in ref.all(sql, (frozen,))}
-            check(f"{label} <= {frozen} identical to reference", a == b,
+        def same(sql, label, norm_local=lambda r: tuple(f(x) for x in r), note=""):
+            a = {norm_local(r) for r in local.all(sql, (frozen,))}
+            b = {tuple(f(x) for x in r) for r in ref.all(sql, (frozen,))}
+            check(f"{label} <= {frozen} identical to reference{note}", a == b,
                   f"local={len(a)} ref={len(b)} only_local={len(a - b)} only_ref={len(b - a)}")
 
         same("""select o.customer_id, o.order_date::text, o.status, sum(ol.amount_excluding_vat_currency), sum(ol.amount_currency), count(*)
@@ -81,8 +81,13 @@ def main() -> int:
         same("""select v.date::text, v.description, p.account_number, p.amount from vouchers v join postings p on p.voucher_id=v.id
                 where v.voucher_type='OPERATING_COST' and v.date<=%s""", "operating cost / COGS postings")
         same("select date::text, employee_id, project_id, activity_type, hours from hour_entries where date<=%s", "hour entries")
+        # Phase 1 renumbered the payroll liabilities (tests/golden_fingerprint.PHASE1_TO_LEGACY_ACCOUNTS):
+        # map the new accounts back and the postings must equal the reference exactly - same dates, same
+        # amounts, only the account numbers moved. Drop this mapping once production is regenerated.
+        legacy = {2930: 2710, 2600: 2740, 2770: 2700, 2940: 2930}
         same("""select v.date::text, v.description, p.account_number, p.amount from vouchers v join postings p on p.voucher_id=v.id
-                where v.voucher_type='SALARY' and v.date<=%s""", "payroll postings")
+                where v.voucher_type='SALARY' and v.date<=%s""", "payroll postings",
+             norm_local=lambda r: (r[0], r[1], legacy.get(r[2], r[2]), f(r[3])), note=" (accounts mapped back)")
 
     # ------------------------------------------------------------------ after the frozen date
     new_orders = local.all("""select o.customer_id, o.order_date::text, to_char(o.order_date,'Dy'), sum(ol.amount_excluding_vat_currency)

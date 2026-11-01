@@ -116,7 +116,21 @@ Business meaning: a fixed dictionary of VAT rates (the only rate actually used i
 | type | TEXT | ASSETS / EQUITY_AND_LIABILITY / OPERATING_INCOME / OPERATING_EXPENSE |
 | vat_type_id | INTEGER (FK) | → vat_types.id, only for revenue/cost accounts with VAT |
 
-Business meaning: a 29-entry chart of accounts (24 + 3 from Phase 3 + 2 from Phase 6) used by every `postings.account_number`. **Accounts 3000/3100 (revenue) exist in this dictionary, but never have any postings** — see the limitation at the top of this document.
+Business meaning: a 33-entry chart of accounts (the earlier count of 29 was stale: 31 before accounting phase 1, which added 2600 and 2940) used by every `postings.account_number`. **Accounts 3000/3100 (revenue) exist in this dictionary, but never have any postings** — see the limitation at the top of this document.
+
+**Accounting phase 1 (`docs/SPEC_poprawki_ksiegowe.md`) - the 26xx/27xx/29xx liabilities follow NS 4102.** Until then the payroll liabilities sat on the VAT accounts and the VAT account carried the wrong name. Now:
+
+| Account | Name | Used for |
+|---|---|---|
+| 2600 | Forskuddstrekk | tax withheld from pay (Cr in the payroll voucher, Dr when paid to Skatteetaten) |
+| 2700 | Utgående merverdiavgift | output VAT on sales (phases 2-3) |
+| 2710 | Inngående merverdiavgift | input VAT on purchase invoices (phase 2) |
+| 2740 | Oppgjørskonto merverdiavgift | VAT settlement per two-month term (phase 5) |
+| 2770 | Skyldig arbeidsgiveravgift | employer's contribution - **one** account, also for the AGA on the feriepenger provision (no 2780: splitting it would need a release mechanism for 2780 in June; a deliberate simplification) |
+| 2930 | Skyldig lønn | net pay owed to employees |
+| 2940 | Skyldige feriepenger | the monthly provision (Cr), drawn down in June (Dr) |
+
+Before: net pay 2710, tax 2740, AGA 2700, provision/drawdown 2930. The move is a pure renumbering (a bijection): the payroll postings of the whole history equal the previous ones once mapped back, and the golden hash proves it. `seed_reference_data()` now UPDATEs account names (`ON CONFLICT DO UPDATE`), so a rename reaches an existing database; the 2600 and 2940 rows are inserted.
 
 **Phase 3 — 3 new cost accounts** (`generators/opex_generator.py`), all without VAT (`vat_type_id=NULL`) — cash costs booked directly (DR cost / CR 1910), without an intermediate `SupplierInvoice`:
 - **4290** "Driftsmateriell for kundeleveranse" — COGS (NS4102 class 4, not 6xxx/7xxx like the rest of operating costs): a one-off piece of implementation equipment (routers/servers) at Enterprise/Mid-market customer onboarding, 45-90k NOK (Enterprise) / 15-35k NOK (Mid-market). Since the current 12 customers onboarded 2019-2022, this cost occurs almost exclusively in the historical years.
@@ -271,7 +285,7 @@ Business meaning: the header of an accounting entry. **Contains no sales revenue
 | account_number | INTEGER (FK) | → accounts.number |
 | amount | NUMERIC(14,2) | **+ = debit, - = credit**. The sum of postings in a voucher ≈ 0 (with a VAT tolerance, see `validate_balance()`) |
 | vat_amount | NUMERIC(14,2) | Only on the debit posting, embedded (not a separate posting) |
-| customer_id / supplier_id / employee_id / department_id | INTEGER (FK) | Analytical dimensions — populated depending on the posting type (e.g. customer_id for account 1500, employee_id for 2710/2740) |
+| customer_id / supplier_id / employee_id / department_id | INTEGER (FK) | Analytical dimensions — populated depending on the posting type (e.g. customer_id for account 1500; employee_id is never populated today and is dropped from the GL export) |
 
 Business meaning: a single line of an accounting entry (DR/CR). For cost analysis: filter `account_number BETWEEN 5000 AND 5999` (payroll) or `BETWEEN 6000 AND 7999` (operating costs).
 
@@ -289,7 +303,7 @@ Business meaning: a single line of an accounting entry (DR/CR). For cost analysi
 | customer_id / supplier_id | INTEGER (FK) | Populated depending on direction |
 | order_id / supplier_invoice_id | INTEGER (FK) | The linked source document |
 | **salary_transaction_id** | INTEGER (FK) | → salary_transactions.id — populated for OUTGOING rows that are payroll payouts (addendum: "Fix: orphaned records + payroll OUTGOING") |
-| account_from, account_to | INTEGER | GL accounts: INCOMING 1500→1910, OUTGOING (supplier) 1910→2400, OUTGOING (payroll) 1910→2710 |
+| account_from, account_to | INTEGER | GL accounts: INCOMING 1500→1910, OUTGOING (supplier) 1910→2400, OUTGOING (payroll) 1910→2930 |
 | voucher_id | INTEGER (FK) | → vouchers.id (of type BANK) |
 
 Business meaning: the actual movement on the bank account, time-shifted relative to the invoice by `payment_terms` (customer) or 30 days (supplier), +90 days for OVERDUE orders, never for WRITTEN_OFF. Payroll is paid the same day as the payroll run (`salary_transaction.date` = the last working day of the month) — no delay like invoices have.

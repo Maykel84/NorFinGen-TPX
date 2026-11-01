@@ -333,9 +333,9 @@
         <div class="p-voucher-row"><span class="p-label">voucherType</span>SALARY &emsp; <span class="p-label">date</span>= ostatni roboczy dzień mies. &emsp; <span class="p-label">description</span>"Lønnskjøring [mies. rok]"</div>
         <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">5000</span><span class="p-account-name">Lønn, fast</span><span class="p-amount dr">+ łączne brutto</span></div>
         <div class="posting-meta">department=null (agregat wszystkich działów)</div>
-        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2710</span><span class="p-account-name">Skyldig lønn</span><span class="p-amount cr">− łączne netto</span></div>
+        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2930</span><span class="p-account-name">Skyldig lønn</span><span class="p-amount cr">− łączne netto</span></div>
         <div class="posting-meta">employee — agregat lub per pracownik</div>
-        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2740</span><span class="p-account-name">Skyldig skattetrekk</span><span class="p-amount cr">− łączny skattetrekk</span></div>
+        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2600</span><span class="p-account-name">Forskuddstrekk</span><span class="p-amount cr">− łączny skattetrekk</span></div>
         <div class="posting-meta">employee — agregat lub per pracownik</div>
         <div class="balance-row"><span>Balans:</span><span class="balance-ok">✓ brutto = netto + skattetrekk</span></div>
       </div>
@@ -352,7 +352,7 @@
         <div class="p-voucher-row"><span class="p-label">voucherType</span>SALARY &emsp; <span class="p-label">date</span>= lista płac &emsp; <span class="p-label">description</span>"Arbeidsgiveravgift [mies. rok]"</div>
         <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">5400</span><span class="p-account-name">Arbeidsgiveravgift</span><span class="p-amount dr">+ łączne AGA (14,1%)</span></div>
         <div class="posting-meta">department=null (agregat)</div>
-        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2700</span><span class="p-account-name">Skyldig arbeidsgiveravgift</span><span class="p-amount cr">− łączne AGA</span></div>
+        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2770</span><span class="p-account-name">Skyldig arbeidsgiveravgift</span><span class="p-amount cr">− łączne AGA</span></div>
         <div class="balance-row"><span>Balans:</span><span class="balance-ok">✓ symetryczny 2-posting</span></div>
       </div>
     </div>
@@ -367,12 +367,12 @@
       <div class="pattern-body">
         <div class="p-voucher-row"><span class="p-label">voucherType</span>SALARY &emsp; <span class="p-label">date</span>= ostatni roboczy dzień czerwca &emsp; <span class="p-label">description</span>"Feriepenger [rok]"</div>
         <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">5000</span><span class="p-account-name">Feriepenger</span><span class="p-amount dr">+ brutto_prev × 12%</span></div>
-        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2710</span><span class="p-account-name">Skyldig lønn</span><span class="p-amount cr">− brutto_prev × 12%</span></div>
+        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2930</span><span class="p-account-name">Skyldig lønn</span><span class="p-amount cr">− brutto_prev × 12%</span></div>
         <div class="posting-meta">skattetrekk = 0 · netto = brutto feriepenger</div>
-        <div class="balance-row" style="margin-bottom:10px"><span>Balans V1:</span><span class="balance-ok">✓ brak 2740 — feriepenger nie podlega skattetrekk</span></div>
+        <div class="balance-row" style="margin-bottom:10px"><span>Balans V1:</span><span class="balance-ok">✓ brak 2600 — feriepenger nie podlega skattetrekk</span></div>
         <div class="p-voucher-row" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)"><span style="color:var(--amber);font-size:11px;font-weight:700">Voucher 2 — AGA od feriepenger (ten sam dzień)</span></div>
         <div class="posting-row"><span class="p-tag p-tag-dr">DR</span><span class="p-account">5400</span><span class="p-account-name">AGA feriepenger</span><span class="p-amount dr">+ feriepenger × 14,1%</span></div>
-        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2700</span><span class="p-account-name">Skyldig AGA</span><span class="p-amount cr">− feriepenger × 14,1%</span></div>
+        <div class="posting-row"><span class="p-tag p-tag-cr">CR</span><span class="p-account">2770</span><span class="p-account-name">Skyldig AGA</span><span class="p-amount cr">− feriepenger × 14,1%</span></div>
         <div class="balance-row"><span>Balans V2:</span><span class="balance-ok">✓ symetryczny</span></div>
       </div>
     </div>
@@ -407,8 +407,8 @@
           <tr><td class="mono-val">1500</td><td>Kundefordringer</td><td style="color:var(--amber);font-weight:600">customer</td><td class="mono-val">{id: K0x}</td><td style="font-size:11px;color:var(--text-muted)">AR aging per klient</td></tr>
           <tr><td class="mono-val">1500</td><td>Kundefordringer</td><td style="color:var(--amber);font-weight:600">invoice</td><td class="mono-val">{id: order_id}</td><td style="font-size:11px;color:var(--text-muted)">AR aging per faktura</td></tr>
           <tr><td class="mono-val">2400</td><td>Leverandørgjeld</td><td style="color:var(--amber);font-weight:600">supplier</td><td class="mono-val">{id: L0x}</td><td style="font-size:11px;color:var(--text-muted)">AP aging per dostawca</td></tr>
-          <tr><td class="mono-val">2710</td><td>Skyldig lønn</td><td style="color:var(--amber);font-weight:600">employee</td><td class="mono-val">{id: E0x}</td><td style="font-size:11px;color:var(--text-muted)">Karta pracownika — wypłaty</td></tr>
-          <tr><td class="mono-val">2740</td><td>Skyldig skattetrekk</td><td style="color:var(--amber);font-weight:600">employee</td><td class="mono-val">{id: E0x}</td><td style="font-size:11px;color:var(--text-muted)">Karta pracownika — podatek</td></tr>
+          <tr><td class="mono-val">2930</td><td>Skyldig lønn</td><td style="color:var(--amber);font-weight:600">employee</td><td class="mono-val">{id: E0x}</td><td style="font-size:11px;color:var(--text-muted)">Karta pracownika — wypłaty</td></tr>
+          <tr><td class="mono-val">2600</td><td>Forskuddstrekk</td><td style="color:var(--amber);font-weight:600">employee</td><td class="mono-val">{id: E0x}</td><td style="font-size:11px;color:var(--text-muted)">Karta pracownika — podatek</td></tr>
           <tr><td class="mono-val">5000</td><td>Lønn, fast</td><td style="color:var(--text-muted)">department</td><td class="mono-val">{id: N}</td><td style="font-size:11px;color:var(--text-muted)">Koszty działowe</td></tr>
           <tr><td class="mono-val">5400</td><td>Arbeidsgiveravgift</td><td style="color:var(--text-muted)">department</td><td class="mono-val">{id: N}</td><td style="font-size:11px;color:var(--text-muted)">AGA per dział</td></tr>
           <tr><td class="mono-val">3000/3100</td><td>Salgsinntekter / Lisensintekter</td><td style="color:var(--text-muted)">department</td><td class="mono-val">{id: 1} Salg</td><td style="font-size:11px;color:var(--text-muted)">Przychody per dział</td></tr>

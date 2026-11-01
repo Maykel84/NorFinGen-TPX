@@ -9,3 +9,6 @@ venv/
 .DS_Store
 norfingen_export.xlsx
 *.csv
+
+# local dev environment for the accounting-model work (venv + scratch Postgres), see scripts/local_pg.sh
+.local/

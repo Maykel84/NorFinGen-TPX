@@ -1303,3 +1303,28 @@ Przed tą fazą: środowisko robocze sesji (venv, lokalny Postgres w katalogu ty
 
 **Do wdrożenia na Supabase (jeszcze nie wykonane, wymaga planu i "ok"):** migracja `generation_state`, wyłączony cron na czas TRUNCATE + `python run_backfill.py` (ok. godzinę, commit per rekord), potem włączenie crona; `ensure_schema()` w pierwszym przebiegu i tak utworzy tabelę.
 
+## Poprawki księgowe wg SPEC — faza 1: konta płacowe (2026-11-01)
+
+Środowisko robocze: katalog sesji znów został wyczyszczony przy zmianie doby, więc venv i lokalny Postgres przeniosłem do katalogu projektu (`.local/`, w `.gitignore`; `scripts/local_pg.sh start|stop|url`). Stary `.venv` projektu wisi na importach (nie używać). Dysk jest dziś wolny (zimny start), pierwszy test czytający całe `src/` trwa ok. minuty — to nie błąd.
+
+**Zmiana:** zobowiązania płacowe przeszły z kont VAT na własne konta NS 4102 (czysta renumeracja, bijekcja):
+
+| Co | Było | Jest |
+|---|---|---|
+| netto do wypłaty (Ma) | 2710 | **2930** Skyldig lønn |
+| podatek pobrany (Ma) | 2740 | **2600** Forskuddstrekk |
+| AGA (Ma) | 2700 | **2770** Skyldig arbeidsgiveravgift |
+| rezerwa feriepenger (Ma) i jej rozwiązanie w czerwcu (Wn) | 2930 | **2940** Skyldige feriepenger |
+
+Płatność listy płac (BANK) rozlicza 2930/2600/2770 (stałe w jednym miejscu: `salary_generator`, importowane przez `bank_transaction_generator`); 2940 nie jest płacone przelewem. 2700/2710/2740 są wolne dla VAT (fazy 2, 3, 5). Plan kont w seedzie poprawiony wg NS 4102 (2700 Utgående MVA, 2710 Inngående MVA, 2740 Oppgjørskonto MVA, 2770 Skyldig AGA, nowe 2600 i 2940). `seed_reference_data()` robi teraz `ON CONFLICT DO UPDATE` na nazwach/typach kont, bo `DO NOTHING` nie dostarczyłby zmian nazw do istniejącej bazy (sprawdzone: baza ze starymi nazwami po seedzie ma nowe). Decyzja 2: jedno konto 2770 dla AGA (bez 2780), zapisane w README jako świadome uproszczenie.
+
+**Dowód, że zmieniły się tylko numery kont:** golden hash `salary_vouchers` po zmapowaniu nowych kont z powrotem na stare daje dokładnie ten sam hash co przed fazą 1 (`ea2df287fc8f69c1`); dodatkowo przypięty hash z nowymi kontami (`5041bde7f3f0b4cd`). Na bazie lokalnej: 652 postingi płacowe ≤ 2026-09-30 po zmapowaniu wstecz są identyczne z produkcją (daty, kwoty, opisy).
+
+**Testy (480 zielonych + 1 pominięty):** nowy `test_phase1_payroll_accounts.py` (każdy voucher płacowy używa dokładnie swoich kont; 0 postingów płacowych na 2700/2710/2740 przez 93 miesiące = T7 u źródła; wypłata feriepenger z 2940 w każdym czerwcu od 2020 = T9 u źródła; saldo 2940 nigdy ujemne; księgowanie + wypłata zerują 2930/2600/2770 co miesiąc; plan kont wg NS 4102), zaktualizowany `test_salary_generator.py`. Mutacja (netto z powrotem na 2710) wykryta.
+
+**`gl_checks.sql` po fazie 1:** T7 PASS, T9 PASS (obie wcześniej FAIL). **T10 PASS tylko przypadkiem kalendarza**: dziś jest 1 listopada, a koszty księgują się 1. dnia miesiąca (faktury 1/5/10/15/20), więc ostatni koszt jest świeży; 15 listopada ten test znów byłby FAIL — prawdziwa naprawa to faza 5 (koszty w realnych dniach). Pozostałe FAIL zgodnie z planem: T1, T2 (faza 2: VAT naliczony w fakturach zakupu), T3-T5 (faza 3), T6 (faza 2), T8 (faza 4), T11 (faza 6). REG_A/B/C PASS.
+
+**Diagramy HTML:** `norfingen_warstwa1_schemas.html` (tabela kont i wzorce płacowe), `warstwa2` i `warstwa3` (bloki płacowe W5/W6, tabela subledgerów) przenumerowane; w warstwa2 dopisana uwaga, że struktura "Tryb B" jest historyczna (aktualny model to miesięczna rezerwa Dr 5099 / Ma 2940). **Celowo NIE ruszone: opis VAT w warstwa3 (linie ok. 243 i 257: "VAT jako pole vatAmount, konto 2770 zasilane przez Tripletex")** — to jest przepisywane w fazie 2 razem ze zmianą modelu VAT; do tego czasu ten fragment jest nieaktualny (2770 to teraz AGA).
+
+**Wdrożenie na Supabase:** brak zmian w schemacie (tylko dane referencyjne kont, dostarczone przez seed). Ale historia GL musi zostać zregenerowana (TRUNCATE + `run_backfill.py`), bo postingi płacowe w bazie mają stare konta.
+

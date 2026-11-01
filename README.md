@@ -93,6 +93,15 @@ Fictional vs. real entities are handled under a clear rule: suppliers
 may be real, named companies; customers are always fictional. See
 [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md).
 
+## Deliberate simplifications in the books
+
+- **One account for employer's contribution (AGA): 2770.** The AGA on the feriepenger provision is booked on
+  the same account as the AGA on salary, not split off to 2780 (*Påløpt arbeidsgiveravgift på feriepenger*).
+  A split would need a mechanism that releases 2780 into 2770 when the feriepenger is paid out in June; the
+  amounts, the P&L and the cash flow are identical either way.
+- **Payroll liabilities have their own accounts** (2930 net pay, 2600 withheld tax, 2770 AGA, 2940 feriepenger
+  provision); 2700/2710/2740 are reserved for VAT, as in NS 4102.
+
 ## Backlog (deliberately deferred)
 
 Decisions taken while fixing the accounting model (see [docs/SPEC_poprawki_ksiegowe.md](docs/SPEC_poprawki_ksiegowe.md)):

@@ -8,9 +8,9 @@ Feriepenger bookkeeping (correction, 2026-09-21 — confirmed against real
 Norwegian accounting practice, opptjeningsprinsippet: feriepenger AND its
 AGA are both booked in the year they're EARNED, not the year they're paid):
 every month, the employer books calc_feriepenger_provision() (12% of that
-month's normal gross) as an expense, crediting a liability (account 2930,
+month's normal gross) as an expense, crediting a liability (account 2940,
 "Skyldige feriepenger") — plus calc_aga(that provision) as a further
-monthly expense, crediting the SAME AGA liability (2700) that regular
+monthly expense, crediting the SAME AGA liability (2770) that regular
 salary AGA uses ("det samme gjelder arbeidsgiveravgift av feriepenger" —
 the AGA rules treat feriepenger the same way). In June, the actual
 feriepenger PAYOUT to the employee (calc_june_salary, unchanged formula —
@@ -106,7 +106,7 @@ def calc_feriepenger_provision(brutto_normal: float) -> float:
     so June's own swap doesn't feed back into its own provisioning; see
     calc_brutto_with_raises, the same base brutto_earned_in_year() sums).
     Booked as an expense (account 5099) against the SAME liability
-    (account 2930) that calc_june_salary's feriepenger draws down."""
+    (account 2940) that calc_june_salary's feriepenger draws down."""
     return round(brutto_normal * FERIEPENGER_RATE, 2)
 
 
@@ -115,7 +115,7 @@ class JuneSalary:
     gross_salary: float  # regular June salary — 0 in the standard case
     feriepenger: float
     total_brutto: float  # gross_salary + feriepenger — netto/skattetrekk are computed off this,
-    # but gross_salary posts to 5000 and feriepenger posts to 2930 (liability drawdown) separately —
+    # but gross_salary posts to 5000 and feriepenger posts to 2940 (liability drawdown) separately —
     # see salary_generator.py, not a single combined 5000/AGA posting
     tax_on_salary: float  # skattetrekk applies only to gross_salary; feriepenger is always untaxed
 

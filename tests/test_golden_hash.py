@@ -25,7 +25,11 @@ GOLDEN = {
     "orders": (1853, "62f1f25e5f6fdb88"),
     "supplier_invoices": (745, "4a571fa9fea764a7"),
     "opex_vouchers": (469, "892715817cd39468"),
+    # With the phase-1 accounts mapped back to the old ones this is the hash frozen BEFORE phase 1 (see
+    # golden_fingerprint.PHASE1_TO_LEGACY_ACCOUNTS): phase 1 renumbered accounts and changed nothing else.
     "salary_vouchers": (279, "ea2df287fc8f69c1"),
+    # The real phase-1 accounts: 2930 net pay / 2600 tax / 2770 AGA / 2940 feriepenger.
+    "salary_vouchers_phase1_accounts": (279, "5041bde7f3f0b4cd"),
     "hour_entries": (51444, "be85fd57c76cdb56"),
     "revenue_net": 209_030_662,
     "payroll_gross": 81_422_455,

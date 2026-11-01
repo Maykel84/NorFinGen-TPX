@@ -58,13 +58,13 @@ def test_june_2022():
     expected_provision_total = sum(calc_feriepenger_provision(calc_brutto_with_raises(e, 2022, 6)) for e in active)
     expected_aga_on_provision = sum(calc_aga(calc_feriepenger_provision(calc_brutto_with_raises(e, 2022, 6))) for e in active)
 
-    assert _posting(payroll_voucher, 2930).amount == round(expected_feriepenger_total, 2)
+    assert _posting(payroll_voucher, 2940).amount == round(expected_feriepenger_total, 2)
     if expected_gap_total:
         assert _posting(payroll_voucher, 5000).amount == round(expected_gap_total, 2)
     assert _posting(aga_voucher, 5400).amount == round(expected_aga_on_gap + expected_aga_on_provision, 2)
-    assert _posting(aga_voucher, 2700).amount == -round(expected_aga_on_gap + expected_aga_on_provision, 2)
+    assert _posting(aga_voucher, 2770).amount == -round(expected_aga_on_gap + expected_aga_on_provision, 2)
     assert _posting(provision_voucher, 5099).amount == round(expected_provision_total, 2)
-    assert _posting(provision_voucher, 2930).amount == -round(expected_provision_total, 2)
+    assert _posting(provision_voucher, 2940).amount == -round(expected_provision_total, 2)
 
     # E09/E10 startowali 2021-06-01 -> aktywni 7 miesięcy w 2021 (cze-gru), nie 12.
     # Bez podwyżki (pierwsza dopiero w lipcu 2022 — rok po zatrudnieniu).
@@ -110,7 +110,7 @@ def test_june_2023():
     expected_feriepenger_total = sum(
         calc_june_salary(e, 2023, brutto_earned_in_year(e, 2022)).feriepenger for e in active
     )
-    assert _posting(payroll_voucher, 2930).amount == round(expected_feriepenger_total, 2)
+    assert _posting(payroll_voucher, 2940).amount == round(expected_feriepenger_total, 2)
     assert round(sum(p.amount for p in payroll_voucher.postings), 2) == 0
     assert round(sum(p.amount for p in aga_voucher.postings), 2) == 0
     assert round(sum(p.amount for p in provision_voucher.postings), 2) == 0
@@ -149,7 +149,7 @@ def test_june_salary_gap_for_short_tenure_employee():
 
 
 def test_june_no_double_cost():
-    # Konto 5000 (P&L) w czerwcu: po korekcie feriepenger draws down 2930
+    # Konto 5000 (P&L) w czerwcu: po korekcie feriepenger draws down 2940
     # (bilans, nie P&L), więc 5000 w czerwcu to WYŁĄCZNIE ewentualny "gap"
     # dla pracowników z niepełnym poprzednim rokiem — musi być NISKIE
     # (bliskie zeru), nie zbliżone do normalnej miesięcznej pensji.
@@ -216,7 +216,7 @@ def test_no_separate_benefit_cost_account_5900():
 
 
 def test_feriepenger_accrued_monthly_all_twelve_months():
-    """The 5099/2930 provision voucher is posted every month, June included,
+    """The 5099/2940 provision voucher is posted every month, June included,
     at 12% of that month's normal gross summed across active employees."""
     for month in range(1, 13):
         active = active_employees(date(2024, month, 15))
@@ -224,7 +224,7 @@ def test_feriepenger_accrued_monthly_all_twelve_months():
         provision_voucher = next(v for v in vouchers if "Avsetning feriepenger" in v.description)
         expected = sum(calc_feriepenger_provision(calc_brutto_with_raises(e, 2024, month)) for e in active)
         assert _posting(provision_voucher, 5099).amount == round(expected, 2)
-        assert _posting(provision_voucher, 2930).amount == -round(expected, 2)
+        assert _posting(provision_voucher, 2940).amount == -round(expected, 2)
         assert expected > 0
 
 
@@ -249,7 +249,7 @@ def test_aga_accrued_monthly_with_feriepenger_reserve():
 
 
 def test_june_payout_settles_liability_not_new_cost():
-    """June's feriepenger payout posts to 2930 (liability drawdown), never
+    """June's feriepenger payout posts to 2940 (liability drawdown), never
     to 5000, and its AGA is not recomputed in June (already accrued monthly
     the year it was earned) — only the rare <1yr-tenure "gap" salary (if
     any) contributes to 5400's June AGA on the paid-salary side."""
@@ -265,7 +265,7 @@ def test_june_payout_settles_liability_not_new_cost():
     expected_gap = sum(
         calc_june_salary(e, year, brutto_earned_in_year(e, year - 1)).gross_salary for e in active
     )
-    assert _posting(payroll_voucher, 2930).amount == round(expected_feriepenger, 2)
+    assert _posting(payroll_voucher, 2940).amount == round(expected_feriepenger, 2)
     assert _posting_amount_or_zero(payroll_voucher, 5000) == round(expected_gap, 2)
 
     expected_aga_on_gap = sum(
@@ -285,7 +285,7 @@ def test_june_payout_settles_liability_not_new_cost():
 
 
 def test_aga_excludes_canteen_and_insurance():
-    """AGA (accounts 5400/2700) is never posted by the canteen generator —
+    """AGA (accounts 5400/2770) is never posted by the canteen generator —
     it's an operating cost (7350), not remuneration."""
     from norfingen.generators.opex_generator import generate_monthly_opex
 
@@ -294,7 +294,7 @@ def test_aga_excludes_canteen_and_insurance():
             accounts = {p.account.number for p in voucher.postings}
             if 7350 in accounts:
                 assert 5400 not in accounts
-                assert 2700 not in accounts
+                assert 2770 not in accounts
 
 
 def test_june_employee_payout_unchanged_from_faza5():
@@ -316,16 +316,16 @@ def test_june_employee_payout_unchanged_from_faza5():
         assert result.gross_salary == round(normal_gross - result.feriepenger, 2)
 
 
-def test_account_2930_balance_pattern_over_two_years():
-    """The 2930 (Skyldige feriepenger) liability balance for one long-tenured
+def test_account_2940_balance_pattern_over_two_years():
+    """The 2940 (Skyldige feriepenger) liability balance for one long-tenured
     employee (E01, employed since 2019) rises through year N (12 monthly
     accruals) and drops in June of year N+1 (the payout draws it down),
     then rises again through year N+1 — confirming the accrual/drawdown
     cycle nets out correctly rather than compounding."""
     e01 = employee_by_number("E01")
 
-    def postings_2930_for(year: int, month: int) -> float:
-        """Net 2930 movement from E01's share of that month's vouchers —
+    def postings_2940_for(year: int, month: int) -> float:
+        """Net 2940 movement from E01's share of that month's vouchers —
         the provision voucher is company-wide, so prorate isn't exact per
         employee, but for a stable-headcount month the E01-specific
         movement is exactly calc_feriepenger_provision(E01's normal gross)
@@ -340,7 +340,7 @@ def test_account_2930_balance_pattern_over_two_years():
     yearly_end_balance = {}
     for year in (2023, 2024, 2025):
         for month in range(1, 13):
-            balance += postings_2930_for(year, month)
+            balance += postings_2940_for(year, month)
         yearly_end_balance[year] = balance
 
     # The balance should stay roughly stable year-over-year for a
@@ -358,7 +358,7 @@ def test_account_2930_balance_pattern_over_two_years():
     running = 0.0
     monthly_end = []
     for month in range(1, 13):
-        running += postings_2930_for(2024, month)
+        running += postings_2940_for(2024, month)
         monthly_end.append(running)
     assert monthly_end[5] < monthly_end[4]  # June (index 5) drops vs May (index 4)
     assert monthly_end[6] > monthly_end[5]  # July resumes rising
