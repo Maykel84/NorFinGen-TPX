@@ -51,6 +51,7 @@ from norfingen.seed.roster import (
     PRODUCTS,
     PROJECTS,
     SERVICES,
+    SUPPLIER_ADDRESSES,
     ALL_SUPPLIERS,
     numeric_id,
 )
@@ -301,13 +302,16 @@ def seed_reference_data() -> None:
 
         for supplier in ALL_SUPPLIERS:
             cur.execute(
-                """INSERT INTO suppliers (id, name, supplier_number, country_id, currency_id, organization_number)
-                   VALUES (%s, %s, %s, %s, %s, %s)
+                """INSERT INTO suppliers (id, name, supplier_number, country_id, currency_id, organization_number,
+                                          postal_code, city)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                        name = EXCLUDED.name,
-                       organization_number = EXCLUDED.organization_number""",
+                       organization_number = EXCLUDED.organization_number,
+                       postal_code = EXCLUDED.postal_code,
+                       city = EXCLUDED.city""",
                 (numeric_id(supplier.number), supplier.name, supplier.number, NORWAY_COUNTRY_ID, NOK_CURRENCY_ID,
-                 supplier.real_org_number),
+                 supplier.real_org_number, SUPPLIER_ADDRESSES[supplier.number][0], SUPPLIER_ADDRESSES[supplier.number][1]),
             )
 
     conn.commit()

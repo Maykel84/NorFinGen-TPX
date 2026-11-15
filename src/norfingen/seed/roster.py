@@ -497,6 +497,27 @@ SUPPLIERS: list[SupplierSeed] = [
                  real_org_number="995568217"),
 ]
 
+# Supplier registered offices (postnummer + poststed), phase 6 - for geocoding in BI and the `postal_code` column of
+# Faktury_zakupu. STATIC DATA: the generator never calls any API.
+#   source "brreg"        - fetched ONCE on 2026-11-01 from data.brreg.no (Enhetsregisteret, `forretningsadresse`) for
+#                           the supplier's real_org_number; to refresh, look the organisation number up by hand and edit
+#                           this table.
+#   source "illustrative" - the supplier has no confirmed registry entry (L05 is fictional, L07 could not be matched,
+#                           see docs/DATA_SAFETY.md), so the code is the main post office of a plausible city, NOT a
+#                           registry value.
+SUPPLIER_ADDRESSES: dict[str, tuple[str, str, str]] = {
+    "L01": ("0194", "OSLO", "brreg"),       # Microsoft Norge AS, 957485030
+    "L02": ("1360", "FORNEBU", "brreg"),    # Telenor Norge AS, 976967631 (municipality Baerum)
+    "L03": ("0661", "OSLO", "brreg"),       # Reitan Convenience AS, 983415652
+    "L04": ("0155", "OSLO", "brreg"),       # Statsbygg, 971278374
+    "L05": ("5003", "BERGEN", "illustrative"),   # Sandvik IT Solutions AS - fictional
+    "L06": ("0251", "OSLO", "brreg"),       # Advokatfirmaet Thommessen AS, 957423248
+    "L07": ("0150", "OSLO", "illustrative"),     # Avis Norge AS - not matched in the registry
+    "L08": ("0191", "OSLO", "brreg"),       # Gjensidige Forsikring ASA, 995568217
+    "L09": ("0667", "OSLO", "brreg"),       # Ingram Micro AS, 961425905
+}
+
+
 # Suppliers that exist ONLY as the counterparty of the COGS pass-through liabilities (accounts 4291/4292, see
 # opex_generator._cogs_accrual_voucher). They are deliberately NOT in SUPPLIERS: that list is what the
 # purchase-invoice generator iterates (it would raise on an unknown rhythm) and what company_events draws the

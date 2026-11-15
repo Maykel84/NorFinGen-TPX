@@ -102,12 +102,20 @@ HAVING COALESCE(MAX(date), DATE '1900-01-01') < (SELECT MAX(date) FROM gl) - INT
 --  miesiącu (październik 2026 przed fazą 0.5b: 31 dni bez kosztów), a nie zwykłą przerwę między końcem miesiąca a 5. dniem.
 --  Test rzeczywistej gęstości: tests/verify_regeneration.py liczy przerwę dla KAŻDEGO dnia historii.)
 
--- T11: typy i puste kolumny
+-- T11: typy i puste kolumny (faza 6)
+--   * purch.postal_code nie może być pusta (kody z danych statycznych dostawców, roster.SUPPLIER_ADDRESSES);
+--   * gl.voucher_number wypełniony w każdym wierszu (T2 na nim stoi).
+--   (Typ dziesiętny sales.count pilnuje test jednostkowy eksportu do Excela: tests/test_export_naming.py.)
+--   Warunek o gl.employee_id (SALARY) usunięty: postingi płacowe są zbiorcze (netto/podatek/AGA), nie per pracownik, więc kolumny
+--   nie da się sensownie wypełnić; kolumna została usunięta z eksportu GL, a dane per pracownik są w Payroll_per_pracownik.
 SELECT 'T11' AS test, 'purch.postal_code w 100% pusta' AS problem
 WHERE (SELECT COUNT(postal_code) FROM purch) = 0
 UNION ALL
-SELECT 'T11', 'gl.employee_id w 100% pusta (SALARY)'
-WHERE (SELECT COUNT(employee_id) FROM gl WHERE voucher_type = 'SALARY') = 0;
+SELECT 'T11', 'purch.postal_code ma puste wiersze'
+WHERE (SELECT COUNT(*) FROM purch WHERE postal_code IS NULL OR postal_code = '') > 0
+UNION ALL
+SELECT 'T11', 'gl.voucher_number ma puste wiersze'
+WHERE (SELECT COUNT(*) FROM gl WHERE voucher_number IS NULL) > 0;
 
 -- T12 (faza 5): rozliczenie MVA, krok 1 — po ostatnim dniu terminu salda 2700 i 2710 ZA TEN OKRES = 0.
 --     (a) dla każdego rozliczonego terminu suma postingów na 2700 i 2710 z dat okresu (razem z voucherem rozliczenia) = 0;

@@ -139,9 +139,9 @@ QUERIES = {
         ORDER BY st.date, ps.employee_id
     """,
     "Postingi_GL": """
-        SELECT v.date, v.voucher_type, v.description,
+        SELECT v.date, v.id AS voucher_number, v.voucher_type, v.description,
                p.account_number, p.amount,
-               p.vat_amount, p.customer_id, p.supplier_id, p.employee_id
+               p.vat_amount, p.customer_id, p.supplier_id
         FROM vouchers v JOIN postings p ON p.voucher_id = v.id
         ORDER BY v.date, v.id
     """,

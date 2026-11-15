@@ -26,6 +26,7 @@ naturalnie obsługuje wiele arkuszy w jednym pliku).
 
 import csv
 import io
+from decimal import Decimal
 import zipfile
 from datetime import date
 
@@ -65,8 +66,8 @@ _COLUMNS: dict[str, list[str]] = {
         "net_amount", "gross_amount", "tax_amount",
     ],
     "Postingi_GL": [
-        "date", "voucher_type", "description", "account_number", "amount",
-        "vat_amount", "customer_id", "supplier_id", "employee_id",
+        "date", "voucher_number", "voucher_type", "description", "account_number", "amount",
+        "vat_amount", "customer_id", "supplier_id",
     ],
 }
 
@@ -218,9 +219,9 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
         ),
         "Postingi_GL": (
             """
-            SELECT v.date, v.voucher_type, v.description,
+            SELECT v.date, v.id AS voucher_number, v.voucher_type, v.description,
                    p.account_number, p.amount,
-                   p.vat_amount, p.customer_id, p.supplier_id, p.employee_id
+                   p.vat_amount, p.customer_id, p.supplier_id
             FROM vouchers v JOIN postings p ON p.voucher_id = v.id
             WHERE v.date BETWEEN $1 AND $2
             ORDER BY v.date, v.id
@@ -255,6 +256,28 @@ async def generate_csv_export_bytes(date_from: date, date_to: date) -> bytes:
     return buf.getvalue()
 
 
+def _excel_cell(value):
+    """Numbers stay numbers (Decimal -> float) so that Excel/BI infer a numeric column; before phase 6 every cell was
+    written as text, which is why `count` (1.00 ... 194.60 hours) looked like an integer column. Others unchanged."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return value
+    return str(value)
+
+
+def _format_decimal_columns(ws, columns):
+    """`count` is a decimal quantity (hours): shown with two decimals even when the value is a whole 1."""
+    if "count" in columns:
+        letter = openpyxl.utils.get_column_letter(list(columns).index("count") + 1)
+        for cell in ws[letter][1:]:
+            cell.number_format = "0.00"
+
+
 async def generate_excel_export_bytes(date_from: date, date_to: date) -> bytes:
     """Jeden .xlsx, jeden arkusz per zestawienie — ten sam układ co
     lokalny `export_excel.py`."""
@@ -268,7 +291,8 @@ async def generate_excel_export_bytes(date_from: date, date_to: date) -> bytes:
             first = False
         ws.append(columns)
         for row in rows:
-            ws.append([str(v) if v is not None else "" for v in row])
+            ws.append([_excel_cell(v) for v in row])
+        _format_decimal_columns(ws, columns)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

@@ -89,15 +89,17 @@ Limitation: no employee departures (staff turnover) — once hired, an employee 
 | id | INTEGER (PK) | 1-9, `numeric_id("L01")..("L09")` |
 | name | TEXT | Supplier name |
 | supplier_number | TEXT | Code "L01"-"L09" |
-| organization_number, email, phone_number, address_line1, postal_code, city, bank_account_number | TEXT | Never populated (NULL) |
+| organization_number | TEXT | The real organisation number where the supplier is a confirmed real company (`SupplierSeed.real_org_number`); NULL for L05 and L07 |
+| **postal_code, city** | TEXT | Registered office from `roster.SUPPLIER_ADDRESSES` (accounting phase 6) - static data, see below |
+| email, phone_number, address_line1, bank_account_number | TEXT | Never populated (NULL) |
 | is_private_individual, is_wholesaler, show_products | BOOLEAN | Always `false` |
 | country_id, currency_id | INTEGER | Always 161 / 1 |
 
-Business meaning: 8 cost suppliers (Microsoft, Telenor, Reitan, Statsbygg, Sandvik, Thommessen, Avis, Nordic Insurance) — each with its own invoicing rhythm and amount variance (higher for Avis in Q1/Q3, Sandvik seasonality).
+Business meaning: 8 cost suppliers (Microsoft, Telenor, Reitan, Statsbygg, Sandvik, Thommessen, Avis, Gjensidige) — each with its own invoicing rhythm and amount variance (higher for Avis in Q1/Q3, Sandvik seasonality).
 
 **Accounting phase 4 - L09 Ingram Micro AS** (org.nr 961425905, a real distributor, verified against data.brreg.no) is the supplier the COGS account 4292 (RMM/EDR/ticketing tools and spare hardware, resold to customers) is owed to; 4291 (Microsoft/Azure resale) is owed to L01. L09 never issues an invoice and is never renegotiated, so it is kept OUT of `roster.SUPPLIERS` (which the invoice generator and the SUPPLIER_RENEGOTIATION draw iterate - a ninth entry there would shift the draw and the whole price history) and lives in `roster.COGS_SUPPLIERS`; `roster.ALL_SUPPLIERS` is what is seeded and looked up.
 
-**`postal_code` stays NULL even after the export fix (2026-07)** — `SupplierSeed` (roster.py) never had a `city` field (unlike `CustomerSeed`), so there's nothing to derive a postal code from without inventing new address data. A deliberate limitation, not an oversight — see `SESSION_HANDOFF.md` section 10.
+**`postal_code` and `city` (accounting phase 6)** come from `roster.SUPPLIER_ADDRESSES`, **static data in the repository - the generator never calls any API**. For the seven suppliers with a confirmed real organisation number the postnummer/poststed is the `forretningsadresse` fetched once on 2026-11-01 from data.brreg.no (source `brreg`): L01 0194 Oslo, L02 1360 Fornebu, L03 0661 Oslo, L04 0155 Oslo, L06 0251 Oslo, L08 0191 Oslo, L09 0667 Oslo. The two suppliers without a registry match carry an **illustrative** code, not a registry value (source `illustrative`): L05 Sandvik IT Solutions AS (fictional) 5003 Bergen, L07 Avis Norge AS (not matched) 0150 Oslo. The column reaches `Faktury_zakupu.postal_code` in the export (before phase 6 it was empty in 100% of rows; `gl_checks.sql` T11).
 
 ### vat_types
 | Column | Type | Description |

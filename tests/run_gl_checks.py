@@ -4,8 +4,8 @@ and prints a PASS/FAIL table. Not collected by pytest (it needs a database); run
 
 The SQL was written against the CSV exports (tables gl / sales / purch / pay). To run it on Postgres this
 script builds those four as VIEWS in a throw-away schema, from the same queries export_csv.py uses
-(export_queries.QUERIES) - so what is tested is what is exported. Until phase 6 puts `voucher_number`
-into the real GL export, the gl view here adds it as `vouchers.id` (the agreed definition).
+(export_queries.QUERIES) - so what is tested is what is exported. Since phase 6 the GL export itself carries `voucher_number`
+(= vouchers.id), so the gl view is the real export query.
 
 SAFETY: it creates and drops a schema, so it refuses to run against anything but a local database.
 
@@ -28,11 +28,6 @@ from export_queries import QUERIES  # noqa: E402
 
 SCHEMA = "gl_check"
 
-GL_VIEW = """
-    SELECT v.date, v.voucher_type, v.id AS voucher_number, v.description,
-           p.account_number, p.amount, p.vat_amount, p.customer_id, p.supplier_id, p.employee_id
-    FROM vouchers v JOIN postings p ON p.voucher_id = v.id
-"""
 
 
 def _assert_local(url: str) -> None:
@@ -71,7 +66,7 @@ def main() -> int:
     cur.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
     cur.execute(f"CREATE SCHEMA {SCHEMA}")
     cur.execute(f"SET search_path = {SCHEMA}, public")
-    cur.execute(f"CREATE VIEW gl AS {GL_VIEW}")
+    cur.execute(f"CREATE VIEW gl AS {_strip_order_by(QUERIES['Postingi_GL'])}")
     cur.execute(f"CREATE VIEW sales AS {_strip_order_by(QUERIES['Faktury_sprzedazy'])}")
     cur.execute(f"CREATE VIEW purch AS {_strip_order_by(QUERIES['Faktury_zakupu'])}")
     cur.execute(f"CREATE VIEW cogs AS {_strip_order_by(QUERIES['Zobowiazania_COGS'])}")

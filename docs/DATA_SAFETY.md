@@ -40,3 +40,7 @@ Confirmed real-entity org numbers are stored informationally in `roster.Supplier
 ### Known limitation
 
 `scripts/audit_name_collisions.py` (customers) referenced in the originating prompt as "from a previous session" does not exist in this repository — no trace in git history or `SESSION_HANDOFF.md`. Not created here (out of scope for this session — this session covers suppliers only, per the prompt's own Task 1/2 split). If a client-side collision audit is wanted, it would need its own session/prompt.
+
+### Supplier postal codes (accounting phase 6)
+
+`suppliers.postal_code` / `city` come from `roster.SUPPLIER_ADDRESSES`, static data in the repository (the generator never calls any API). For the seven suppliers with a confirmed `real_org_number` the registered office was fetched **once** on 2026-11-01 from data.brreg.no (`forretningsadresse`). The two without a registry match (L05, fictional; L07, not matched) carry an **illustrative** code - the main post office of a plausible city - marked `illustrative` in the table, so nobody mistakes it for a registry value. Public company data only; no personal data.

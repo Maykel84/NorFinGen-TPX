@@ -1,0 +1,64 @@
+"""Phase 6 (docs/SPEC_poprawki_ksiegowe.md): types and empty columns of the export."""
+
+import io
+from decimal import Decimal
+
+import openpyxl
+
+from api.export_data import _COLUMNS, _excel_cell, _format_decimal_columns
+from export_queries import QUERIES
+from norfingen.seed.roster import ALL_SUPPLIERS, SUPPLIER_ADDRESSES
+
+
+def test_every_supplier_has_a_static_postal_code_and_city():
+    assert set(SUPPLIER_ADDRESSES) == {s.number for s in ALL_SUPPLIERS}
+    for number, (postal_code, city, source) in SUPPLIER_ADDRESSES.items():
+        assert len(postal_code) == 4 and postal_code.isdigit(), number
+        assert city and source in ("brreg", "illustrative"), number
+
+
+def test_registry_sourced_codes_belong_only_to_suppliers_with_an_organisation_number():
+    """'brreg' = looked up by organisation number, so a supplier without one cannot be 'brreg'; and every supplier that HAS
+    a number was looked up."""
+    for supplier in ALL_SUPPLIERS:
+        source = SUPPLIER_ADDRESSES[supplier.number][2]
+        assert (source == "brreg") == (supplier.real_org_number is not None), supplier.number
+
+
+def test_the_generator_makes_no_registry_call():
+    """The codes are static data in the repo. Nothing under src/ imports an HTTP client, so nothing can call the registry."""
+    from pathlib import Path
+    for path in Path(__file__).resolve().parents[1].joinpath("src").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "requests" not in text and "urllib.request" not in text and "httpx" not in text, path
+
+
+def test_purchase_invoice_export_carries_the_supplier_postal_code():
+    assert "s.postal_code" in QUERIES["Faktury_zakupu"] and "postal_code" in _COLUMNS["Faktury_zakupu"]
+
+
+def test_gl_export_has_voucher_number_and_no_employee_id():
+    columns = list(_COLUMNS["Postingi_GL"])
+    assert "voucher_number" in columns and "employee_id" not in columns
+    assert "v.id AS voucher_number" in QUERIES["Postingi_GL"] and "employee_id" not in QUERIES["Postingi_GL"]
+    assert columns == ["date", "voucher_number", "voucher_type", "description", "account_number", "amount",
+                       "vat_amount", "customer_id", "supplier_id"]
+
+
+def test_numbers_are_written_as_numbers_and_count_is_shown_with_two_decimals():
+    assert _excel_cell(Decimal("115.50")) == 115.5 and isinstance(_excel_cell(Decimal("1.00")), float)
+    assert _excel_cell(7) == 7 and _excel_cell(None) == "" and _excel_cell("x") == "x" and _excel_cell(True) == "True"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    columns = ["order_id", "count", "amount_currency"]
+    ws.append(columns)
+    for row in ([1, Decimal("1.00"), Decimal("1250.00")], [2, Decimal("115.50"), Decimal("144375.00")]):
+        ws.append([_excel_cell(v) for v in row])
+    _format_decimal_columns(ws, columns)
+    buf = io.BytesIO()
+    wb.save(buf)
+    ws2 = openpyxl.load_workbook(io.BytesIO(buf.getvalue())).active
+    assert [c.value for c in ws2["B"][1:]] == [1.0, 115.5]            # numeric, fractional part kept
+    assert all(c.number_format == "0.00" for c in ws2["B"][1:])
+    assert ws2["A2"].number_format == "General"

@@ -1397,3 +1397,12 @@ Płatność listy płac (BANK) rozlicza 2930/2600/2770 (stałe w jednym miejscu:
 
 **Do wdrożenia (po fazie 6):** migracja zawiera teraz też `vat_settlements`, kolumnę `bank_transactions.vat_settlement_id`, indeksy i politykę RLS.
 
+## Poprawki księgowe wg SPEC — faza 6: typy, eksport, dokumentacja (2026-11-01)
+
+- **`postal_code` w `Faktury_zakupu`:** dane statyczne w `roster.SUPPLIER_ADDRESSES` (kod, miejscowość, źródło). Siedem dostawców z prawdziwym org.nr pobrane **raz** (2026-11-01) z data.brreg.no (`forretningsadresse`): L01 0194 Oslo, L02 1360 Fornebu, L03 0661 Oslo, L04 0155 Oslo, L06 0251 Oslo, L08 0191 Oslo, L09 0667 Oslo. L05 (fikcyjny) i L07 (Avis Norge AS: brak dopasowania w rejestrze) mają kody **poglądowe** (5003 Bergen, 0150 Oslo), oznaczone `illustrative`. Generator niczego nie wywołuje przez API (test pilnuje braku klienta HTTP w `src/`). `seed_reference_data` zapisuje `postal_code` i `city` (upsert, więc dotrze do istniejącej bazy).
+- **GL:** dodane `voucher_number` (= `vouchers.id`, druga kolumna), usunięte `employee_id` (postingi płacowe są zbiorcze, nie per pracownik; dane per pracownik są w `Payroll_per_pracownik`). `run_gl_checks.py` czyta teraz prawdziwe zapytanie `Postingi_GL`, a nie własny widok. `vat_amount` w GL zostaje (informacyjne), do decyzji.
+- **`count`:** Excel (lokalny i API) pisał WSZYSTKIE komórki jako tekst. Teraz liczby są liczbami (Decimal → float), a `count` ma format `0.00`. Tekst zostaje dla dat i pozostałych typów. CSV bez zmian (Decimal drukuje się z 2 miejscami).
+- **T11** zmieniony: `purch.postal_code` niepusta (też brak pustych wierszy) + `gl.voucher_number` wypełnione; warunek `employee_id` usunięty.
+- **README:** plan kont, założenie czerwcowych feriepenger, celowe pułapki testowe (zaległe/spisane faktury, otwarte pozycje), instrukcja regeneracji, liczba testów 233 → 549.
+- **Wynik lokalny:** `gl_checks` **16/16 PASS**, `verify_regeneration` 45/45, 549 testów zielonych.
+
