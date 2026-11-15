@@ -27,7 +27,7 @@ PYTHONPATH=src "$PY" - <<'PYEOF'
 import os
 from urllib.parse import urlparse
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(os.path.join(os.getcwd(), ".env"))  # explicit path: find_dotenv() fails when the code comes from stdin
 url = os.environ.get("DATABASE_URL", "")
 host = urlparse(url).hostname
 if not host or host in ("127.0.0.1", "localhost", "::1"):

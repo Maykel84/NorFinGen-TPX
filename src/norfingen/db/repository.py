@@ -705,7 +705,7 @@ def get_unpaid_cogs_payables(as_of: date, lookback_days: Optional[int] = None) -
         cur.execute(
             """SELECT id, accrual_date, payment_due_date, account_number, supplier_id, description, amount_currency
                FROM cogs_payables
-               WHERE status = 'UNPAID' AND payment_due_date BETWEEN %s AND %s""",
+               WHERE status = 'UNPAID' AND payment_due_date BETWEEN %s AND %s ORDER BY id""",
             (start, as_of),
         )
         rows = cur.fetchall()
@@ -766,7 +766,7 @@ def get_unpaid_vat_settlements(as_of: date, lookback_days: int = 14) -> list[Vat
         cur.execute(
             """SELECT id, period_year, term, period_start, period_end, payment_date, output_vat, input_vat, balance
                FROM vat_settlements
-               WHERE status = 'UNPAID' AND payment_date BETWEEN %s AND %s""",
+               WHERE status = 'UNPAID' AND payment_date BETWEEN %s AND %s ORDER BY id""",
             (as_of - timedelta(days=lookback_days), as_of),
         )
         rows = cur.fetchall()
@@ -933,7 +933,7 @@ def get_unpaid_supplier_invoices(
             """SELECT id, invoice_number, supplier_id, invoice_date, received_date,
                       payment_due_date, amount_currency, account_number, comment
                FROM supplier_invoices
-               WHERE status = 'UNPAID' AND payment_due_date BETWEEN %s AND %s""",
+               WHERE status = 'UNPAID' AND payment_due_date BETWEEN %s AND %s ORDER BY id""",
             (start, as_of),
         )
         rows = cur.fetchall()

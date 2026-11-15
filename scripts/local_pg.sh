@@ -17,6 +17,11 @@ SOCK=/tmp/nfgpgsock            # unix-socket paths are limited to ~100 bytes, so
 PORT=54329
 DB=norfingen_local
 
+# PostgreSQL 18 reads through asynchronous I/O workers by default; on this machine they hang ("could not read blocks ...
+# Operation timed out", CREATE DATABASE stuck in AioIoCompletion). Synchronous I/O is the pre-18 behaviour.
+IO_OPT=""
+if "$BIN/postgres" --version | grep -qE ' (1[89]|[2-9][0-9])\.'; then IO_OPT="-c io_method=sync"; fi
+
 case "${1:-}" in
   start)
     mkdir -p "$SOCK" "$ROOT"
@@ -25,7 +30,7 @@ case "${1:-}" in
     fi
     if ! "$BIN/pg_isready" -h 127.0.0.1 -p $PORT >/dev/null 2>&1; then
       "$BIN/pg_ctl" -D "$ROOT/data" -l "$ROOT/server.log" \
-        -o "-p $PORT -k $SOCK -c listen_addresses=127.0.0.1 -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start >/dev/null
+        -o "-p $PORT -k $SOCK -c listen_addresses=127.0.0.1 -c fsync=off -c synchronous_commit=off -c full_page_writes=off $IO_OPT" start >/dev/null
       sleep 2
     fi
     "$BIN/psql" -h 127.0.0.1 -p $PORT -U norfingen -d postgres -Atc \
