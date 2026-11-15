@@ -262,7 +262,7 @@ def _excel_cell(value):
     if value is None:
         return ""
     if isinstance(value, bool):
-        return str(value)
+        return value
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (int, float)):

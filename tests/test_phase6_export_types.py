@@ -47,7 +47,7 @@ def test_gl_export_has_voucher_number_and_no_employee_id():
 
 def test_numbers_are_written_as_numbers_and_count_is_shown_with_two_decimals():
     assert _excel_cell(Decimal("115.50")) == 115.5 and isinstance(_excel_cell(Decimal("1.00")), float)
-    assert _excel_cell(7) == 7 and _excel_cell(None) == "" and _excel_cell("x") == "x" and _excel_cell(True) == "True"
+    assert _excel_cell(7) == 7 and _excel_cell(None) == "" and _excel_cell("x") == "x" and _excel_cell(True) is True and _excel_cell(False) is False
 
     wb = openpyxl.Workbook()
     ws = wb.active
