@@ -23,6 +23,23 @@ class PLMonthly(BaseModel):
     operating_cost: float | None = None
     cogs: float | None = None
     operating_result: float | None = None
+    is_partial: bool | None = Field(
+        default=None,
+        description="True dla miesiąca, który jeszcze się nie skończył (koszty płac i COGS księgowane są na koniec "
+        "miesiąca, więc wynik jest zawyżony). Wskaźniki 12M/YTD pomijają takie miesiące.",
+    )
+
+
+class PLTrailing(BaseModel):
+    period_from: str = Field(description="Pierwszy miesiąc okna, YYYY-MM")
+    period_to: str = Field(description="Ostatni PEŁNY miesiąc okna, YYYY-MM")
+    months: int
+    revenue: float
+    labor_cost: float
+    operating_cost: float
+    cogs: float
+    operating_result: float
+    margin_pct: float | None = Field(default=None, description="operating_result / revenue * 100")
 
 
 class PLYearly(BaseModel):
@@ -33,6 +50,7 @@ class PLYearly(BaseModel):
     cogs: float
     operating_result: float
     margin_pct: float | None = Field(default=None, description="operating_result / revenue * 100")
+    months_included: int = Field(default=12, description="Liczba PEŁNYCH miesięcy w sumie (bieżący, niepełny miesiąc jest pominięty)")
 
 
 class Customer(BaseModel):

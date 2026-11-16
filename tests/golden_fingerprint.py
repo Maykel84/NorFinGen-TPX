@@ -43,7 +43,7 @@ def digest(rows) -> str:
 
 
 def build(cutoff: date = CUTOFF) -> dict:
-    orders, invoices, opex, opex_amounts, cogs_amounts, salary_v, salary_v_legacy, hours, sales_v, cogs = ([] for _ in range(10))
+    orders, invoices, opex, opex_amounts, cogs_amounts, salary_v, salary_v_legacy, hours, sales_v, cogs, opex_net = ([] for _ in range(11))
     gross = 0.0
     gl_revenue = 0.0
     for year, month in months_range(START, cutoff):
@@ -65,12 +65,16 @@ def build(cutoff: date = CUTOFF) -> dict:
             if is_date_generatable(v.date, cutoff):
                 opex.append((v.date.isoformat(), v.description, tuple((p.account.number, p.amount) for p in v.postings)))
                 opex_amounts.append((v.description, tuple((p.account.number, p.amount) for p in v.postings)))
+                # audit phase 2: the NET cost lines only (every debit except input VAT 2710) - VAT on COGS must not move them
+                opex_net.append((v.description, tuple((p.account.number, p.amount) for p in v.postings
+                                                       if p.amount > 0 and p.account.number != 2710)))
                 payable = cogs_payable_for(v)  # phase 4
                 if payable is not None:
                     cogs.append((payable.accrual_date.isoformat(), payable.payment_due_date.isoformat(),
                                  payable.account_number, payable.supplier_id, payable.amount_currency))
+                    # frozen across phase 2: the NET amount, the very figure amount_currency held before VAT existed
                     cogs_amounts.append((payable.account_number, payable.supplier_id, payable.description,
-                                         payable.amount_currency))
+                                         payable.amount_excluding_vat_currency))
         if should_generate_monthly_salary(year, month, cutoff):
             txn, vouchers = generate_monthly_salary(year, month)
             for v in vouchers:
@@ -96,6 +100,7 @@ def build(cutoff: date = CUTOFF) -> dict:
         "opex_vouchers": (len(opex), digest(opex)),  # dates + descriptions + postings (re-pinned in phase 5)
         "opex_amounts": (len(opex_amounts), digest(opex_amounts)),  # descriptions + postings, NO dates (frozen)
         "cogs_payables": (len(cogs), digest(cogs)),  # phase 4: one per 4291/4292 accrual (dates included)
+        "opex_net_amounts": (len(opex_net), digest(opex_net)),  # audit phase 2: net debits only, frozen across the VAT change
         "cogs_payable_amounts": (len(cogs_amounts), digest(cogs_amounts)),  # no dates (frozen)
         "sales_vouchers": (len(sales_v), digest(sales_v)),  # phase 3: Dr 1500 / Cr 3000 / Cr 2700 per invoice
         "revenue_in_gl": round(gl_revenue, 2),

@@ -1406,3 +1406,53 @@ Płatność listy płac (BANK) rozlicza 2930/2600/2770 (stałe w jednym miejscu:
 - **README:** plan kont, założenie czerwcowych feriepenger, celowe pułapki testowe (zaległe/spisane faktury, otwarte pozycje), instrukcja regeneracji, liczba testów 233 → 549.
 - **Wynik lokalny:** `gl_checks` **16/16 PASS**, `verify_regeneration` 45/45, 549 testów zielonych.
 
+
+## Audyt 2026-11-16, faza 1: `is_partial` (decyzja #1)
+
+- **Decyzja:** niepełny miesiąc jest OZNACZANY flagą, nie rozliczany pro rata (Tripletex księguje płace i COGS na koniec miesiąca, własny mechanizm memoriałowy byłby odejściem od schematu Tripletex).
+- **Gdzie:** widok `v_pl_monthly.is_partial`, arkusz `PL_miesiecznie` (lokalny eksport i kopia w `api/export_data.py`), `/pl/monthly`. Miesiąc jest niepełny, gdy jego ostatni dzień jest po najnowszej wygenerowanej dacie (`GREATEST(MAX(vouchers.date), MAX(orders.order_date))`), a nie po kalendarzu, więc nieświeża baza nie oznacza wszystkiego jako niepełne.
+- **KPI:** `/pl/yearly` pomija niepełny miesiąc (`months_included`), nowy `/pl/trailing-12m` liczy 12 ostatnich PEŁNYCH miesięcy. Dashboard Streamlit jest poza tym repo: tam trzeba dodać `WHERE NOT is_partial`.
+- **Weryfikacja (lokalnie):** marża 12M 3,15% bez 2026-11 wobec 10,50% z nim; 2026-11 ma `is_partial = true`, jedyny z 95 miesięcy. Dane i hashe nie zmienione, regeneracja nie jest potrzebna, tylko `ensure_schema` + deploy.
+
+## Audyt 2026-11-16, faza 2: VAT naliczony na COGS (decyzje #2 i 4290)
+
+- **Decyzja #2:** kwoty COGS były NETTO. Teraz `Dr 4291|4292 (netto, vatAmount) + Dr 2710 (25%) / Cr 2400 (brutto)`, z dostawcą na każdej linii. `cogs_payables` ma `amount_excluding_vat_currency`, `vat_amount_currency` i `amount_currency` = BRUTTO; płatność w banku jest brutto. Arkusz `Zobowiazania_COGS` ma te trzy kolumny.
+- **4290 (decyzja użytkownika):** zakup gotówkowy z VAT 25%: `Dr 4290 (netto) + Dr 2710 / Cr 1910 (brutto)`, bez `supplier_id` (NULL), bez zobowiązania.
+- **Reverse charge** (na przyszłość, żaden dostawca nie jest zagraniczny): `_reverse_charge_cogs_voucher` (`Dr 2710 / Cr 2700` równe kwoty, 2400 tylko netto). Pokryte testem, generator go nie woła.
+- **Dowód, że koszt się nie ruszył:** nowy hash `opex_net_amounts` (wszystkie debety poza 2710) policzony na starym kodzie = `07558a544853af26` i taki sam po zmianie; `cogs_payable_amounts` (hash kolumny netto) = `5488bc97aba376c9`, też bez zmian. Przypięte od nowa tylko `opex_amounts` (cd0b0cd25ef42c79), `opex_vouchers` (9295494bec49bbe1), `cogs_payables` (827a4e89c6a70989).
+- **gl_checks:** T6 uwzględnia teraz VAT z COGS i 4290; nowe T14 (każda linia 4290/4291/4292 ma vat_amount = 25% netto, tolerancja 1 gr) i T15 (4291/4292 mają dostawcę w GL). 18/18 PASS.
+- **Skutki liczbowe (lokalnie):** VAT naliczony 26 841 930 wobec należnego 53 279 332 (50,4%); ostatni termin 2026-T5 do zapłaty 761 833,30 (było 1 928 491,64); saldo 2400 -3 072 703,47; minimum salda banku -2 945 494,51 (2019-10-01, było -2 810 019,51). Marża 12M bez zmian 3,15%. W 2019 powstał drugi zwrot VAT (T2), stąd poprawka kontroli „no order paid twice" (tylko wpłaty z order_id).
+- **Uwaga:** audyt oczekiwał stosunku VAT naliczony/należny 20-30%; wychodzi ok. 50-60%, bo VAT 25% od 92 mln kosztów (23 mln) dodaje się do dotychczasowych 3,8 mln, a przychód 53 mln VAT należnego jest tylko ~2,3x większy. To wynika z danych, nie z błędu.
+
+## Audyt 2026-11-16, faza 3: kapitał początkowy i pożyczka od właściciela
+
+- **Problem:** księgi otwierało 30 000 NOK kapitału, więc konto banku (1910) było ujemne przez 176 dni (do -2,8 mln, a po fazie 2 do -2,95 mln).
+- **Rozwiązanie (kwoty z decyzji użytkownika):** kapitał zakładowy 500 000 NOK (`Dr 1910 / Cr 2000`, 2019-01-02) oraz pożyczka od właściciela 3 500 000 NOK (`Dr 1910 / Cr 2290`, to samo konto 2290 „Annen langsiktig gjeld”, voucher MANUAL).
+- **Obsługa:** `generators/owner_loan.py`, czysta funkcja kalendarza (bez RNG). Ostatni dzień roboczy miesiąca, jeden voucher BANK: `Dr 2290 rata + Dr 8150 odsetki / Cr 1910`. Odsetki 5% rocznie od salda na początku miesiąca; 2019-2020 same odsetki, od 2021-01 do 2025-12 60 równych rat 58 333,33 (ostatnia 58 333,53, żeby saldo zeszło do zera). `process_day` krok 6.
+- **Odsetki to koszt finansowy (8xxx):** nie wchodzą do `PL_miesiecznie` (4000-7999), więc wynik operacyjny i marża 3,15% bez zmian. Nowe konta: 2290, 8150 (`AccountType.FINANCIAL_EXPENSE`).
+- **Uproszczenia:** pożyczka nie jest dzielona na część krótko- i długoterminową; odsetki za styczeń 2019 za pełny miesiąc; wypłata i spłaty są tylko w księdze (bez wierszy w `bank_transactions`, tak jak kapitał).
+- **Wynik (lokalnie):** minimum salda banku +893 255,52 (2019-10-01), saldo końcowe 6 857 457,59, odsetki łącznie 794 791,61 w 84 voucherach, 2290 = 0, 2000 = -500 000. Nowe testy gl_checks: T16 (1910 nigdy < 0), T17 (2290 i 2000). `gl_checks` 20/20, `verify_regeneration` 38/38, testy 565 passed.
+
+## Audyt 2026-11-16, faza 4: spisane należności
+
+- **Problem:** 9 zamówień WRITTEN_OFF (klienci, którzy nigdy nie płacą, 1,75 mln brutto) zostawało na koncie 1500 na zawsze, a strata nie trafiała do wyniku.
+- **Rozwiązanie:** `generators/write_off.py`. 120 dni po terminie płatności (po 90-dniowym opóźnieniu klienta OVERDUE, więc nikt, kto jeszcze zapłaci, nie jest spisany), przesunięte na dzień roboczy: jeden voucher na ZAMÓWIENIE (nie na linię): `Dr 7830 netto + Dr 2700 VAT / Cr 1500 brutto` z klientem. Kwoty z tych samych funkcji co voucher sprzedaży (`order_net_amount` / `order_gross_amount`), więc 1500 czyści się co do grosza. `run_daily` krok 2a, PRZED rozliczeniem VAT (2b), żeby korekta 2700 trafiła do terminu, w którym jest data.
+- **Odstępstwa od audytu (do wiedzy):** (1) konto **7830** „Tap på krav”, nie 7770: w NS 4102 7770 to opłaty bankowe, a strata na należnościach to 7830; zmiana na 7770 to jedna stała `ACCOUNT_BAD_DEBT`. (2) **8 wpisów, nie 9**: dziewiąte zamówienie (K22, termin 2026-08-25) zostanie spisane 2026-12-23, bo 120 dni po terminie jeszcze nie minęło; audytowe 9 było policzone na dzisiejszy stan, nie na datę spisania. Cron zaksięguje je sam.
+- **Skutki (lokalnie):** 7830 = 1 396 006,90 netto; korekta 2700 = 349 001,73; saldo 1500 = 8 057 611,51 (było 9 802 620,14). 7830 mieści się w 6000-7999, więc wchodzi do kosztów operacyjnych: marża 12M 3,15% -> 3,06% (spisanie K17 z 2026-01-23 wpada w okno).
+- **Testy:** gl_checks T18 (po jednym 7830 na zamówienie, bez sierot) i T19 (saldo 1500 = faktury nieopłacone i niespisane), 22/22 PASS; verify 38/38; 568 testów. `repository._orders_with_lines` wydzielone z `get_orders_for_payment_window`, nowe `get_orders_to_write_off`.
+
+## Audyt 2026-11-16, faza 5: statusy faktur sprzedaży
+
+- **Problem:** `invoice_status` w `Faktury_sprzedazy` było założonym zachowaniem klienta (`orders.status`): 62 zamówienia miały `PAID` bez `paid_date`, a z 41 `OVERDUE` 34 faktycznie zapłaciło (po 90 dniach).
+- **Rozwiązanie:** status jest WYLICZANY z faktycznego stanu (eksport lokalny i kopia API; `orders.status` zostaje, bo to ono steruje generatorem): `PAID` <=> jest wpłata (`paid_date`), `WRITTEN_OFF` <=> zaksięgowany voucher spisania (nowa kolumna `orders.write_off_voucher_id`, ustawia ją `repository.save_write_off`), `OVERDUE` <=> brak wpłaty i termin (przesunięty na dzień roboczy) minął, w przeciwnym razie `OPEN`. „Dziś” = najnowsza wygenerowana data, nie zegar. Nowa kolumna `paid_late` (wpłata >7 dni po terminie; opóźnieni płatnicy modelu płacą +90 dni, przesunięcia weekendowe to 0-2 dni, więc próg 7 dni nie łapie żadnej zwykłej wpłaty). `is_overdue` = `OVERDUE`.
+- **Odstępstwo od audytu:** próg `paid_late` to 7 dni po terminie, nie „po terminie” literalnie (inaczej ok. 20% zwykłych faktur płaconych w poniedziałek po weekendowym terminie byłoby „spóźnionych”).
+- **Wynik (lokalnie, zamówienia):** PAID 1855, OPEN 63, OVERDUE 7 (454 439,76 brutto), WRITTEN_OFF 8 (1 745 008,63), razem 1933. 34 zamówienia `paid_late`. PAID bez `paid_date` = 0.
+- **Testy:** gl_checks T20 (zgodność statusu z wpłatą, terminem i spisaniem), 23/23 PASS; verify 38/38.
+
+## Audyt 2026-11-16, faza 6: typy kolumn
+
+- **Sprawdzone w Postgresie:** typy w bazie były już poprawne (`orders.order_date`/`invoice_date` DATE, `customers.postal_code` i `suppliers.postal_code` TEXT, `customer_id`/`supplier_id` INTEGER nullable, `order_lines.count` NUMERIC). Problem był TYLKO w eksporcie, nie w schemacie, więc schematu nie zmieniam.
+- **Eksport Excel (lokalny `export_excel.py` i kopia w `api/export_data.py`):** daty to teraz prawdziwe komórki dat (`yyyy-mm-dd`), a nie tekst; `datetime` zostaje tekstem; `postal_code` zostaje tekstem z jawnym formatem `@` (wiodące zero przeżywa, np. `0194`); `count` nadal `0.00`; wartości logiczne jako TRUE/FALSE.
+- **Czego eksport nie naprawi:** `customer_id`/`supplier_id` w `Postingi_GL` są w pliku liczbami całkowitymi z pustymi komórkami; `float64` w pandas to jego własna reguła dla kolumny z brakami (użyć `dtype="Int64"`). Eksport CSV (`export_csv.py`) nie ma typów: kod pocztowy z zerem trzeba czytać jako tekst (`dtype={"postal_code": str}`).
+- **`count` ułamkowe:** 6 wierszy, wszystkie produkt P06 „Consulting and Digitalization” (dodatkowe godziny konsultingu 1-200, rozdzielczość 0,1 h, np. 115,5, 174,4, 82,1). To zamierzone (godziny), nie błąd generatora; pozostałe produkty mają zawsze 1,00. `count` zostaje NUMERIC.
+- **Testy:** 570 passed, 1 skipped; gl_checks 23/23, verify 38/38 (dane bez zmian, to zmiana wyłącznie eksportu).

@@ -120,7 +120,7 @@ Business meaning: a fixed dictionary of VAT rates (the only rate actually used i
 | type | TEXT | ASSETS / EQUITY_AND_LIABILITY / OPERATING_INCOME / OPERATING_EXPENSE |
 | vat_type_id | INTEGER (FK) | → vat_types.id, only for revenue/cost accounts with VAT |
 
-Business meaning: a 33-entry chart of accounts (the earlier count of 29 was stale: 31 before accounting phase 1, which added 2600 and 2940) used by every `postings.account_number`. **Accounts 3000/3100 (revenue) exist in this dictionary, but never have any postings** — see the limitation at the top of this document.
+Audit 2026-11-16, phase 3 added **2290** (owner loan) and **8150** (interest), phase 4 **7830** (loss on receivables), 36 accounts in all; `accounts.type` has a new value `FINANCIAL_EXPENSE`. Business meaning: a 33-entry chart of accounts (the earlier count of 29 was stale: 31 before accounting phase 1, which added 2600 and 2940) used by every `postings.account_number`. **Accounts 3000/3100 (revenue) exist in this dictionary, but never have any postings** — see the limitation at the top of this document.
 
 **Accounting phase 1 (`docs/SPEC_poprawki_ksiegowe.md`) - the 26xx/27xx/29xx liabilities follow NS 4102.** Until then the payroll liabilities sat on the VAT accounts and the VAT account carried the wrong name. Now:
 
@@ -205,12 +205,15 @@ Business meaning: **sales invoice (revenue)**. Amount = the sum of `order_lines.
 
 | Column | Meaning |
 |---|---|
-| `invoice_status` | `PAID` / `OVERDUE` / `WRITTEN_OFF` - the customer's modelled behaviour (`orders.status`). `PAID` does not mean "already paid": an invoice whose due date is still ahead is `PAID` and unpaid |
-| `is_overdue` | true for `OVERDUE` (paid ~90 days late) and `WRITTEN_OFF` (never paid) |
+| `invoice_status` | **Derived from what really happened** (audit 2026-11-16, phase 5), not the customer's modelled behaviour (`orders.status`, which still drives the generator): `PAID` = a payment is booked (`paid_date` is set), `OPEN` = unpaid and the bank day of the due date has not passed, `OVERDUE` = unpaid and the due date (moved to a working day) has passed, `WRITTEN_OFF` = the write-off voucher is booked (`orders.write_off_voucher_id`). "Today" is the newest generated date |
+| `is_overdue` | true while the invoice is `OVERDUE` (open and past due) |
+| `paid_late` | true when the payment came more than 7 days after the due date (the model's late payers pay +90 days; weekend and holiday shifts are a few days and do not count) |
+
+**Types in the export (audit 2026-11-16, phase 6).** The database types are right: `DATE` for dates, `TEXT` for postal codes, `INTEGER` for ids, `NUMERIC` for amounts and `count`. The Excel export writes dates as real date cells (`yyyy-mm-dd`), postal codes as text (format `@`, so `0194` keeps its zero), numbers as numbers and flags as booleans. The CSV export carries no types: read `postal_code` as text. `customer_id` / `supplier_id` in `Postingi_GL` are integers with empty cells; pandas turns such a column into `float64` on its own (use `dtype="Int64"`). `order_lines.count` is fractional only for product P06 (extra consulting hours, 0.1 h resolution); every other product is billed with `count = 1.00`.
 | `payment_due_date` | `invoice_date + invoices_due_in` (normal due date, before any OVERDUE delay) |
 | `paid_date` | date of the customer's payment (`bank_transactions` INCOMING); NULL = not paid (yet, or never) |
 
-The receivable (account 1500) is the sum of the gross of every invoice with no `paid_date` - exactly, to the grosz. On 2026-11-01 that is 7.32 mln NOK: 5.11 mln of invoices whose due date is still ahead, 0.45 mln OVERDUE (payment still in the future) and 1.75 mln WRITTEN_OFF (bad debt that stays on the receivable). The model is 98% on time / 1.6% OVERDUE / 0.4% WRITTEN_OFF; the 70/25/5 split once proposed in the specification was withdrawn (it was a wrong inference from the weekend bug).
+The receivable (account 1500) is the sum of the gross of every invoice with no `paid_date` - exactly, to the grosz. On 2026-11-01 that is 7.32 mln NOK: 5.11 mln of invoices whose due date is still ahead, 0.45 mln OVERDUE (payment still in the future) and 1.75 mln WRITTEN_OFF (bad debt). Since the audit of 2026-11-16 (phase 4) a WRITTEN_OFF invoice stays on 1500 only until its write-off voucher, 120 days after the due date (`Dr 7830 net + Dr 2700 VAT / Cr 1500 gross`); the sentence above describes the balance before that voucher. The model is 98% on time / 1.6% OVERDUE / 0.4% WRITTEN_OFF; the 70/25/5 split once proposed in the specification was withdrawn (it was a wrong inference from the weekend bug).
 
 ### order_lines
 | Column | Type | Description |
@@ -403,7 +406,9 @@ Business meaning: internal bookkeeping (phase 0.5a), not business data. `run_dai
 | accrual_date | DATE | The accrual voucher's date |
 | payment_due_date | DATE | `accrual_date + 30 days` (`opex_generator.COGS_PAYMENT_TERMS_DAYS`); paid on the next working day |
 | description | TEXT | The accrual voucher's description (e.g. `Videresalgskostnad Microsoft/Azure oktober 2026`) |
-| amount_currency | NUMERIC(14,2) | NOK; COGS is booked without VAT, so net = gross. Equals the credit on 2400 to the cent |
+| amount_excluding_vat_currency | NUMERIC(14,2) | NOK, the NET cost on 4291 / 4292 (audit 2026-11-16, phase 2); unchanged from before the VAT existed |
+| vat_amount_currency | NUMERIC(14,2) | NOK, 25 % input VAT booked on 2710 (`expected_vat_amount(net)`) |
+| amount_currency | NUMERIC(14,2) | NOK, **GROSS** (net + VAT) since phase 2; equals the credit on 2400 to the cent and the bank payment |
 | status | TEXT | `UNPAID` / `PAID` - flipped to PAID only by the booked payment (a `bank_transactions` row with `cogs_payable_id`) |
 
 Business meaning (accounting phase 4, `docs/SPEC_poprawki_ksiegowe.md`, variant B): the monthly COGS pass-through cost is booked as an accrual (`Dr 4291|4292 / Cr 2400 Leverandørgjeld`) but, unlike a purchase invoice, has no `supplier_invoices` row behind it - so it could never be paid, and 88 mln NOK stayed on 2400 for good. This table makes each accrual a payable: a due date, an amount, a status. It is paid exactly like a purchase invoice (`Dr 2400 / Cr 1910` on the due date, moved to the next working day when that is a weekend; no late-payment model for suppliers), and `save_bank_transactions` flips the status.
@@ -508,7 +513,7 @@ Three flat views (`CREATE OR REPLACE VIEW ... WITH (security_invoker = true)`, P
 | View | Source | Note |
 |---|---|---|
 | `v_sales_flat` | `orders` JOIN `customers` JOIN `order_lines` | `amount_including_vat_currency` is an **alias** of the `order_lines.amount_currency` column (not a rename — see below) |
-| `v_pl_monthly` | `orders`/`order_lines` (revenue) FULL OUTER JOIN `vouchers`/`postings` (costs) | The same pattern as `export_queries.PL_miesiecznie` |
+| `v_pl_monthly` | `orders`/`order_lines` (revenue) FULL OUTER JOIN `vouchers`/`postings` (costs) | The same pattern as `export_queries.PL_miesiecznie`. Column `is_partial` (BOOLEAN, also in the `PL_miesiecznie` sheet and in `/pl/monthly`) is true for the month that is not over yet, i.e. whose last day is after the newest generated date. Payroll and COGS are booked at month end (as in Tripletex), so that month shows revenue without its costs; trailing-12M, YTD and yearly KPIs (`/pl/yearly`, `/pl/trailing-12m`) leave it out. The raw row stays in the data |
 | `v_headcount_monthly` | `hour_entries` | Counts distinct employees logging hours that month. Used to undercount by excluding Salg/Økonomi (billable-only tracking) — **fixed as a side effect of the "realistic hours model" feature**: all departments now log hours, so this tracks the true headcount minus E05 (the one permanent exception), once the backfill for that change has run |
 
 All three: `GRANT SELECT ... TO analyst` (inherited by `powerbi_reader`).

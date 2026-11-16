@@ -28,16 +28,21 @@ GOLDEN = {
     #   opex_amounts          - descriptions + postings WITHOUT dates. 40e3213e20e9d7e9 was computed on the pre-phase-5 code
     #                           and MUST NOT change: not one amount moved, only the day.
     #   opex_vouchers         - the same with dates; re-pinned (was 892715817cd39468 with every entry on the 1st).
-    "opex_amounts": (469, "40e3213e20e9d7e9"),
-    "opex_vouchers": (469, "867bb3256bfef71d"),
-    "cogs_payable_amounts": (182, "5488bc97aba376c9"),  # frozen, no dates (same rule)
+    # Audit 2026-11-16, phase 2 (VAT on COGS and on 4290): the vouchers gained a 2710 line and the 2400 / 1910 credit became
+    # gross, so opex_amounts / opex_vouchers / cogs_payables are re-pinned. What MUST NOT move is the NET cost, and it did
+    # not: opex_net_amounts (every debit except 2710) was computed on the pre-phase-2 code and is unchanged, as is
+    # cogs_payable_amounts (now hashed on the net column).
+    "opex_net_amounts": (469, "07558a544853af26"),
+    "opex_amounts": (469, "cd0b0cd25ef42c79"),  # was 40e3213e20e9d7e9 before the VAT lines
+    "opex_vouchers": (469, "9295494bec49bbe1"),  # was 867bb3256bfef71d
+    "cogs_payable_amounts": (182, "5488bc97aba376c9"),  # frozen, no dates (same rule); net since phase 2
     # Phase 3: the sales voucher of every invoice (Dr 1500 / Cr 3000 / Cr 2700). Same count as the orders, and the
     # revenue it books equals the 209 030 662 of the regression rule (to the cent: the exact figure is 661.93).
     # (Pinned after pg_round2 was corrected to the psycopg2 literal path: the first value, 47c32992810ab004, had 137
     # gross amounts one cent off the stored ones. Revenue - the net side - was already right and did not move.)
     # Phase 4: one payable per COGS accrual (4291 / 4292): 182 over 91 months, due 30 days after the accrual. The opex /
     # salary / sales hashes above did not move: the payables are new, no existing amount changed.
-    "cogs_payables": (182, "95bc7368c3ec8242"),  # dates: accrual at month end, due +30 days (re-pinned in phase 5)
+    "cogs_payables": (182, "827a4e89c6a70989"),  # gross since phase 2 (was 95bc7368c3ec8242);  # dates: accrual at month end, due +30 days (re-pinned in phase 5)
     "sales_vouchers": (1853, "d87b271c20eb9788"),
     "revenue_in_gl": 209_030_661.93,
     # With the phase-1 accounts mapped back to the old ones this is the hash frozen BEFORE phase 1 (see

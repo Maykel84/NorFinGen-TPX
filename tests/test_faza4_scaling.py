@@ -40,7 +40,7 @@ def test_target_headcount_tracks_actual_hiring_within_tolerance():
         opex_cogs = sum(
             p.amount
             for v in generate_monthly_opex(year, month)
-            for p in v.postings if p.amount > 0
+            for p in v.postings if p.amount > 0 and p.account.number != 2710  # net cost: input VAT is not a cost
         ) * 12
         supplier_cost = sum(
             inv.amountExcludingVatCurrency for inv in generate_monthly_supplier_invoices(year, month)

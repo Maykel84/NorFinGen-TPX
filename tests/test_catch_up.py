@@ -202,6 +202,14 @@ class FakeStore:
         start = as_of - timedelta(days=lookback_days)
         return [o for o in self.orders.values() if start <= o.invoiceDate <= as_of]
 
+    def save_write_off(self, voucher, order_id):
+        self.save_all(voucher)
+
+    def get_orders_to_write_off(self, on_date):
+        from norfingen.generators.write_off import write_off_date  # phase 4
+        return [o for o in self.orders.values()
+                if o.status.value == "WRITTEN_OFF" and write_off_date(o.invoiceDate, o.invoicesDueIn) == on_date]
+
     def get_unpaid_supplier_invoices(self, as_of, lookback_days=repository.MAX_PAYMENT_TERMS_DAYS + repository.PAYMENT_WEEKEND_SHIFT_MARGIN_DAYS):
         start = as_of - timedelta(days=lookback_days)
         return [i for iid, i in self.invoices.items() if iid in self.unpaid and start <= i.paymentDueDate <= as_of]
@@ -280,6 +288,7 @@ class FakeStore:
             set_watermark=MagicMock(side_effect=lambda d, key=None: setattr(self, "wm", d)),
             latest_hour_entry_date=MagicMock(return_value=None),
             get_orders_for_payment_window=self.get_orders_for_payment_window,
+            get_orders_to_write_off=self.get_orders_to_write_off, save_write_off=self.save_write_off,
             get_unpaid_supplier_invoices=self.get_unpaid_supplier_invoices,
             get_unpaid_cogs_payables=self.get_unpaid_cogs_payables, save_cogs_accrual=self.save_cogs_accrual,
             get_vat_period_totals=self.get_vat_period_totals, save_vat_settlement=self.save_vat_settlement,

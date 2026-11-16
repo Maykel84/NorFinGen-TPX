@@ -20,6 +20,8 @@ def _patch_repository(**overrides):
         ensure_schema=MagicMock(),
         seed_reference_data=MagicMock(),
         get_orders_for_payment_window=MagicMock(return_value=[]),
+        get_orders_to_write_off=MagicMock(return_value=[]),
+        save_write_off=MagicMock(),
         get_unpaid_supplier_invoices=MagicMock(return_value=[]),
         get_unpaid_cogs_payables=MagicMock(return_value=[]),
         get_unpaid_vat_settlements=MagicMock(return_value=[]),
@@ -139,7 +141,8 @@ def test_run_daily_books_founding_capital_once_on_its_date():
     with patch.multiple(run_daily_module, **mocks):
         run_daily_module.run_daily(date(2019, 1, 2))
     manual = [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.MANUAL]
-    assert len(manual) == 1 and manual[0].date == date(2019, 1, 2)
+    # the share capital and (audit 2026-11-16, phase 3) the owner's start-up loan, both on the founding day
+    assert len(manual) == 2 and {v.date for v in manual} == {date(2019, 1, 2)}
 
 
 def test_run_daily_creates_customer_event_orders_that_the_old_daily_path_never_made():

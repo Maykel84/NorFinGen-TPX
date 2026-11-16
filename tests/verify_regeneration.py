@@ -19,6 +19,10 @@ from urllib.parse import urlparse
 
 import psycopg2
 
+# `current_date` in the checks below means "the day the data end": VERIFY_AS_OF=YYYY-MM-DD when verifying a database that was
+# regenerated up to an earlier day than today (the default is the real current_date).
+_AS_OF = f"DATE '{os.environ['VERIFY_AS_OF']}'" if os.environ.get("VERIFY_AS_OF") else "current_date"
+
 FROZEN_REVENUE = 209_030_662       # net revenue up to 2026-09-30 (docs/SPEC_poprawki_ksiegowe.md, decision (c))
 FROZEN_PAYROLL_GROSS = 81_422_455  # wage types 100 + 260 up to 2026-09-30
 
@@ -35,7 +39,7 @@ class Q:
         self.cur = self.conn.cursor()
 
     def all(self, sql, args=None):
-        self.cur.execute(sql, args)
+        self.cur.execute(sql.replace("current_date", _AS_OF) if _AS_OF != "current_date" else sql, args)
         return self.cur.fetchall()
 
     def one(self, sql, args=None):
@@ -131,14 +135,18 @@ def main() -> int:
     check("customer payment == SUM(order_lines.amount_currency), always",
           local.one("""select count(*) from bank_transactions b join (select order_id, sum(amount_currency) g from order_lines group by order_id) l
                        on l.order_id=b.order_id where b.transaction_type='INCOMING' and b.amount<>l.g""") == 0)
-    check("no order paid twice", local.one("select count(*) from (select order_id from bank_transactions where transaction_type='INCOMING' group by 1 having count(*)>1) t") == 0)
+    check("no order paid twice", local.one("select count(*) from (select order_id from bank_transactions where transaction_type='INCOMING' and order_id is not null group by 1 having count(*)>1) t") == 0)
     check("the whole ledger sums to zero (gl_checks T1)", abs(f(local.one("select coalesce(sum(amount),0) from postings"))) < 0.005,
           str(local.one("select sum(amount) from postings")))
     worst = local.all("select v.voucher_type, max(abs(s)) from (select voucher_id, sum(amount) s from postings group by 1) t join vouchers v on v.id=t.voucher_id group by 1 order by 1")
     check("every voucher of every type balances to the cent (gl_checks T2)", all(f(w[1]) < 0.005 for w in worst), str([(w[0], f(w[1])) for w in worst]))
     vat_gl = f(local.one("select sum(amount) from postings where account_number=2710 and amount>0"))
     vat_inv = f(local.one("select sum(vat_amount_currency) from supplier_invoices"))
-    check("input VAT in the GL == VAT on the purchase invoices (gl_checks T6)", abs(vat_gl - vat_inv) <= 1.0, f"GL {vat_gl:,.2f} | invoices {vat_inv:,.2f} | diff {vat_gl - vat_inv:+.2f}")
+    vat_cogs = f(local.one("select coalesce(sum(vat_amount_currency),0) from cogs_payables"))
+    vat_cash = f(local.one("select coalesce(sum(vat_amount),0) from postings where account_number=4290"))
+    check("input VAT in the GL == VAT on purchase invoices + COGS payables + 4290 cash purchases (gl_checks T6)",
+          abs(vat_gl - vat_inv - vat_cogs - vat_cash) <= 1.0,
+          f"GL {vat_gl:,.2f} | invoices {vat_inv:,.2f} + COGS {vat_cogs:,.2f} + 4290 {vat_cash:,.2f} | diff {vat_gl - vat_inv - vat_cogs - vat_cash:+.2f}")
     # ---- phase 3: sales invoices in the ledger
     check("every invoice has exactly one sales voucher dated on its invoice date",
           local.one("""select count(*) from orders o where (select count(*) from vouchers v where v.voucher_type='OUTGOING_INVOICE'
@@ -159,8 +167,12 @@ def main() -> int:
     bal_1500 = f(local.one("select sum(amount) from postings where account_number=1500"))
     open_gross = f(local.one("""select coalesce(sum(ol.amount_currency),0) from orders o join order_lines ol on ol.order_id=o.id
                                 where not exists (select 1 from bank_transactions b where b.order_id=o.id and b.transaction_type='INCOMING')"""))
-    check("receivable 1500 >= 0 and == gross of the invoices without a payment (gl_checks T3, compared by hand as the spec asks)",
-          bal_1500 >= -0.005 and abs(bal_1500 - open_gross) < 0.005, f"1500 balance {bal_1500:,.2f} | unpaid invoices {open_gross:,.2f}")
+    # audit phase 4: a written-off receivable is cleared from 1500 by its own voucher (Dr 7830 + Dr 2700 / Cr 1500)
+    written_off = f(local.one("""select coalesce(-sum(p.amount),0) from postings p join vouchers v on v.id=p.voucher_id
+                                where p.account_number=1500 and v.description like 'Tap på krav%'"""))
+    check("receivable 1500 >= 0 and == gross of the invoices without a payment, less the written-off ones (gl_checks T3 / T19)",
+          bal_1500 >= -0.005 and abs(bal_1500 - (open_gross - written_off)) < 0.005,
+          f"1500 balance {bal_1500:,.2f} | unpaid invoices {open_gross:,.2f} - written off {written_off:,.2f}")
     traps = local.all("""select o.status, count(*), round(sum(g)/1e6, 2) from orders o
                          join (select order_id, sum(amount_currency) g from order_lines group by 1) l on l.order_id=o.id
                          where not exists (select 1 from bank_transactions b where b.order_id=o.id and b.transaction_type='INCOMING')

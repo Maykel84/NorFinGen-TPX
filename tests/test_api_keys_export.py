@@ -315,6 +315,7 @@ def test_excel_export_produces_valid_workbook_with_expected_sheets():
         "operating_cost",
         "cogs",
         "operating_result",
+        "is_partial",
     ]
 
 

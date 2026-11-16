@@ -51,12 +51,17 @@ HAVING SUM(CASE WHEN account_number BETWEEN 3000 AND 3999 THEN amount END) IS NU
 --  Żadne księgowanie wierne fakturom nie zmieści się w 1 NOK na 213 mln przychodu; oryginał z progiem 1 NOK
 --  kończyłby się FAIL na poprawnych danych.)
 
--- T6: VAT naliczony (Wn 2710) = suma VAT z faktur zakupu
+-- T6: VAT naliczony (Wn 2710) = VAT z faktur zakupu + VAT z zobowiązań COGS (4291/4292) + VAT z zakupów gotówkowych 4290
+--     (audyt 2026-11-16, faza 2: COGS i 4290 mają teraz własny VAT naliczony, wcześniej T6 widział tylko faktury zakupu).
 SELECT 'T6' AS test,
        (SELECT ROUND(SUM(amount), 2) FROM gl WHERE account_number = 2710 AND amount > 0) AS vat_in_gl,
-       (SELECT ROUND(SUM(vat_amount_currency), 2) FROM purch) AS vat_in_invoices
+       (SELECT ROUND(COALESCE(SUM(vat_amount_currency), 0), 2) FROM purch)
+     + (SELECT ROUND(COALESCE(SUM(vat_amount_currency), 0), 2) FROM cogs)
+     + (SELECT ROUND(COALESCE(SUM(vat_amount), 0), 2) FROM gl WHERE account_number = 4290) AS vat_in_documents
 WHERE ABS(COALESCE((SELECT SUM(amount) FROM gl WHERE account_number = 2710 AND amount > 0), 0)
-        - COALESCE((SELECT SUM(vat_amount_currency) FROM purch), 0)) > 1;
+        - COALESCE((SELECT SUM(vat_amount_currency) FROM purch), 0)
+        - COALESCE((SELECT SUM(vat_amount_currency) FROM cogs), 0)
+        - COALESCE((SELECT SUM(vat_amount) FROM gl WHERE account_number = 4290), 0)) > 1;
 -- (COALESCE added in phase 0.5a: without it an empty side makes the WHERE NULL and the test passes vacuously.)
 
 -- T7: żadnych postingów płacowych na kontach VAT
@@ -144,6 +149,86 @@ LEFT JOIN gl g ON g.account_number = 2740
 WHERE v.payment_date <= (SELECT MAX(date) FROM gl)
 GROUP BY v.term, v.status
 HAVING ABS(COALESCE(SUM(g.amount), 0)) > 0.005 OR v.status <> 'PAID';
+
+-- T14 (audyt 2026-11-16, faza 2): VAT naliczony na COGS. Każda linia kont 4290/4291/4292 ma vat_amount równe 25% kwoty netto
+--     (4290 = zakup gotówkowy z banku, 4291/4292 = zobowiązania wobec dostawców). PASS = 0 wierszy.
+SELECT 'T14' AS test, account_number AS konto, COUNT(*) AS linie_bez_poprawnego_vat
+FROM gl
+WHERE account_number IN (4290, 4291, 4292)
+  AND (vat_amount IS NULL OR ABS(vat_amount - ROUND(amount * 0.25, 2)) > 0.011)  -- Python round() vs PG ROUND(): do 1 grosza
+GROUP BY account_number;
+
+-- T15 (faza 2): linie 4291/4292 niosą dostawcę (supplier_id) w GL; 4290 celowo bez dostawcy (zakup gotówkowy, NULL). PASS = 0 wierszy.
+SELECT 'T15' AS test, account_number AS konto, COUNT(*) AS linie_bez_dostawcy
+FROM gl
+WHERE account_number IN (4291, 4292) AND supplier_id IS NULL
+GROUP BY account_number;
+
+-- T16 (audyt 2026-11-16, faza 3): saldo banku (1910) nigdy poniżej zera, liczone narastająco dzień po dniu.
+--     Przed fazą 3 było ujemne przez 176 dni (minimum -2,8 mln). PASS = 0 wierszy.
+SELECT 'T16' AS test, date AS dzien, ROUND(running, 2) AS saldo_banku
+FROM (SELECT date, SUM(SUM(amount)) OVER (ORDER BY date) AS running
+      FROM gl WHERE account_number = 1910 GROUP BY date) t
+WHERE running < 0;
+
+-- T17 (faza 3): pożyczka od właściciela (2290): wypłata 3 500 000, saldo końcowe 0 po ostatniej racie (2025-12), nigdy ponad 3 500 000,
+--     a kapitał zakładowy (2000) = 500 000. PASS = 0 wierszy.
+SELECT 'T17' AS test, 'pozyczka_2290' AS kontrola, ROUND(COALESCE(SUM(amount), 0), 2) AS wartosc
+FROM gl WHERE account_number = 2290 AND date >= DATE '2026-01-01'
+HAVING ABS(COALESCE(SUM(amount), 0)) > 0.005
+UNION ALL
+SELECT 'T17', 'wyplata_2290', ROUND(COALESCE(SUM(-amount), 0), 2)
+FROM gl WHERE account_number = 2290 AND amount < 0
+HAVING ABS(COALESCE(SUM(-amount), 0) - 3500000) > 0.005
+UNION ALL
+SELECT 'T17', 'kapital_2000', ROUND(COALESCE(SUM(-amount), 0), 2)
+FROM gl WHERE account_number = 2000
+HAVING ABS(COALESCE(SUM(-amount), 0) - 500000) > 0.005;
+
+-- T18 (audyt 2026-11-16, faza 4): spisane należności. Każde zamówienie WRITTEN_OFF, którego data spisania (termin + 120 dni, +5 dni
+--     zapasu na przesunięcie na dzień roboczy) już minęła, ma DOKŁADNIE JEDEN posting na koncie 7830 (po jednym na zamówienie,
+--     nie na linię faktury); konto 7830 nie ma postingów bez takiego zamówienia. PASS = 0 wierszy.
+--     Konto: NS 4102 7830 "Tap på krav" (7770 to opłaty bankowe), zob. generators/write_off.py.
+SELECT 'T18' AS test, o.order_id, COUNT(g.account_number) AS postingi_7830
+FROM (SELECT DISTINCT order_id, payment_due_date FROM sales WHERE invoice_status = 'WRITTEN_OFF') o
+LEFT JOIN gl g ON g.account_number = 7830 AND g.description LIKE '%(ordre ' || o.order_id || ')%'
+WHERE o.payment_due_date + 125 <= (SELECT MAX(date) FROM gl)
+GROUP BY o.order_id
+HAVING COUNT(g.account_number) <> 1
+UNION ALL
+SELECT 'T18', NULL, COUNT(*)
+FROM gl g
+WHERE g.account_number = 7830
+  AND NOT EXISTS (SELECT 1 FROM sales s WHERE s.invoice_status = 'WRITTEN_OFF' AND g.description LIKE '%(ordre ' || s.order_id || ')%')
+HAVING COUNT(*) > 0;
+
+-- T19 (faza 4): saldo należności 1500 = brutto faktur jeszcze nieopłaconych i NIESPISANYCH (faktury bez wpłaty, bez voucheru
+--     spisania na 7830). Spisana faktura nie zostaje na 1500 na zawsze. PASS = 0 wierszy.
+SELECT 'T19' AS test,
+       (SELECT ROUND(SUM(amount), 2) FROM gl WHERE account_number = 1500) AS saldo_1500,
+       ROUND(SUM(s.amount_currency), 2) AS oczekiwane
+FROM sales s
+WHERE s.paid_date IS NULL
+  AND NOT EXISTS (SELECT 1 FROM gl g WHERE g.account_number = 7830 AND g.description LIKE '%(ordre ' || s.order_id || ')%')
+HAVING ABS(COALESCE((SELECT SUM(amount) FROM gl WHERE account_number = 1500), 0) - COALESCE(SUM(s.amount_currency), 0)) > 0.05;
+
+-- T20 (audyt 2026-11-16, faza 5): status faktury sprzedaży wynika ze stanu faktycznego, nie z założonego zachowania klienta. PASS = 0 wierszy.
+--     (a) PAID zawsze ma paid_date, a faktura z paid_date nie jest OPEN/OVERDUE; WRITTEN_OFF nigdy nie ma wpłaty;
+--     (b) OVERDUE tylko dla faktur bez wpłaty, których termin (przesunięty na dzień roboczy) już minął; OPEN dla niewymagalnych;
+--     (c) paid_late tylko przy wpłacie więcej niż 7 dni po terminie.
+SELECT 'T20' AS test, invoice_status, COUNT(*) AS faktury
+FROM sales
+WHERE (invoice_status = 'PAID' AND paid_date IS NULL)
+   OR (invoice_status IN ('OPEN', 'OVERDUE') AND paid_date IS NOT NULL)
+   OR (invoice_status = 'WRITTEN_OFF' AND paid_date IS NOT NULL)
+   OR (invoice_status = 'OVERDUE' AND payment_due_date + CASE EXTRACT(ISODOW FROM payment_due_date) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END
+                                      >= (SELECT MAX(date) FROM gl))
+   OR (invoice_status = 'OPEN' AND payment_due_date + CASE EXTRACT(ISODOW FROM payment_due_date) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END
+                                      < (SELECT MAX(date) FROM gl))
+   OR (paid_late AND (paid_date IS NULL OR paid_date <= payment_due_date + 7))
+   OR (NOT paid_late AND paid_date > payment_due_date + 7)
+   OR (is_overdue <> (invoice_status = 'OVERDUE'))
+GROUP BY invoice_status;
 
 -- REGRESJA (faza 0.5a; reguła z decyzji (c) w SPEC, zastępuje pierwotne 211 624 547 na 2026-10-30,
 -- które nie uwzględniało faktur weekendowych gubionych przez przebieg dzienny).

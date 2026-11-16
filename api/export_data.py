@@ -28,7 +28,7 @@ import csv
 import io
 from decimal import Decimal
 import zipfile
-from datetime import date
+from datetime import date, datetime
 
 import openpyxl
 
@@ -39,13 +39,13 @@ from api.db import data_pool
 # kolumn tak jak psycopg2's cur.description).
 _COLUMNS: dict[str, list[str]] = {
     "PL_miesiecznie": [
-        "month", "revenue", "labor_cost", "operating_cost", "cogs", "operating_result",
+        "month", "revenue", "labor_cost", "operating_cost", "cogs", "operating_result", "is_partial",
     ],
     "Faktury_sprzedazy": [
         "order_id", "customer_id", "order_date", "invoice_date", "customer_name",
         "customer_number", "city", "postal_code", "count",
         "unit_price_excluding_vat_currency", "amount_excluding_vat_currency", "amount_currency",
-        "invoice_status", "is_overdue", "payment_due_date", "paid_date",
+        "invoice_status", "is_overdue", "payment_due_date", "paid_date", "paid_late",
     ],
     "Faktury_zakupu": [
         "invoice_number", "supplier_id", "invoice_date", "payment_due_date",
@@ -54,7 +54,8 @@ _COLUMNS: dict[str, list[str]] = {
     ],
     "Zobowiazania_COGS": [
         "payable_id", "accrual_date", "payment_due_date", "account_number", "supplier_id",
-        "supplier_name", "description", "amount_currency", "status", "paid_date",
+        "supplier_name", "description", "amount_excluding_vat_currency", "vat_amount_currency", "amount_currency",
+        "status", "paid_date",
     ],
     "Rozliczenia_MVA": [
         "term", "period_start", "period_end", "output_vat", "input_vat", "balance",
@@ -105,7 +106,9 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
                    ROUND(COALESCE(r.revenue, 0)
                        - COALESCE(c.labor_cost, 0)
                        - COALESCE(c.operating_cost, 0)
-                       - COALESCE(c.cogs, 0))                           AS operating_result
+                       - COALESCE(c.cogs, 0))                           AS operating_result,
+                   ((COALESCE(r.month, c.month)::date + INTERVAL '1 month' - INTERVAL '1 day')::date
+                       > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial
             FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month = c.month
             ORDER BY 1
             """,
@@ -119,14 +122,21 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
                    ol.unit_price_excluding_vat_currency,
                    ol.amount_excluding_vat_currency,
                    ol.amount_currency,
-                   o.status AS invoice_status,
-                   (o.status IN ('OVERDUE', 'WRITTEN_OFF')) AS is_overdue,
+                   s.st AS invoice_status,
+                   (s.st = 'OVERDUE') AS is_overdue,
                    (o.invoice_date + o.invoices_due_in) AS payment_due_date,
-                   b.date AS paid_date
+                   b.date AS paid_date,
+                   COALESCE(b.date > (o.invoice_date + o.invoices_due_in) + 7, FALSE) AS paid_late
             FROM orders o
             JOIN customers c ON c.id = o.customer_id
             JOIN order_lines ol ON ol.order_id = o.id
             LEFT JOIN bank_transactions b ON b.order_id = o.id AND b.transaction_type = 'INCOMING'
+            CROSS JOIN LATERAL (SELECT CASE WHEN o.write_off_voucher_id IS NOT NULL THEN 'WRITTEN_OFF'
+            WHEN b.date IS NOT NULL THEN 'PAID'
+            WHEN (o.invoice_date + o.invoices_due_in
+            + CASE EXTRACT(ISODOW FROM o.invoice_date + o.invoices_due_in) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END)
+            < GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders)) THEN 'OVERDUE'
+            ELSE 'OPEN' END AS st) s
             WHERE o.order_date BETWEEN $1 AND $2
             ORDER BY o.order_date, o.id
             """,
@@ -151,7 +161,7 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
             """
             SELECT cp.id AS payable_id, cp.accrual_date, cp.payment_due_date,
                    cp.account_number, cp.supplier_id, s.name AS supplier_name,
-                   cp.description, cp.amount_currency, cp.status,
+                   cp.description, cp.amount_excluding_vat_currency, cp.vat_amount_currency, cp.amount_currency, cp.status,
                    b.date AS paid_date
             FROM cogs_payables cp
             JOIN suppliers s ON s.id = cp.supplier_id
@@ -265,6 +275,10 @@ def _excel_cell(value):
         return value
     if isinstance(value, Decimal):
         return float(value)
+    if isinstance(value, datetime):
+        return str(value)
+    if isinstance(value, date):
+        return value  # a real Excel date (yyyy-mm-dd), not text: BI tools infer a date column (audit 2026-11-16, phase 6)
     if isinstance(value, (int, float)):
         return value
     return str(value)
@@ -276,6 +290,11 @@ def _format_decimal_columns(ws, columns):
         letter = openpyxl.utils.get_column_letter(list(columns).index("count") + 1)
         for cell in ws[letter][1:]:
             cell.number_format = "0.00"
+    # Postal codes are TEXT: "0194" must keep its leading zero. The cell says so explicitly, so Excel never "fixes" it to 194.
+    if "postal_code" in columns:
+        letter = openpyxl.utils.get_column_letter(list(columns).index("postal_code") + 1)
+        for cell in ws[letter][1:]:
+            cell.number_format = "@"
 
 
 async def generate_excel_export_bytes(date_from: date, date_to: date) -> bytes:

@@ -62,3 +62,28 @@ def test_numbers_are_written_as_numbers_and_count_is_shown_with_two_decimals():
     assert [c.value for c in ws2["B"][1:]] == [1.0, 115.5]            # numeric, fractional part kept
     assert all(c.number_format == "0.00" for c in ws2["B"][1:])
     assert ws2["A2"].number_format == "General"
+
+
+def test_dates_are_real_excel_dates_and_postal_codes_stay_text():
+    """Audit 2026-11-16, phase 6. The database types were already right (DATE, TEXT, INTEGER, NUMERIC); the export wrote every
+    date as text. Now a date is a date cell, a timestamp stays text, and a postal code is text with an explicit text format, so
+    "0194" cannot lose its zero in Excel."""
+    from datetime import date, datetime
+
+    import openpyxl
+
+    import api.export_data as api_export
+    # export_excel.py is a script (it connects to the database on import), so only the REST API's copy of the two helpers is
+    # imported here; the local script carries the same code and was checked by hand against a real export.
+    for cell in (api_export._excel_cell,):
+        assert cell(date(2026, 11, 15)) == date(2026, 11, 15) and type(cell(date(2026, 11, 15))) is date
+        assert cell(datetime(2026, 11, 15, 10, 0)) == "2026-11-15 10:00:00"  # a datetime is not mistaken for a date
+        assert cell("0194") == "0194"
+
+    for fmt in (api_export._format_decimal_columns,):
+        ws = openpyxl.Workbook().active
+        ws.append(["postal_code", "invoice_date"])
+        ws.append(["0194", date(2026, 11, 15)])
+        fmt(ws, ["postal_code", "invoice_date"])
+        assert ws["A2"].number_format == "@" and ws["A2"].value == "0194"
+        assert ws["B2"].number_format == "yyyy-mm-dd"

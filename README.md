@@ -104,6 +104,8 @@ NS 4102 accounts the generator books on (full list with names: [docs/DATA_DICTIO
 | 2400 Leverandørgjeld | supplier ledger: purchase invoices and the COGS pass-through accruals |
 | 2600 Forskuddstrekk · 2770 Skyldig AGA · 2930 Skyldig lønn · 2940 Skyldige feriepenger | payroll liabilities |
 | 2700 / 2710 / 2740 | output VAT / input VAT / VAT settlement account (bi-monthly mva-oppgjør) |
+| 7830 Tap på krav | write-off of an uncollectible receivable (an operating cost; NS 4102 uses 7830, 7770 is bank fees) |
+| 2000 Aksjekapital · 2290 Lån fra eier · 8150 Annen rentekostnad | start-up financing: 500 000 NOK share capital and a 3 500 000 NOK owner loan (5 % a year, interest only 2019-2020, 60 monthly instalments 2021-2025). Interest is a financial cost: it is not in the operating result |
 | 3000 Salgsinntekt | all revenue (3100 exists but is unused, see below) |
 | 4290-4292 | COGS: customer equipment, Microsoft/Azure and tooling pass-through |
 | 5000 | gross salaries and feriepenger |
@@ -115,9 +117,11 @@ Every voucher balances to the cent; VAT is always its own posting, never a field
 
 The data is meant for practising reconciliations, so some irregularities are **there on purpose** and flagged in the export:
 
-- **Late and bad-debt customers.** A small share of invoices is paid 90 days late (`invoice_status = OVERDUE`) or never
-  (`WRITTEN_OFF`, no write-off entry is booked). They are why the receivable (1500) never reaches zero; `Faktury_sprzedazy`
-  has `invoice_status`, `is_overdue`, `payment_due_date` and `paid_date` so the receivable can be reconciled invoice by invoice.
+- **Late and bad-debt customers.** A small share of invoices is paid 90 days late (`orders.status = OVERDUE`) or never
+  (`WRITTEN_OFF`). A never-paying customer is written off 120 days after the due date (one voucher per order: `Dr 7830 Tap på krav` net
+  + `Dr 2700` VAT / `Cr 1500` gross), so the receivable (1500) holds only invoices that can still be paid; `Faktury_sprzedazy`
+  has `invoice_status` (derived from the real state: `PAID` always has a `paid_date`; otherwise `OPEN`, `OVERDUE` or `WRITTEN_OFF`), `is_overdue`, `paid_late`,
+  `payment_due_date` and `paid_date` so the receivable can be reconciled invoice by invoice.
 - **Open items on the date of the export.** Invoices not yet due, COGS liabilities (`Zobowiazania_COGS`, status `UNPAID`) and
   the VAT term in progress (`Rozliczenia_MVA`) are expected to be open; the balances of 1500, 2400 and 2740 are exactly the
   sum of these open items.

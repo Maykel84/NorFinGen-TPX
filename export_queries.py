@@ -36,18 +36,24 @@ QUERIES = {
                ROUND(COALESCE(r.revenue, 0)
                    - COALESCE(c.labor_cost, 0)
                    - COALESCE(c.operating_cost, 0)
-                   - COALESCE(c.cogs, 0))                           AS operating_result
+                   - COALESCE(c.cogs, 0))                           AS operating_result,
+               ((COALESCE(r.month, c.month)::date + INTERVAL '1 month' - INTERVAL '1 day')::date
+                   > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial
         FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month = c.month
         ORDER BY 1
     """,
-    # Accounting phase 3: the four last columns flag the DELIBERATE test traps. A small, documented share of
-    # invoices is paid late (OVERDUE: +90 days) or never (WRITTEN_OFF: bad debt) - behaviour the generator models on
-    # purpose, so a reconciliation that finds them has found a feature, not an error.
-    #   invoice_status     PAID | OVERDUE | WRITTEN_OFF  (the customer's modelled behaviour, set when the invoice is
-    #                      created; PAID does not mean "already paid" - see paid_date)
-    #   is_overdue         true for OVERDUE and WRITTEN_OFF
-    #   payment_due_date   invoice_date + payment terms (normal due date, before any OVERDUE delay)
-    #   paid_date          date of the customer's payment in the bank; NULL = not paid (yet, or never)
+    # The invoice status is DERIVED from what really happened (audit 2026-11-16, phase 5), not copied from the customer's modelled
+    # behaviour (orders.status: PAID | OVERDUE | WRITTEN_OFF, still what drives the generator):
+    #   invoice_status    PAID         a payment is booked in the bank (paid_date is set) - always, so PAID <=> paid_date
+    #                     OPEN         no payment yet and the bank day of the due date has not passed
+    #                     OVERDUE      no payment yet and the due date (moved to a working day) has passed
+    #                     WRITTEN_OFF  the write-off voucher is booked (Dr 7830 + Dr 2700 / Cr 1500, phase 4)
+    #   is_overdue        true while the invoice is OVERDUE (open and past due)
+    #   paid_late         true when it was paid more than 7 days after the due date (the model's late payers pay +90 days;
+    #                     weekend and holiday shifts are a few days and do not count)
+    #   payment_due_date  invoice_date + payment terms
+    #   paid_date         date of the customer's payment in the bank; NULL = not paid (yet, or never)
+    # "Today" is the newest generated date, not the clock, so a database that stopped yesterday is still consistent.
     "Faktury_sprzedazy": """
         SELECT o.id AS order_id, o.customer_id, o.order_date, o.invoice_date,
                c.name AS customer_name, c.customer_number, c.city, c.postal_code,
@@ -55,14 +61,21 @@ QUERIES = {
                ol.unit_price_excluding_vat_currency,
                ol.amount_excluding_vat_currency,
                ol.amount_currency,
-               o.status AS invoice_status,
-               (o.status IN ('OVERDUE', 'WRITTEN_OFF')) AS is_overdue,
+               s.st AS invoice_status,
+               (s.st = 'OVERDUE') AS is_overdue,
                (o.invoice_date + o.invoices_due_in) AS payment_due_date,
-               b.date AS paid_date
+               b.date AS paid_date,
+               COALESCE(b.date > (o.invoice_date + o.invoices_due_in) + 7, FALSE) AS paid_late
         FROM orders o
         JOIN customers c ON c.id = o.customer_id
         JOIN order_lines ol ON ol.order_id = o.id
         LEFT JOIN bank_transactions b ON b.order_id = o.id AND b.transaction_type = 'INCOMING'
+        CROSS JOIN LATERAL (SELECT CASE WHEN o.write_off_voucher_id IS NOT NULL THEN 'WRITTEN_OFF'
+                  WHEN b.date IS NOT NULL THEN 'PAID'
+                  WHEN (o.invoice_date + o.invoices_due_in
+                        + CASE EXTRACT(ISODOW FROM o.invoice_date + o.invoices_due_in) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END)
+                       < GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders)) THEN 'OVERDUE'
+                  ELSE 'OPEN' END AS st) s
         ORDER BY o.order_date, o.id
     """,
     "Faktury_zakupu": """
@@ -83,7 +96,7 @@ QUERIES = {
     "Zobowiazania_COGS": """
         SELECT cp.id AS payable_id, cp.accrual_date, cp.payment_due_date,
                cp.account_number, cp.supplier_id, s.name AS supplier_name,
-               cp.description, cp.amount_currency, cp.status,
+               cp.description, cp.amount_excluding_vat_currency, cp.vat_amount_currency, cp.amount_currency, cp.status,
                b.date AS paid_date
         FROM cogs_payables cp
         JOIN suppliers s ON s.id = cp.supplier_id

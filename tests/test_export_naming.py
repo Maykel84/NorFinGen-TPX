@@ -58,7 +58,7 @@ def test_sales_invoice_export_flags_the_deliberate_test_traps():
     that finds them has found a feature, not an error. Same four columns in the local export and in the REST API's copy."""
     from api.export_data import _COLUMNS
 
-    flags = ("invoice_status", "is_overdue", "payment_due_date", "paid_date")
+    flags = ("invoice_status", "is_overdue", "payment_due_date", "paid_date", "paid_late")
     for column in flags:
         assert column in QUERIES["Faktury_sprzedazy"], column
         assert column in _COLUMNS["Faktury_sprzedazy"], column
@@ -77,7 +77,8 @@ def test_cogs_liabilities_have_their_own_export_sheet():
 
     assert "Zobowiazania_COGS" in QUERIES
     columns = ("payable_id", "accrual_date", "payment_due_date", "account_number", "supplier_id", "supplier_name",
-               "description", "amount_currency", "status", "paid_date")
+               "description", "amount_excluding_vat_currency", "vat_amount_currency", "amount_currency",
+               "status", "paid_date")  # amount_currency is GROSS since the audit of 2026-11-16 (phase 2)
     assert list(_COLUMNS["Zobowiazania_COGS"]) == list(columns)
     for column in columns:
         assert column in QUERIES["Zobowiazania_COGS"], column

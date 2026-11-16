@@ -33,5 +33,7 @@ class CogsPayable(BaseModel):
     account_number: int  # 4291 | 4292 - the cost account that was debited
     supplier_id: int  # L01 for 4291, L09 for 4292 (roster.COGS_SUPPLIER_BY_ACCOUNT)
     description: str  # the accrual voucher's description
-    amount_currency: float  # NOK, gross - COGS is booked without VAT, so net == gross
+    amount_excluding_vat_currency: float  # NOK, the cost booked on 4291 / 4292 (what the accrual carried before VAT)
+    vat_amount_currency: float  # NOK, 25 % input VAT booked on 2710 (audit 2026-11-16, phase 2)
+    amount_currency: float  # NOK, GROSS = net + VAT = what is credited to 2400 and what the bank payment moves
     status: CogsPayableStatus = CogsPayableStatus.UNPAID

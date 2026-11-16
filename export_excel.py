@@ -2,6 +2,7 @@
 NorFinGen — eksport danych do Excel
 Poprawka: przychody z orders/order_lines (postingi INVOICE auto-generowane przez Tripletex).
 """
+from datetime import date, datetime
 from decimal import Decimal
 
 import psycopg2
@@ -25,6 +26,10 @@ def excel_cell(value):
         return value
     if isinstance(value, Decimal):
         return float(value)
+    if isinstance(value, datetime):
+        return str(value)
+    if isinstance(value, date):
+        return value  # a real Excel date (yyyy-mm-dd), not text: BI tools infer a date column (audit 2026-11-16, phase 6)
     if isinstance(value, (int, float)):
         return value
     return str(value)
@@ -36,6 +41,11 @@ def format_decimal_columns(ws, columns):
         letter = openpyxl.utils.get_column_letter(list(columns).index("count") + 1)
         for cell in ws[letter][1:]:
             cell.number_format = "0.00"
+    # Postal codes are TEXT: "0194" must keep its leading zero. The cell says so explicitly, so Excel never "fixes" it to 194.
+    if "postal_code" in columns:
+        letter = openpyxl.utils.get_column_letter(list(columns).index("postal_code") + 1)
+        for cell in ws[letter][1:]:
+            cell.number_format = "@"
 
 
 first = True

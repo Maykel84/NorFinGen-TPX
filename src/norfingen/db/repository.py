@@ -69,6 +69,7 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (1910, "Bankinnskudd, driftskonto", "ASSETS", None),
     (1940, "Bankinnskudd, skattetrekkskonto", "ASSETS", None),
     (2000, "Aksjekapital", "EQUITY_AND_LIABILITY", None),
+    (2290, "Annen langsiktig gjeld (lån fra eier)", "EQUITY_AND_LIABILITY", None),
     (2400, "Leverandørgjeld", "EQUITY_AND_LIABILITY", None),
     # Phase 1 (docs/SPEC_poprawki_ksiegowe.md) - the 27xx/29xx liabilities follow NS 4102. Until
     # then the payroll liabilities sat on the VAT accounts (2700/2710/2740) and the VAT account
@@ -115,6 +116,10 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     # (company_events.ACCOUNT_UNEXPECTED_COST), booked via
     # _simple_cost_voucher (no VAT, like 7350/7420) — hence vat_type_id=None.
     (7790, "Annen driftskostnad", "OPERATING_EXPENSE", None),
+    # Audit 2026-11-16, phase 4: the loss on a written-off receivable (NS 4102 7830; 7770 is bank and card fees).
+    (7830, "Tap på krav", "OPERATING_EXPENSE", None),
+    # Audit 2026-11-16, phase 3: interest on the owner loan - a financial cost, outside the 4000-7999 operating result.
+    (8150, "Annen rentekostnad", "FINANCIAL_EXPENSE", None),
 ]
 
 # (id, name, number, percentage, vat_code) — id matches the TripletexRef(id=...)
@@ -683,11 +688,12 @@ def save_cogs_accrual(voucher: Voucher, payable: CogsPayable) -> None:
         cur.execute(
             """INSERT INTO cogs_payables
                    (voucher_id, supplier_id, account_number, accrual_date, payment_due_date,
-                    description, amount_currency, status)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    description, amount_excluding_vat_currency, vat_amount_currency, amount_currency, status)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (voucher_id) DO NOTHING""",
             (voucher_id, payable.supplier_id, payable.account_number, payable.accrual_date,
-             payable.payment_due_date, payable.description, payable.amount_currency, payable.status.value),
+             payable.payment_due_date, payable.description, payable.amount_excluding_vat_currency,
+             payable.vat_amount_currency, payable.amount_currency, payable.status.value),
         )
     conn.commit()
 
@@ -703,7 +709,8 @@ def get_unpaid_cogs_payables(as_of: date, lookback_days: Optional[int] = None) -
     start = as_of - timedelta(days=lookback_days)
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT id, accrual_date, payment_due_date, account_number, supplier_id, description, amount_currency
+            """SELECT id, accrual_date, payment_due_date, account_number, supplier_id, description,
+                      amount_excluding_vat_currency, vat_amount_currency, amount_currency
                FROM cogs_payables
                WHERE status = 'UNPAID' AND payment_due_date BETWEEN %s AND %s ORDER BY id""",
             (start, as_of),
@@ -713,10 +720,10 @@ def get_unpaid_cogs_payables(as_of: date, lookback_days: Optional[int] = None) -
     return [
         CogsPayable(
             id=pid, accrual_date=accrual_date, payment_due_date=due, account_number=account,
-            supplier_id=supplier_id, description=description, amount_currency=float(amount),
-            status=CogsPayableStatus.UNPAID,
+            supplier_id=supplier_id, description=description, amount_excluding_vat_currency=float(net),
+            vat_amount_currency=float(vat), amount_currency=float(amount), status=CogsPayableStatus.UNPAID,
         )
-        for pid, accrual_date, due, account, supplier_id, description, amount in rows
+        for pid, accrual_date, due, account, supplier_id, description, net, vat, amount in rows
     ]
 
 
@@ -867,11 +874,20 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMEN
         cur.execute(
             """SELECT id, customer_id, order_date, delivery_date, invoice_date,
                       invoices_due_in, department_id, comment, status
-               FROM orders WHERE invoice_date BETWEEN %s AND %s""",
+               FROM orders WHERE invoice_date BETWEEN %s AND %s ORDER BY id""",
             (start, as_of),
         )
         order_rows = cur.fetchall()
 
+    return _orders_with_lines(order_rows)
+
+
+def _orders_with_lines(order_rows: list) -> list[Order]:
+    """Reconstructs Order (+orderLines) from `orders` rows (id, customer_id, order_date, delivery_date, invoice_date,
+    invoices_due_in, department_id, comment, status). Shared by the payment window and the write-off lookup, so both
+    see exactly the amounts the sales voucher booked."""
+    conn = get_connection()
+    with conn.cursor() as cur:
         order_ids = [row[0] for row in order_rows]
         lines_by_order: dict[int, list] = {}
         if order_ids:
@@ -917,6 +933,42 @@ def get_orders_for_payment_window(as_of: date, lookback_days: int = ORDER_PAYMEN
             storedGrossAmountCurrency=stored_gross,
         ))
     return orders
+
+
+
+
+def save_write_off(voucher: Voucher, order_id: int) -> None:
+    """Saves the write-off voucher of an order (phase 4) and links it to the order (phase 5): that link is what turns the
+    invoice status in the exports into WRITTEN_OFF. One transaction; re-running the day changes nothing."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        voucher_id = _save_voucher(cur, voucher)
+        cur.execute("UPDATE orders SET write_off_voucher_id = %s WHERE id = %s", (voucher_id, order_id))
+    conn.commit()
+
+
+def get_orders_to_write_off(on_date: date) -> list[Order]:
+    """WRITTEN_OFF orders whose write-off date (due date + WRITE_OFF_AFTER_DAYS, moved to a working day) is `on_date`.
+
+    The SQL window is a margin around the unshifted date (a holiday block moves it by a few days); the exact day is
+    decided in Python by write_off_date(), the one definition. Re-running a day is harmless: the voucher is unique on
+    (date, description)."""
+    from norfingen.generators.write_off import WRITE_OFF_AFTER_DAYS, write_off_date
+
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id, customer_id, order_date, delivery_date, invoice_date,
+                      invoices_due_in, department_id, comment, status
+               FROM orders
+               WHERE status = 'WRITTEN_OFF'
+                 AND invoice_date + invoices_due_in + %s BETWEEN %s AND %s
+               ORDER BY id""",
+            (WRITE_OFF_AFTER_DAYS, on_date - timedelta(days=10), on_date),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return [o for o in _orders_with_lines(rows) if write_off_date(o.invoiceDate, o.invoicesDueIn) == on_date]
 
 
 def get_unpaid_supplier_invoices(

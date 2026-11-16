@@ -293,11 +293,20 @@ CREATE TABLE IF NOT EXISTS cogs_payables (
     accrual_date      DATE NOT NULL,
     payment_due_date  DATE NOT NULL,
     description       TEXT NOT NULL,
-    amount_currency   NUMERIC(14, 2) NOT NULL,
+    amount_excluding_vat_currency NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    vat_amount_currency           NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    amount_currency   NUMERIC(14, 2) NOT NULL,  -- GROSS (net + VAT) since the audit of 2026-11-16, phase 2
     status            TEXT NOT NULL DEFAULT 'UNPAID'
 );
+-- A table created before phase 2 (production) gets the two new columns; a history regenerated afterwards fills them.
+ALTER TABLE cogs_payables ADD COLUMN IF NOT EXISTS amount_excluding_vat_currency NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE cogs_payables ADD COLUMN IF NOT EXISTS vat_amount_currency NUMERIC(14, 2) NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_cogs_payables_due ON cogs_payables(payment_due_date) WHERE status = 'UNPAID';
 -- (RLS and the analyst policy for this table sit with the other policies below: the analyst role is created there.)
+
+-- Audit 2026-11-16, phase 5: the write-off voucher of an uncollectible order (phase 4). The invoice status in the exports is DERIVED
+-- from the real state (payment in the bank, write-off booked, due date passed); orders.status stays the modelled behaviour.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS write_off_voucher_id INTEGER REFERENCES vouchers(id) ON DELETE SET NULL;
 
 ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS cogs_payable_id INTEGER REFERENCES cogs_payables(id);
 CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_unique_cogs_payment
@@ -578,7 +587,12 @@ SELECT TO_CHAR(COALESCE(r.month_start, c.month_start), 'YYYY-MM') AS month,
        ROUND(COALESCE(r.revenue, 0)
            - COALESCE(c.labor_cost, 0)
            - COALESCE(c.operating_cost, 0)
-           - COALESCE(c.cogs, 0), 2)            AS operating_result
+           - COALESCE(c.cogs, 0), 2)            AS operating_result,
+       -- Audit 2026-11-16, decision #1: the month that is not over yet (its last day is after the newest generated
+       -- date) is flagged, NOT pro-rated. Payroll and COGS are booked at month end, as in Tripletex, so the open
+       -- month shows revenue without its costs. Every trailing/YTD KPI must filter NOT is_partial.
+       ((COALESCE(r.month_start, c.month_start)::date + INTERVAL '1 month' - INTERVAL '1 day')::date
+        > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial
 FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month_start = c.month_start
 ORDER BY 1;
 

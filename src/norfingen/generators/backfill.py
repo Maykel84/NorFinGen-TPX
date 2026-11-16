@@ -2,7 +2,7 @@
 
 Defaults to 2019-01-01 (company founding) through today. Before the loop —
 a one-off MANUAL Voucher for the founding capital (2019-01-02, DR 1910 /
-CR 2000, 30,000 NOK).
+CR 2000, 500,000 NOK; the owner loan is booked beside it, see owner_loan.py).
 
 This module does NOT write to Supabase itself — `persist_fn`, if given, is
 called with each generated object (Order, SupplierInvoice,
@@ -30,7 +30,7 @@ logger = logging.getLogger("norfingen.backfill")
 
 DEFAULT_START_DATE = date(2019, 1, 1)
 FOUNDING_CAPITAL_DATE = date(2019, 1, 2)
-FOUNDING_CAPITAL_AMOUNT = 30_000.0
+FOUNDING_CAPITAL_AMOUNT = 500_000.0  # was 30 000 until the audit of 2026-11-16 (phase 3), see owner_loan.py
 
 PersistFn = Callable[[object], None]
 
@@ -46,10 +46,10 @@ EMPTY_MONTH_STATS = {
 
 
 def founding_capital_voucher() -> Voucher:
-    """A one-off MANUAL Voucher opening the balance sheet — 30,000 NOK founding capital."""
+    """A one-off MANUAL Voucher opening the balance sheet — 500,000 NOK founding capital."""
     voucher = Voucher(
         date=FOUNDING_CAPITAL_DATE,
-        description="Stiftelse — aksjekapital 30 000 NOK",
+        description="Stiftelse — aksjekapital 500 000 NOK",
         voucherType=VoucherType.MANUAL,
         postings=[
             Posting(date=FOUNDING_CAPITAL_DATE, account=acct(1910), amount=FOUNDING_CAPITAL_AMOUNT),

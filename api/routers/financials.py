@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.auth import verify_api_key
 from api.db import data_pool
-from api.models import OrderSummary, Page, PLMonthly, PLYearly
+from api.models import OrderSummary, Page, PLMonthly, PLTrailing, PLYearly
 from api.pagination import pagination_params
 
 router = APIRouter(tags=["financials"])
@@ -49,7 +49,7 @@ async def pl_monthly(
     pool = data_pool()
     rows = await pool.fetch(
         """
-        SELECT month, revenue, labor_cost, operating_cost, cogs, operating_result
+        SELECT month, revenue, labor_cost, operating_cost, cogs, operating_result, is_partial
         FROM v_pl_monthly
         WHERE month >= $1 AND month <= $2
         ORDER BY month
@@ -62,7 +62,10 @@ async def pl_monthly(
 
 @router.get("/pl/yearly", response_model=list[PLYearly])
 async def pl_yearly(_owner: str = Depends(verify_api_key)) -> list[PLYearly]:
-    """P&L zagregowany rocznie (suma miesięcy `v_pl_monthly` per rok)."""
+    """P&L zagregowany rocznie (suma PEŁNYCH miesięcy `v_pl_monthly` per rok).
+
+    Bieżący, niezakończony miesiąc (`is_partial`) jest pominięty: płace i COGS księgują się na koniec miesiąca, więc
+    jego wynik jest zawyżony. Surowe wiersze (z flagą) zwraca `/pl/monthly`."""
     pool = data_pool()
     rows = await pool.fetch(
         """
@@ -72,8 +75,10 @@ async def pl_yearly(_owner: str = Depends(verify_api_key)) -> list[PLYearly]:
             COALESCE(SUM(labor_cost), 0) AS labor_cost,
             COALESCE(SUM(operating_cost), 0) AS operating_cost,
             COALESCE(SUM(cogs), 0) AS cogs,
-            COALESCE(SUM(operating_result), 0) AS operating_result
+            COALESCE(SUM(operating_result), 0) AS operating_result,
+            COUNT(*)::int AS months_included
         FROM v_pl_monthly
+        WHERE NOT is_partial
         GROUP BY 1
         ORDER BY 1
         """
@@ -84,6 +89,37 @@ async def pl_yearly(_owner: str = Depends(verify_api_key)) -> list[PLYearly]:
         d["margin_pct"] = round(d["operating_result"] / d["revenue"] * 100, 2) if d["revenue"] else None
         result.append(PLYearly(**d))
     return result
+
+
+@router.get("/pl/trailing-12m", response_model=PLTrailing)
+async def pl_trailing_12m(_owner: str = Depends(verify_api_key)) -> PLTrailing:
+    """P&L z ostatnich 12 PEŁNYCH miesięcy (bez bieżącego, niezakończonego)."""
+    pool = data_pool()
+    rows = await pool.fetch(
+        """
+        SELECT month, revenue, labor_cost, operating_cost, cogs, operating_result
+        FROM v_pl_monthly
+        WHERE NOT is_partial
+        ORDER BY month DESC
+        LIMIT 12
+        """
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Brak zakończonych miesięcy.")
+    months = sorted(r["month"] for r in rows)
+    total = lambda col: float(sum(r[col] or 0 for r in rows))  # noqa: E731
+    revenue, result = total("revenue"), total("operating_result")
+    return PLTrailing(
+        period_from=months[0],
+        period_to=months[-1],
+        months=len(rows),
+        revenue=revenue,
+        labor_cost=total("labor_cost"),
+        operating_cost=total("operating_cost"),
+        cogs=total("cogs"),
+        operating_result=result,
+        margin_pct=round(result / revenue * 100, 2) if revenue else None,
+    )
 
 
 @router.get("/orders", response_model=Page[OrderSummary])

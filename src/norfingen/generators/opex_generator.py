@@ -40,8 +40,11 @@ from norfingen.generators.client_events import (
 )
 from norfingen.generators.company_events import ACCOUNT_UNEXPECTED_COST, unprofitable_quarter_cost_spike
 from norfingen.generators.order_generator import apply_annual_inflation
-from norfingen.generators.voucher import Posting, Voucher, VoucherType, acct, assert_voucher_valid
+from norfingen.generators.voucher import (
+    Posting, Voucher, VoucherType, acct, assert_voucher_valid, expected_vat_amount,
+)
 from norfingen.models.base import TripletexRef
+from norfingen.models.supplier_invoice import PURCHASE_VAT_TYPE_REF
 from norfingen.models.cogs_payable import CogsPayable
 from norfingen.seed.payroll import active_employees, first_working_day_of_month, last_working_day
 from norfingen.seed.workdays import is_working_day, next_working_day, previous_working_day
@@ -61,6 +64,8 @@ from norfingen.seed.roster import (
 
 ACCOUNT_BANK = 1910
 ACCOUNT_LEVERANDORGJELD = 2400
+ACCOUNT_INPUT_VAT = 2710  # Inngående merverdiavgift (input VAT) - audit 2026-11-16, phase 2
+ACCOUNT_OUTPUT_VAT = 2700  # Utgående merverdiavgift - the reverse-charge leg
 ACCOUNT_CANTEEN = 7350  # Kantinetilskudd
 ACCOUNT_REPRESENTATION = 7420  # Representasjon
 ACCOUNT_TRANSPORT = 7000  # Reisekostnader — an existing account (shared with L07 Avis,
@@ -124,14 +129,44 @@ def _simple_cost_voucher(on_date: date, account_number: int, description: str, a
     return voucher
 
 
-def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, amount: float) -> Voucher:
-    """A 2-posting Voucher: DR COGS account / CR 2400 Leverandørgjeld, no VAT
-    — unlike _simple_cost_voucher (immediate payment from the bank), this is
-    a liability owed to a supplier (Microsoft), analogous to a real purchase
-    invoice, but without a separate SupplierInvoice document or a subsequent
-    bank_transaction (a deliberate Phase 6 simplification — see
-    SESSION_HANDOFF.md)."""
-    amount = round(amount, 2)
+def _cash_purchase_voucher(on_date: date, account_number: int, description: str, net: float) -> Voucher:
+    """A domestic purchase paid from the bank at once, WITH input VAT (audit 2026-11-16, phase 2; account 4290):
+
+        Dr cost account   net     (vatType 1, vatAmount = the VAT contained in the line)
+        Dr 2710           VAT     (own posting, 25 % of net - the supplier invoices' pattern)
+        Cr 1910           gross
+
+    No supplier: this is operating material bought for a customer delivery, not an invoice from an identified supplier,
+    so supplier_id stays NULL. The net amount is the figure the voucher carried before the VAT existed."""
+    net = round(net, 2)
+    vat = expected_vat_amount(net)
+    voucher = Voucher(
+        date=on_date,
+        description=description,
+        voucherType=VoucherType.OPERATING_COST,
+        postings=[
+            Posting(date=on_date, account=acct(account_number), amount=net, vatType=PURCHASE_VAT_TYPE_REF, vatAmount=vat),
+            Posting(date=on_date, account=acct(ACCOUNT_INPUT_VAT), amount=vat, vatType=PURCHASE_VAT_TYPE_REF),
+            Posting(date=on_date, account=acct(ACCOUNT_BANK), amount=-round(net + vat, 2)),
+        ],
+    )
+    assert_voucher_valid(voucher)
+    return voucher
+
+
+def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, net: float) -> Voucher:
+    """COGS accrual from a domestic supplier, with input VAT (audit 2026-11-16, phase 2):
+
+        Dr 4291|4292   net     (vatType 1, vatAmount = VAT, supplier)
+        Dr 2710        VAT     (own posting, 25 % of net)
+        Cr 2400        gross   (supplier)
+
+    The net amount is exactly what the voucher carried before phase 2 (golden hash opex_net_amounts), so the cost and the
+    margin do not move; the VAT is an asset (a receivable from Skatteetaten) and the liability to the supplier grows to the
+    gross amount. Unlike _simple_cost_voucher this is a liability owed to a supplier, analogous to a purchase invoice, but
+    without a SupplierInvoice document (phase 4 gives it a CogsPayable instead)."""
+    net = round(net, 2)
+    vat = expected_vat_amount(net)
     # The supplier dimension on 2400 is what accounts-payable ageing needs: 4291 -> L01 Microsoft Norge, 4292 -> L09
     # Ingram Micro (roster.COGS_SUPPLIER_BY_ACCOUNT).
     supplier = TripletexRef(id=numeric_id(COGS_SUPPLIER_BY_ACCOUNT[account_number]))
@@ -140,8 +175,37 @@ def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, 
         description=description,
         voucherType=VoucherType.OPERATING_COST,
         postings=[
-            Posting(date=on_date, account=acct(account_number), amount=amount),
-            Posting(date=on_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=-amount, supplier=supplier),
+            Posting(date=on_date, account=acct(account_number), amount=net, vatType=PURCHASE_VAT_TYPE_REF,
+                    vatAmount=vat, supplier=supplier),
+            Posting(date=on_date, account=acct(ACCOUNT_INPUT_VAT), amount=vat, vatType=PURCHASE_VAT_TYPE_REF,
+                    supplier=supplier),
+            Posting(date=on_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=-round(net + vat, 2), supplier=supplier),
+        ],
+    )
+    assert_voucher_valid(voucher)
+    return voucher
+
+
+def _reverse_charge_cogs_voucher(on_date: date, account_number: int, description: str, net: float,
+                                 supplier: TripletexRef) -> Voucher:
+    """COGS accrual from a FOREIGN supplier: reverse charge (omvendt avgiftsplikt), prepared for the future.
+
+        Dr cost account  net  / Cr 2400  net     (the supplier is owed the net amount only)
+        Dr 2710          VAT  / Cr 2700  VAT     (equal amounts: input and output VAT cancel, the VAT return is unchanged)
+
+    No supplier in the roster is foreign today, so the generator never calls this; it exists, and is tested, so that the
+    first foreign supplier does not get domestic VAT by mistake."""
+    net = round(net, 2)
+    vat = expected_vat_amount(net)
+    voucher = Voucher(
+        date=on_date,
+        description=description,
+        voucherType=VoucherType.OPERATING_COST,
+        postings=[
+            Posting(date=on_date, account=acct(account_number), amount=net, supplier=supplier),
+            Posting(date=on_date, account=acct(ACCOUNT_LEVERANDORGJELD), amount=-net, supplier=supplier),
+            Posting(date=on_date, account=acct(ACCOUNT_INPUT_VAT), amount=vat, vatType=PURCHASE_VAT_TYPE_REF),
+            Posting(date=on_date, account=acct(ACCOUNT_OUTPUT_VAT), amount=-vat, vatType=PURCHASE_VAT_TYPE_REF),
         ],
     )
     assert_voucher_valid(voucher)
@@ -152,20 +216,23 @@ def cogs_payable_for(voucher: Voucher) -> CogsPayable | None:
     """The payable that goes with a COGS accrual voucher - None for every other operating-cost voucher.
 
     An accrual is recognised by its credit to 2400 (the cash costs - canteen, transport, equipment - credit the bank,
-    1910, and are paid the moment they are booked). Amount = what was credited to 2400, so paying the payable clears
-    the liability to the cent."""
+    1910, and are paid the moment they are booked). amount_currency = what was credited to 2400 (gross), so paying the
+    payable clears the liability to the cent; the net cost and the VAT are kept beside it."""
     if voucher.voucherType != VoucherType.OPERATING_COST:
         return None
     credit = next((p for p in voucher.postings if p.account.number == ACCOUNT_LEVERANDORGJELD and p.amount < 0), None)
     if credit is None:
         return None
-    cost = next(p for p in voucher.postings if p.amount > 0)
+    cost = next(p for p in voucher.postings if p.amount > 0 and p.account.number != ACCOUNT_INPUT_VAT)
+    vat = round(sum(p.amount for p in voucher.postings if p.account.number == ACCOUNT_INPUT_VAT), 2)
     return CogsPayable(
         accrual_date=voucher.date,
         payment_due_date=voucher.date + timedelta(days=COGS_PAYMENT_TERMS_DAYS),
         account_number=cost.account.number,
         supplier_id=credit.supplier.id,
         description=voucher.description or "",
+        amount_excluding_vat_currency=round(cost.amount, 2),
+        vat_amount_currency=vat,
         amount_currency=round(-credit.amount, 2),
     )
 
@@ -293,7 +360,7 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     for customer in CUSTOMERS:
         if customer.onboarding_date.year == year and should_generate_service_equipment_purchase(customer, month):
             equipment_cost = calc_service_equipment_cost(customer)
-            vouchers.append(_simple_cost_voucher(
+            vouchers.append(_cash_purchase_voucher(
                 _onboarding_booking_date(customer.onboarding_date), ACCOUNT_SERVICE_EQUIPMENT,
                 f"Driftsmateriell for kundeleveranse — {customer.number}", equipment_cost,
             ))

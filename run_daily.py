@@ -65,6 +65,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from norfingen.db.repository import (  # noqa: E402
     ensure_schema,
     get_orders_for_payment_window,
+    get_orders_to_write_off,
     get_unpaid_cogs_payables,
     get_unpaid_supplier_invoices,
     get_unpaid_vat_settlements,
@@ -74,6 +75,7 @@ from norfingen.db.repository import (  # noqa: E402
     save_all,
     save_bank_transactions,
     save_cogs_accrual,
+    save_write_off,
     save_hour_entries,
     save_orders,
     save_salary,
@@ -82,6 +84,8 @@ from norfingen.db.repository import (  # noqa: E402
     set_watermark,
 )
 from norfingen.generators.backfill import FOUNDING_CAPITAL_DATE, founding_capital_voucher  # noqa: E402
+from norfingen.generators.owner_loan import loan_drawdown_voucher, loan_service_voucher  # noqa: E402
+from norfingen.generators.write_off import build_write_off_voucher  # noqa: E402
 from norfingen.generators.bank_transaction_generator import (  # noqa: E402
     generate_daily_bank_transactions,
     generate_payroll_bank_transaction,
@@ -138,6 +142,7 @@ def process_day(target_date: date, skip_setup: bool = False) -> dict:
     # 0. Kapitał zakładowy otwiera księgi (jednorazowy voucher MANUAL).
     if target_date == FOUNDING_CAPITAL_DATE:
         save_all(founding_capital_voucher())
+        save_all(loan_drawdown_voucher())  # audit phase 3: the owner's start-up loan arrives with the capital
 
     # 1. Zamówienia klientów datowane dzisiaj (także weekendowe: faktura zachowuje swoją datę).
     orders = orders_dated(target_date)
@@ -161,6 +166,14 @@ def process_day(target_date: date, skip_setup: bool = False) -> dict:
         else:
             save_all(voucher)
         stats["operating_costs"] += 1
+
+    # 2a. Spisanie należności, które nie zostaną zapłacone (audyt, faza 4): 120 dni po terminie płatności faktury.
+    #     PRZED krokiem 2b: jeśli to ostatni dzień terminu VAT, korekta 2700 musi być już w księdze, gdy liczone są sumy.
+    for order in get_orders_to_write_off(target_date):
+        voucher = build_write_off_voucher(order)
+        if voucher is not None:
+            save_write_off(voucher, order.id)
+            stats["write_offs"] = stats.get("write_offs", 0) + 1
 
     # 2b. Last day of a VAT term: the balances of 2700 / 2710 move to 2740 (phase 5). After steps 1-2, so that the
     #     invoices of the very last day of the term are in the ledger when the totals are read.
@@ -208,6 +221,11 @@ def process_day(target_date: date, skip_setup: bool = False) -> dict:
         if payroll_payment is not None:
             save_bank_transactions([payroll_payment])
             stats["bank_transactions"] += 1
+
+    # 6. Obsługa pożyczki od właściciela (audyt, faza 3): odsetki (+ rata od 2021) w ostatnim dniu roboczym miesiąca.
+    loan_voucher = loan_service_voucher(target_date)
+    if loan_voucher is not None:
+        save_all(loan_voucher)
 
     logger.info("run_daily %s: %s", target_date.isoformat(), stats)
     return stats
