@@ -52,11 +52,46 @@ would flow *from* them, which would misattribute invented results to a
 real company). A companion client-name audit was scoped for a future
 session and has not yet been run.
 
+## Accounting audit (2026-11-16)
+
+A six-phase audit of the ledger model, applied in order and each verified against a full regeneration:
+(1) the month still in progress is flagged (`is_partial` in `v_pl_monthly`), not pro-rated, and every yearly / trailing
+KPI uses full months only; (2) pass-through COGS is booked net with 25 % input VAT (2710), the liability to the supplier
+is the gross amount; (3) share capital of 500 000 NOK plus a 3.5 mln NOK owner loan (2290, 5 % p.a., 60 monthly
+instalments from 2021-01, interest on 8150), which removed the negative bank balance of the early years; (4) receivables
+that stay unpaid are written off 120 days after the due date on 7830 "Tap på krav" (net cost, VAT correction on 2700,
+gross out of 1500), one voucher per order; (5) the invoice status is derived from what really happened (paid / open /
+overdue / written off) instead of copied from the customer's modelled behaviour, and operating costs and VAT settlements
+follow a realistic calendar; (6) typed Excel cells (real dates, booleans, text postal codes). The ledger checks grew from 13
+to 20 SQL tests. The same pipeline still produces history, the daily cron and catch-up.
+
+## Review round 2 (2026-11-17)
+
+Found while reviewing the dashboard and the 15 November export: (1) an invoice must never read WRITTEN_OFF before the
+write-off voucher exists. Order 1761 is bad debt whose write-off date is 2026-12-23; the raw `orders.status` (the generator's
+intent) already said WRITTEN_OFF. The state is now derived in one place, the view `v_invoice_status` (with
+`write_off_pending`), the exports read it, and a test (T22) ties every written-off invoice to its voucher to the cent;
+(2) COGS payments skipped months (accrual + 30 days landed on the 1st of the month after next, so some months had no
+payment and the next had two); the due date is now the last working day of the month after the accrual, exactly one
+payment per supplier per month (T21); (3) COGS went to two suppliers only. It is now split between six real companies
+(Microsoft, Crayon, SoftwareOne for licences; Ingram Micro, Atea, Proact for tools and hardware), the largest carrying
+a third; amounts, margins and VAT rules did not move, which golden hashes of the monthly totals prove (T23 guards the
+distribution). Two review notes need no change: interest on the owner loan (8150, 794 792 NOK) is deliberately outside the
+operating result, and the architect without hours (E05) is the documented, deliberate exception. Ledger checks: 26.
+
+## Review round 3 (2026-11-24)
+
+The export of 24 November confirmed the round-2 fixes. What it found was a type problem in the Excel export only: a NULL was
+written as an empty text cell, so id and date columns that contain blanks (`customer_id`, `supplier_id`, `paid_date`) mixed
+text and numbers or dates. A NULL is now a truly empty cell and identifiers are whole numbers. The database types were right
+all along, the postal codes were stored as text, and the fractional quantities are the deliberate consulting hours. One
+check waits for a date: the write-off of order 1761 is planned for 2026-12-23 and must book on that day.
+
 ## Current state
 
 Latest tag `v5.13-faza7c-major-incidents`, with the data-safety audit
 above merged on `main` but not yet tagged — 17 employees (flat since
-Nov 2022), 50 customers, 8 suppliers, daily-growing history from March
+Nov 2022), 50 customers, 13 suppliers (8 invoice suppliers + 5 COGS-only), daily-growing history from March
 2019 to today. 2025 full-year margin 6.1%; 2023–2026 sit outside the
 usual 5.5–9% safety band by deliberate, documented design (the major
 Enterprise-client-loss incident above) rather than a calibration gap —

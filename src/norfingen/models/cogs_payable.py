@@ -29,9 +29,9 @@ class CogsPayable(BaseModel):
 
     id: Optional[int] = None
     accrual_date: date  # the accrual voucher's date
-    payment_due_date: date  # accrual_date + COGS_PAYMENT_TERMS_DAYS
+    payment_due_date: date  # last working day of the month after the accrual (cogs_payment_due_date)
     account_number: int  # 4291 | 4292 - the cost account that was debited
-    supplier_id: int  # L01 for 4291, L09 for 4292 (roster.COGS_SUPPLIER_BY_ACCOUNT)
+    supplier_id: int  # one of the suppliers of the account (roster.COGS_SUPPLIER_SHARES)
     description: str  # the accrual voucher's description
     amount_excluding_vat_currency: float  # NOK, the cost booked on 4291 / 4292 (what the accrual carried before VAT)
     vat_amount_currency: float  # NOK, 25 % input VAT booked on 2710 (audit 2026-11-16, phase 2)

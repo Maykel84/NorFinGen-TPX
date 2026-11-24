@@ -32,17 +32,23 @@ GOLDEN = {
     # gross, so opex_amounts / opex_vouchers / cogs_payables are re-pinned. What MUST NOT move is the NET cost, and it did
     # not: opex_net_amounts (every debit except 2710) was computed on the pre-phase-2 code and is unchanged, as is
     # cogs_payable_amounts (now hashed on the net column).
-    "opex_net_amounts": (469, "07558a544853af26"),
-    "opex_amounts": (469, "cd0b0cd25ef42c79"),  # was 40e3213e20e9d7e9 before the VAT lines
-    "opex_vouchers": (469, "9295494bec49bbe1"),  # was 867bb3256bfef71d
-    "cogs_payable_amounts": (182, "5488bc97aba376c9"),  # frozen, no dates (same rule); net since phase 2
+    # Re-pinned in round 2, point 3 (COGS split over 3 suppliers per account: 91 months x 2 accounts x 3 = 546 accrual vouchers):
+    # these five moved BY DESIGN; what must NOT move is pinned above them: cogs_month_net_totals and opex_non_cogs.
+    "opex_net_amounts": (833, "0c3c238a905702a6"),  # was (469, 07558a544853af26)
+    "opex_amounts": (833, "b2867fdeda21ab81"),  # was (469, cd0b0cd25ef42c79) before the split
+    "opex_vouchers": (833, "3ea01fe15f6eb541"),  # was (469, 9295494bec49bbe1) before the split
+    # Round 2, point 3 (COGS split between several suppliers). Computed on the code BEFORE the split and never changed since:
+    # the TOTAL net COGS per month and account (91 months x 2 accounts) and every operating-cost voucher that is not a COGS accrual.
+    "cogs_month_net_totals": (182, "61a6792a23427970"),
+    "opex_non_cogs": (287, "6497c363a8d01072"),
+    "cogs_payable_amounts": (546, "8bd8a746be0f615c"),  # no dates; was (182, 5488bc97aba376c9) before the split
     # Phase 3: the sales voucher of every invoice (Dr 1500 / Cr 3000 / Cr 2700). Same count as the orders, and the
     # revenue it books equals the 209 030 662 of the regression rule (to the cent: the exact figure is 661.93).
     # (Pinned after pg_round2 was corrected to the psycopg2 literal path: the first value, 47c32992810ab004, had 137
     # gross amounts one cent off the stored ones. Revenue - the net side - was already right and did not move.)
     # Phase 4: one payable per COGS accrual (4291 / 4292): 182 over 91 months, due 30 days after the accrual. The opex /
     # salary / sales hashes above did not move: the payables are new, no existing amount changed.
-    "cogs_payables": (182, "827a4e89c6a70989"),  # gross since phase 2 (was 95bc7368c3ec8242);  # dates: accrual at month end, due +30 days (re-pinned in phase 5)
+    "cogs_payables": (546, "c2b96a332a701375"),  # was (182, a9624a0e7f05d59e) before the split;  # gross since phase 2; dates: accrual at month end, due = last working day of the NEXT month (round 2, point 1; was 827a4e89c6a70989 with due +30 days). Amounts hash above is unchanged.
     "sales_vouchers": (1853, "d87b271c20eb9788"),
     "revenue_in_gl": 209_030_661.93,
     # With the phase-1 accounts mapped back to the old ones this is the hash frozen BEFORE phase 1 (see

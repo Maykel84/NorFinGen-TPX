@@ -187,11 +187,11 @@ def test_run_daily_saves_each_cogs_accrual_with_its_payable_and_the_cash_costs_w
         run_daily_module.run_daily(date(2024, 2, 29))
 
     accruals = mocks["save_cogs_accrual"].call_args_list
-    assert len(accruals) == 2                                             # 4291 and 4292
+    assert len(accruals) == 6                                             # 4291 and 4292, three suppliers each (round 2, point 3)
     for call in accruals:
         voucher, payable = call.args
         assert payable.account_number in (4291, 4292) and payable.accrual_date == voucher.date == date(2024, 2, 29)
-        assert payable.payment_due_date == date(2024, 3, 30)
+        assert payable.payment_due_date == date(2024, 3, 29)             # last working day of the NEXT month (round 2, point 1)
     cash_costs = [v for v in _saved(mocks, Voucher) if v.voucherType == VoucherType.OPERATING_COST]
     assert cash_costs and all(not any(p.account.number == 2400 for p in v.postings) for v in cash_costs)
 

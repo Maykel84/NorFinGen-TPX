@@ -230,6 +230,63 @@ WHERE (invoice_status = 'PAID' AND paid_date IS NULL)
    OR (is_overdue <> (invoice_status = 'OVERDUE'))
 GROUP BY invoice_status;
 
+-- T21 (runda 2, pkt 1): płatności COGS nie "przeskakują" miesięcy. Dokładnie jedna płatność na dostawcę na miesiąc, w każdym
+-- miesiącu między pierwszą a ostatnią płatnością danego dostawcy (ostatnia płatność kończy zakres, więc nie wymaga następnika).
+-- PASS = 0 wierszy. Pokrywa zarówno miesiące bez płatności, jak i miesiące z dwiema.
+WITH pay AS (
+    SELECT cp.supplier_id, date_trunc('month', b.date)::date AS m, COUNT(*) AS n
+    FROM cogs_payables cp
+    JOIN bank_transactions b ON b.cogs_payable_id = cp.id AND b.transaction_type = 'OUTGOING'
+    GROUP BY 1, 2
+), span AS (
+    SELECT supplier_id, MIN(m) AS first_m, MAX(m) AS last_m FROM pay GROUP BY 1
+), months AS (
+    SELECT s.supplier_id, g::date AS m
+    FROM span s, generate_series(s.first_m, s.last_m, INTERVAL '1 month') g
+)
+SELECT 'T21' AS test, mo.supplier_id, mo.m, COALESCE(p.n, 0) AS platnosci
+FROM months mo LEFT JOIN pay p ON p.supplier_id = mo.supplier_id AND p.m = mo.m
+WHERE COALESCE(p.n, 0) <> 1;
+
+-- T22 (runda 2, pkt 1): faktura WRITTEN_OFF i voucher odpisu to ta sama rzecz, w obie strony i co do grosza. Każda faktura ze
+--     statusem WRITTEN_OFF ma voucher z 7830 (netto), korektą VAT na 2700 (brutto - netto) i ZAPISEM na 1500 (-brutto); każdy voucher
+--     odpisu ma fakturę o statusie WRITTEN_OFF. Brak stanu "spisana faktura bez vouchera" (np. zamówienie 1761 przed 2026-12-23
+--     jest OVERDUE z write_off_pending, nie WRITTEN_OFF). PASS = 0 wierszy.
+WITH wo AS (
+    SELECT order_id, ROUND(SUM(amount_excluding_vat_currency), 2) AS net, ROUND(SUM(amount_currency), 2) AS gross
+    FROM sales WHERE invoice_status = 'WRITTEN_OFF' GROUP BY order_id
+), wv AS (
+    SELECT DISTINCT voucher_number FROM gl WHERE account_number = 7830
+), g AS (
+    SELECT substring(MAX(g.description) FROM '\(ordre (\d+)\)')::int AS order_id,
+           SUM(g.amount) FILTER (WHERE g.account_number = 7830) AS net,
+           SUM(g.amount) FILTER (WHERE g.account_number = 2700) AS vat,
+           SUM(g.amount) FILTER (WHERE g.account_number = 1500) AS recv
+    FROM gl g JOIN wv ON wv.voucher_number = g.voucher_number
+    GROUP BY g.voucher_number
+)
+SELECT 'T22' AS test, COALESCE(wo.order_id, g.order_id) AS order_id, wo.net, g.net AS gl_net
+FROM wo FULL OUTER JOIN g ON g.order_id = wo.order_id
+WHERE wo.order_id IS NULL OR g.order_id IS NULL
+   OR ABS(g.net - wo.net) > 0.02
+   OR ABS(g.vat - (wo.gross - wo.net)) > 0.02
+   OR ABS(g.recv + wo.gross) > 0.02;
+
+-- T23 (runda 2, pkt 3): COGS nie jest zależny od jednego-dwóch dostawców. Żaden dostawca nie ma więcej niż 50% łącznego COGS (netto),
+--     COGS ma co najmniej 4 dostawców, a na każdym zobowiązaniu COGS stoi dostawca. PASS = 0 wierszy. Sam podział nie zmienia
+--     sum COGS per miesiąc (to przypina golden hash cogs_month_net_totals, nie baza).
+WITH by_supplier AS (
+    SELECT supplier_id, SUM(amount_excluding_vat_currency) AS net FROM cogs GROUP BY supplier_id
+), shares AS (
+    SELECT supplier_id, net / SUM(net) OVER () AS udzial FROM by_supplier
+)
+SELECT 'T23' AS test, supplier_id, ROUND(udzial * 100, 1) AS udzial_proc
+FROM shares WHERE udzial > 0.5
+UNION ALL
+SELECT 'T23', NULL, COUNT(*) FROM by_supplier HAVING COUNT(*) < 4
+UNION ALL
+SELECT 'T23', NULL, COUNT(*) FROM cogs WHERE supplier_id IS NULL HAVING COUNT(*) > 0;
+
 -- REGRESJA (faza 0.5a; reguła z decyzji (c) w SPEC, zastępuje pierwotne 211 624 547 na 2026-10-30,
 -- które nie uwzględniało faktur weekendowych gubionych przez przebieg dzienny).
 -- PASS = 0 wierszy.

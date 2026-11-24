@@ -46,12 +46,12 @@ def test_bi_views_use_security_invoker():
     """Bez security_invoker=true widok czyta tabele źródłowe z uprawnieniami
     WŁAŚCICIELA widoku (postgres, omija RLS), nie roli faktycznie
     odpytującej — RLS byłoby po cichu omijane przy odpytywaniu przez widok."""
-    for view in ("v_sales_flat", "v_pl_monthly", "v_headcount_monthly"):
+    for view in ("v_sales_flat", "v_pl_monthly", "v_invoice_status", "v_headcount_monthly"):
         assert f"CREATE OR REPLACE VIEW {view} WITH (security_invoker = true)" in SCHEMA_SQL
 
 
 def test_bi_views_granted_to_analyst():
-    assert "GRANT SELECT ON v_sales_flat, v_pl_monthly, v_headcount_monthly TO analyst" in SCHEMA_SQL
+    assert "GRANT SELECT ON v_sales_flat, v_pl_monthly, v_invoice_status, v_headcount_monthly TO analyst" in SCHEMA_SQL
 
 
 def test_connection_test_script_never_takes_password_as_cli_arg():

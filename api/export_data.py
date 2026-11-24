@@ -122,21 +122,15 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
                    ol.unit_price_excluding_vat_currency,
                    ol.amount_excluding_vat_currency,
                    ol.amount_currency,
-                   s.st AS invoice_status,
-                   (s.st = 'OVERDUE') AS is_overdue,
-                   (o.invoice_date + o.invoices_due_in) AS payment_due_date,
-                   b.date AS paid_date,
-                   COALESCE(b.date > (o.invoice_date + o.invoices_due_in) + 7, FALSE) AS paid_late
+                   s.invoice_status,
+                   s.is_overdue,
+                   s.payment_due_date,
+                   s.paid_date,
+                   s.paid_late
             FROM orders o
             JOIN customers c ON c.id = o.customer_id
             JOIN order_lines ol ON ol.order_id = o.id
-            LEFT JOIN bank_transactions b ON b.order_id = o.id AND b.transaction_type = 'INCOMING'
-            CROSS JOIN LATERAL (SELECT CASE WHEN o.write_off_voucher_id IS NOT NULL THEN 'WRITTEN_OFF'
-            WHEN b.date IS NOT NULL THEN 'PAID'
-            WHEN (o.invoice_date + o.invoices_due_in
-            + CASE EXTRACT(ISODOW FROM o.invoice_date + o.invoices_due_in) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END)
-            < GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders)) THEN 'OVERDUE'
-            ELSE 'OPEN' END AS st) s
+            JOIN v_invoice_status s ON s.order_id = o.id
             WHERE o.order_date BETWEEN $1 AND $2
             ORDER BY o.order_date, o.id
             """,
@@ -268,9 +262,10 @@ async def generate_csv_export_bytes(date_from: date, date_to: date) -> bytes:
 
 def _excel_cell(value):
     """Numbers stay numbers (Decimal -> float) so that Excel/BI infer a numeric column; before phase 6 every cell was
-    written as text, which is why `count` (1.00 ... 194.60 hours) looked like an integer column. Others unchanged."""
+    written as text, which is why `count` (1.00 ... 194.60 hours) looked like an integer column. A NULL is an empty cell
+    (round 3: it used to be an empty STRING, which made customer_id / supplier_id / paid_date mixed-type columns)."""
     if value is None:
-        return ""
+        return None  # a truly EMPTY cell: "" is a text cell, which turned numeric / date columns with NULLs into mixed-type columns
     if isinstance(value, bool):
         return value
     if isinstance(value, Decimal):
@@ -290,6 +285,12 @@ def _format_decimal_columns(ws, columns):
         letter = openpyxl.utils.get_column_letter(list(columns).index("count") + 1)
         for cell in ws[letter][1:]:
             cell.number_format = "0.00"
+    # Identifiers are whole numbers (NULL = an empty cell): shown as 7, never 7.0, whatever a BI tool decides to do with blanks.
+    for name in ("customer_id", "supplier_id", "voucher_number"):
+        if name in columns:
+            letter = openpyxl.utils.get_column_letter(list(columns).index(name) + 1)
+            for cell in ws[letter][1:]:
+                cell.number_format = "0"
     # Postal codes are TEXT: "0194" must keep its leading zero. The cell says so explicitly, so Excel never "fixes" it to 194.
     if "postal_code" in columns:
         letter = openpyxl.utils.get_column_letter(list(columns).index("postal_code") + 1)

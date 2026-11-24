@@ -47,7 +47,7 @@ def test_gl_export_has_voucher_number_and_no_employee_id():
 
 def test_numbers_are_written_as_numbers_and_count_is_shown_with_two_decimals():
     assert _excel_cell(Decimal("115.50")) == 115.5 and isinstance(_excel_cell(Decimal("1.00")), float)
-    assert _excel_cell(7) == 7 and _excel_cell(None) == "" and _excel_cell("x") == "x" and _excel_cell(True) is True and _excel_cell(False) is False
+    assert _excel_cell(7) == 7 and _excel_cell(None) is None and _excel_cell("x") == "x" and _excel_cell(True) is True and _excel_cell(False) is False
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -87,3 +87,28 @@ def test_dates_are_real_excel_dates_and_postal_codes_stay_text():
         fmt(ws, ["postal_code", "invoice_date"])
         assert ws["A2"].number_format == "@" and ws["A2"].value == "0194"
         assert ws["B2"].number_format == "yyyy-mm-dd"
+
+
+def test_null_is_an_empty_cell_not_an_empty_string_so_id_and_date_columns_keep_one_type():
+    """Round 3 (export of 2026-11-24): NULL used to be written as "", a TEXT cell. customer_id / supplier_id in Postingi_GL
+    (and paid_date next to real dates) became mixed text-and-number columns, which BI tools read as float or text. Now a NULL is
+    an empty cell, ids are whole numbers, and the whole column has a single type."""
+    from datetime import date
+
+    import openpyxl
+
+    import api.export_data as api_export
+
+    ws = openpyxl.Workbook().active
+    columns = ["voucher_number", "customer_id", "supplier_id", "paid_date"]
+    ws.append(columns)
+    for row in ([1, None, 7, date(2026, 1, 2)], [2, 3, None, None]):
+        ws.append([api_export._excel_cell(v) for v in row])
+    api_export._format_decimal_columns(ws, columns)
+    buf = io.BytesIO()
+    ws.parent.save(buf)
+    ws2 = openpyxl.load_workbook(io.BytesIO(buf.getvalue())).active
+    assert [c.value for c in ws2["B"][1:]] == [None, 3] and [c.value for c in ws2["C"][1:]] == [7, None]
+    assert ws2["B2"].data_type != "s" and ws2["C3"].data_type != "s"          # no empty STRING in a numeric column
+    assert ws2["D3"].value is None and ws2["D2"].data_type == "d"              # no empty string next to real dates
+    assert all(c.number_format == "0" for col in "ABC" for c in ws2[col][1:])  # whole numbers, not 7.0

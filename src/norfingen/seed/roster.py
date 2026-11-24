@@ -515,6 +515,10 @@ SUPPLIER_ADDRESSES: dict[str, tuple[str, str, str]] = {
     "L07": ("0150", "OSLO", "illustrative"),     # Avis Norge AS - not matched in the registry
     "L08": ("0191", "OSLO", "brreg"),       # Gjensidige Forsikring ASA, 995568217
     "L09": ("0667", "OSLO", "brreg"),       # Ingram Micro AS, 961425905
+    "L10": ("0484", "OSLO", "brreg"),       # Crayon Group AS, 981125592 (fetched 2026-11-17)
+    "L11": ("0484", "OSLO", "brreg"),       # SoftwareOne AS, 991124810 (fetched 2026-11-17)
+    "L12": ("0579", "OSLO", "brreg"),       # Atea AS, 976239997 (fetched 2026-11-17)
+    "L13": ("0585", "OSLO", "brreg"),       # Proact IT Norge AS, 971210737 (fetched 2026-11-17)
 }
 
 
@@ -522,22 +526,49 @@ SUPPLIER_ADDRESSES: dict[str, tuple[str, str, str]] = {
 # opex_generator._cogs_accrual_voucher). They are deliberately NOT in SUPPLIERS: that list is what the
 # purchase-invoice generator iterates (it would raise on an unknown rhythm) and what company_events draws the
 # SUPPLIER_RENEGOTIATION victim from (rng.choice over SUPPLIERS) - adding a ninth entry there would shift that draw and
-# with it the whole price history. L09 never issues an invoice and is never renegotiated.
+# with it the whole price history. L09-L13 never issue an invoice and are never renegotiated.
 #
 # L09 Ingram Micro AS (accounting phase 4): the distributor through which a managed-service provider buys RMM/EDR/
 # ticketing tool licences and spare hardware to resell - what account 4292 stands for. Chosen from candidates checked
 # against data.brreg.no (exact legal name, active, no bankruptcy/winding-up): org.nr 961425905, 0667 Oslo, NACE 46.500.
 # A real company as a SUPPLIER is allowed by docs/DATA_SAFETY.md (money flows from the fictional company to it).
+#
+# Round 2, point 3 (review 2026-11-17): the two COGS accounts used to be owed to ONE supplier each (L01 / L09), so the whole
+# ~92 mln of COGS went to two companies - an unrealistically narrow supplier base. L10-L13 are the other real distributors
+# / licence resellers of the Norwegian IT-services market. Names and organisation numbers re-checked against data.brreg.no on
+# 2026-11-17 (exact legal name, active, no bankruptcy / winding-up): CRAYON GROUP AS 981125592 (the legal name is
+# "Crayon Group AS", there is no "Crayon AS"), SOFTWAREONE AS 991124810, ATEA AS 976239997, PROACT IT NORGE AS 971210737.
 COGS_SUPPLIERS: list[SupplierSeed] = [
     SupplierSeed("L09", "Ingram Micro AS", "IT tools and equipment resale (COGS pass-through)", 4292,
                  "monthly_cogs_accrual", 0.0, 0.0, real_org_number="961425905"),
+    SupplierSeed("L10", "Crayon Group AS", "Microsoft licence resale (COGS pass-through)", 4291,
+                 "monthly_cogs_accrual", 0.0, 0.0, real_org_number="981125592"),
+    SupplierSeed("L11", "SoftwareOne AS", "Software licence resale (COGS pass-through)", 4291,
+                 "monthly_cogs_accrual", 0.0, 0.0, real_org_number="991124810"),
+    SupplierSeed("L12", "Atea AS", "Hardware and tools resale (COGS pass-through)", 4292,
+                 "monthly_cogs_accrual", 0.0, 0.0, real_org_number="976239997"),
+    SupplierSeed("L13", "Proact IT Norge AS", "Backup and storage resale (COGS pass-through)", 4292,
+                 "monthly_cogs_accrual", 0.0, 0.0, real_org_number="971210737"),
 ]
 
 ALL_SUPPLIERS: list[SupplierSeed] = [*SUPPLIERS, *COGS_SUPPLIERS]
 
-# The supplier each COGS account is owed to: 4291 Videresalgskostnad Microsoft/Azure -> L01 Microsoft Norge AS (the
-# same supplier that bills the licences), 4292 Driftskostnad Managed IT Support (RMM/EDR/verktøy) -> L09 Ingram Micro AS.
-COGS_SUPPLIER_BY_ACCOUNT: dict[int, str] = {4291: "L01", 4292: "L09"}
+# Who each COGS account is owed to (round 2, point 3): (supplier, share of the monthly net amount, description of the
+# monthly accrual - None keeps the pre-split description). The shares are the BASE; opex_generator.split_cogs adds a small
+# deterministic month-to-month spread and gives the last supplier the remainder, so the supplier amounts always add up to
+# the account's monthly net to the cent. No supplier ends up with more than ~1/3 of the total COGS.
+#   4291 Videresalgskostnad Microsoft/Azure : L01 Microsoft Norge 55 %, L10 Crayon 25 %, L11 SoftwareOne 20 %
+#   4292 Driftskostnad Managed IT Support   : L09 Ingram Micro 45 %, L12 Atea 35 %, L13 Proact 20 %
+COGS_SUPPLIER_SHARES: dict[int, tuple[tuple[str, float, str | None], ...]] = {
+    4291: (("L01", 0.55, None),
+           ("L10", 0.25, "Videresalgskostnad Microsoft-lisenser (CSP)"),
+           ("L11", 0.20, "Videresalgskostnad programvarelisenser")),
+    4292: (("L09", 0.45, None),
+           ("L12", 0.35, "Driftskostnad maskinvare og verktøy"),
+           ("L13", 0.20, "Driftskostnad backup og lagring")),
+}
+# The first (main) supplier of each account - what the account stood for before the split.
+COGS_SUPPLIER_BY_ACCOUNT: dict[int, str] = {account: shares[0][0] for account, shares in COGS_SUPPLIER_SHARES.items()}
 
 
 # Phase 4 — one project per customer (1:1, PRJnnn <-> Knnn same number), not

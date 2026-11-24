@@ -58,7 +58,7 @@ from norfingen.seed.roster import (
     calc_client_visit_transport,
     calc_representation_cost,
     calc_s01_cogs_monthly,
-    COGS_SUPPLIER_BY_ACCOUNT,
+    COGS_SUPPLIER_SHARES,
     numeric_id,
 )
 
@@ -75,10 +75,17 @@ ACCOUNT_SERVICE_EQUIPMENT = 4290  # Driftsmateriell for kundeleveranse (COGS)
 ACCOUNT_AZURE_COGS = 4291  # Videresalgskostnad Microsoft/Azure (COGS, Phase 6)
 ACCOUNT_S01_COGS = 4292  # Driftskostnad Managed IT Support — RMM/EDR/tools (COGS, Phase 6, 2nd calibration)
 
-# Phase 4: a COGS accrual is a liability to a supplier, so it has a due date like any purchase invoice. 30 days from the
-# accrual, the same term the purchase invoices use (SupplierInvoice.paymentDueDate), moved to the next working day when
-# the payment is booked. Suppliers are paid on the due date - there is no late-payment model for them - so COGS follows.
-COGS_PAYMENT_TERMS_DAYS = 30
+# Phase 4: a COGS accrual is a liability to a supplier, so it has a due date like any purchase invoice.
+# Round 2 (review 2026-11-16/17, point 1): the due date is the LAST WORKING DAY OF THE MONTH AFTER THE ACCRUAL. The old
+# "accrual + 30 days" skipped months: accruals are booked on the last working day (28-31), so a 30/31 January accrual fell
+# due on 1 March and February had no COGS payment at all while March had two (cash outflows jumped 0 <-> 3.5 mln).
+# A last-working-day due date is already a working day, so the payment (next_working_day(due)) never leaves that month:
+# exactly one payment per supplier per month. Only the dates change - amounts, VAT and the accrual vouchers do not.
+def cogs_payment_due_date(accrual_date: date) -> date:
+    """Last working day of the month following `accrual_date`."""
+    first_of_next = (accrual_date.replace(day=1) + timedelta(days=32)).replace(day=1)
+    following = (first_of_next + timedelta(days=32)).replace(day=1) - timedelta(days=1)  # last day of the next month
+    return previous_working_day(following)
 
 CONFERENCE_MONTHS = {3, 9, 11}
 CONFERENCE_PROBABILITY = 0.6
@@ -154,7 +161,7 @@ def _cash_purchase_voucher(on_date: date, account_number: int, description: str,
     return voucher
 
 
-def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, net: float) -> Voucher:
+def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, net: float, supplier_number: str) -> Voucher:
     """COGS accrual from a domestic supplier, with input VAT (audit 2026-11-16, phase 2):
 
         Dr 4291|4292   net     (vatType 1, vatAmount = VAT, supplier)
@@ -167,9 +174,8 @@ def _cogs_accrual_voucher(on_date: date, account_number: int, description: str, 
     without a SupplierInvoice document (phase 4 gives it a CogsPayable instead)."""
     net = round(net, 2)
     vat = expected_vat_amount(net)
-    # The supplier dimension on 2400 is what accounts-payable ageing needs: 4291 -> L01 Microsoft Norge, 4292 -> L09
-    # Ingram Micro (roster.COGS_SUPPLIER_BY_ACCOUNT).
-    supplier = TripletexRef(id=numeric_id(COGS_SUPPLIER_BY_ACCOUNT[account_number]))
+    # The supplier dimension on 2400 is what accounts-payable ageing needs; who is owed what is roster.COGS_SUPPLIER_SHARES.
+    supplier = TripletexRef(id=numeric_id(supplier_number))
     voucher = Voucher(
         date=on_date,
         description=description,
@@ -212,6 +218,23 @@ def _reverse_charge_cogs_voucher(on_date: date, account_number: int, description
     return voucher
 
 
+def split_cogs(account_number: int, year: int, month: int, net: float) -> list[tuple[str, str | None, float]]:
+    """Splits one month's net COGS of an account between its suppliers (roster.COGS_SUPPLIER_SHARES):
+    [(supplier number, description override or None, net part)].
+
+    The base shares get a small month-to-month spread (+-8 %, a local Random seeded by account and month, so it is
+    deterministic and touches no other stream); the last supplier takes the remainder, so the parts ALWAYS add up to
+    round(net, 2) to the cent - the monthly COGS, the margin and account 2400 do not move, only who is owed changes."""
+    shares = COGS_SUPPLIER_SHARES[account_number]
+    net = round(net, 2)
+    rng = random.Random(f"cogs-split-{account_number}-{year}-{month}")
+    weights = [share * (1 + rng.uniform(-0.08, 0.08)) for _, share, _ in shares]
+    total_weight = sum(weights)
+    parts = [round(net * w / total_weight, 2) for w in weights[:-1]]
+    parts.append(round(net - sum(parts), 2))
+    return [(number, description, part) for (number, _, description), part in zip(shares, parts)]
+
+
 def cogs_payable_for(voucher: Voucher) -> CogsPayable | None:
     """The payable that goes with a COGS accrual voucher - None for every other operating-cost voucher.
 
@@ -227,7 +250,7 @@ def cogs_payable_for(voucher: Voucher) -> CogsPayable | None:
     vat = round(sum(p.amount for p in voucher.postings if p.account.number == ACCOUNT_INPUT_VAT), 2)
     return CogsPayable(
         accrual_date=voucher.date,
-        payment_due_date=voucher.date + timedelta(days=COGS_PAYMENT_TERMS_DAYS),
+        payment_due_date=cogs_payment_due_date(voucher.date),
         account_number=cost.account.number,
         supplier_id=credit.supplier.id,
         description=voucher.description or "",
@@ -338,18 +361,22 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     azure_cogs_base = calc_azure_cogs_monthly(s02_customers)
     if azure_cogs_base > 0:
         azure_cogs_cost = apply_annual_inflation(azure_cogs_base, year)
-        vouchers.append(_cogs_accrual_voucher(
-            month_end, ACCOUNT_AZURE_COGS, f"Videresalgskostnad Microsoft/Azure {month_label}", azure_cogs_cost,
-        ))
+        for supplier_number, description, part in split_cogs(ACCOUNT_AZURE_COGS, year, month, azure_cogs_cost):
+            vouchers.append(_cogs_accrual_voucher(
+                month_end, ACCOUNT_AZURE_COGS, f"{description or 'Videresalgskostnad Microsoft/Azure'} {month_label}", part,
+                supplier_number,
+            ))
 
     # Phase 6, second calibration — S01 COGS pass-through (all segments, see
     # roster.calc_s01_cogs_monthly for the market-based rationale).
     s01_cogs_base = calc_s01_cogs_monthly(customers)
     if s01_cogs_base > 0:
         s01_cogs_cost = apply_annual_inflation(s01_cogs_base, year)
-        vouchers.append(_cogs_accrual_voucher(
-            month_end, ACCOUNT_S01_COGS, f"Driftskostnad Managed IT Support {month_label}", s01_cogs_cost,
-        ))
+        for supplier_number, description, part in split_cogs(ACCOUNT_S01_COGS, year, month, s01_cogs_cost):
+            vouchers.append(_cogs_accrual_voucher(
+                month_end, ACCOUNT_S01_COGS, f"{description or 'Driftskostnad Managed IT Support'} {month_label}", part,
+                supplier_number,
+            ))
 
     conference_rng = random.Random(f"conference-{year}-{month}")
     trip = generate_conference_trip(year, month, conference_rng)

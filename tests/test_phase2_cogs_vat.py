@@ -23,7 +23,7 @@ def _by_account(voucher):
 
 
 def test_cogs_accrual_books_vat_as_its_own_posting_and_credits_gross_to_the_supplier():
-    v = _cogs_accrual_voucher(D, 4291, "Videresalgskostnad Microsoft/Azure mai 2024", 22_000.0)
+    v = _cogs_accrual_voucher(D, 4291, "Videresalgskostnad Microsoft/Azure mai 2024", 22_000.0, "L01")
     posts = _by_account(v)
     assert posts[4291].amount == 22_000.0 and posts[4291].vatAmount == 5_500.0
     assert posts[2710].amount == 5_500.0
@@ -34,7 +34,7 @@ def test_cogs_accrual_books_vat_as_its_own_posting_and_credits_gross_to_the_supp
 
 def test_vat_is_25_percent_of_net_to_the_cent_and_the_voucher_balances_exactly():
     for net in (1234.5, 0.01, 99_999.99, 53_333.33, 312.62):
-        v = _cogs_accrual_voucher(D, 4292, "x", net)
+        v = _cogs_accrual_voucher(D, 4292, "x", net, "L09")
         posts = _by_account(v)
         assert posts[2710].amount == round(round(net, 2) * 0.25, 2)
         assert round(sum(p.amount for p in v.postings), 2) == 0.0
@@ -61,7 +61,7 @@ def test_reverse_charge_voucher_nets_input_and_output_vat():
 
 
 def test_payable_is_gross_and_its_payment_clears_2400_to_the_cent():
-    v = _cogs_accrual_voucher(D, 4292, "Driftskostnad Managed IT Support mai 2024", 53_000.0)
+    v = _cogs_accrual_voucher(D, 4292, "Driftskostnad Managed IT Support mai 2024", 53_000.0, "L12")
     payable = cogs_payable_for(v)
     assert (payable.amount_excluding_vat_currency, payable.vat_amount_currency, payable.amount_currency) == (
         53_000.0, 13_250.0, 66_250.0)

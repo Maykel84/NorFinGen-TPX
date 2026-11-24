@@ -44,6 +44,8 @@ def digest(rows) -> str:
 
 def build(cutoff: date = CUTOFF) -> dict:
     orders, invoices, opex, opex_amounts, cogs_amounts, salary_v, salary_v_legacy, hours, sales_v, cogs, opex_net = ([] for _ in range(11))
+    cogs_month_net: dict[tuple[str, int], float] = {}  # (month, account) -> net COGS, whoever the supplier is
+    opex_non_cogs = []
     gross = 0.0
     gl_revenue = 0.0
     for year, month in months_range(START, cutoff):
@@ -69,7 +71,11 @@ def build(cutoff: date = CUTOFF) -> dict:
                 opex_net.append((v.description, tuple((p.account.number, p.amount) for p in v.postings
                                                        if p.amount > 0 and p.account.number != 2710)))
                 payable = cogs_payable_for(v)  # phase 4
+                if payable is None:
+                    opex_non_cogs.append((v.date.isoformat(), v.description, tuple((p.account.number, p.amount) for p in v.postings)))
                 if payable is not None:
+                    key = (v.date.strftime("%Y-%m"), payable.account_number)  # round 2, point 3: survives a split between suppliers
+                    cogs_month_net[key] = round(cogs_month_net.get(key, 0.0) + payable.amount_excluding_vat_currency, 2)
                     cogs.append((payable.accrual_date.isoformat(), payable.payment_due_date.isoformat(),
                                  payable.account_number, payable.supplier_id, payable.amount_currency))
                     # frozen across phase 2: the NET amount, the very figure amount_currency held before VAT existed
@@ -102,6 +108,10 @@ def build(cutoff: date = CUTOFF) -> dict:
         "cogs_payables": (len(cogs), digest(cogs)),  # phase 4: one per 4291/4292 accrual (dates included)
         "opex_net_amounts": (len(opex_net), digest(opex_net)),  # audit phase 2: net debits only, frozen across the VAT change
         "cogs_payable_amounts": (len(cogs_amounts), digest(cogs_amounts)),  # no dates (frozen)
+        # round 2, point 3 (COGS split between several suppliers): the TOTAL net COGS per month and account, and every non-COGS
+        # operating-cost voucher, are frozen - splitting may only change WHO is owed, never how much or what else is booked
+        "cogs_month_net_totals": (len(cogs_month_net), digest(sorted(cogs_month_net.items()))),
+        "opex_non_cogs": (len(opex_non_cogs), digest(opex_non_cogs)),
         "sales_vouchers": (len(sales_v), digest(sales_v)),  # phase 3: Dr 1500 / Cr 3000 / Cr 2700 per invoice
         "revenue_in_gl": round(gl_revenue, 2),
         "salary_vouchers": (len(salary_v_legacy), digest(salary_v_legacy)),  # accounts mapped back: the pre-phase-1 hash

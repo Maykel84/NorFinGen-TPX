@@ -19,9 +19,10 @@ wb = openpyxl.Workbook()
 
 def excel_cell(value):
     """Numbers stay numbers (Decimal -> float) so that Excel/BI infer a numeric column; before phase 6 every cell was
-    written as text, which is why `count` (1.00 ... 194.60 hours) looked like an integer column. Others unchanged."""
+    written as text, which is why `count` (1.00 ... 194.60 hours) looked like an integer column. A NULL is an empty cell
+    (round 3: it used to be an empty STRING, which made customer_id / supplier_id / paid_date mixed-type columns)."""
     if value is None:
-        return ""
+        return None  # a truly EMPTY cell: "" is a text cell, which turned numeric / date columns with NULLs into mixed-type columns
     if isinstance(value, bool):
         return value
     if isinstance(value, Decimal):
@@ -41,6 +42,12 @@ def format_decimal_columns(ws, columns):
         letter = openpyxl.utils.get_column_letter(list(columns).index("count") + 1)
         for cell in ws[letter][1:]:
             cell.number_format = "0.00"
+    # Identifiers are whole numbers (NULL = an empty cell): shown as 7, never 7.0, whatever a BI tool decides to do with blanks.
+    for name in ("customer_id", "supplier_id", "voucher_number"):
+        if name in columns:
+            letter = openpyxl.utils.get_column_letter(list(columns).index(name) + 1)
+            for cell in ws[letter][1:]:
+                cell.number_format = "0"
     # Postal codes are TEXT: "0194" must keep its leading zero. The cell says so explicitly, so Excel never "fixes" it to 194.
     if "postal_code" in columns:
         letter = openpyxl.utils.get_column_letter(list(columns).index("postal_code") + 1)

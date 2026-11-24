@@ -596,6 +596,40 @@ SELECT TO_CHAR(COALESCE(r.month_start, c.month_start), 'YYYY-MM') AS month,
 FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month_start = c.month_start
 ORDER BY 1;
 
+-- v_invoice_status: ONE row per sales invoice (order), the single source of truth for "what happened to this invoice"
+-- (round 2, review 2026-11-17, point 1). The status is DERIVED from the ledger and the bank, NEVER copied from orders.status:
+-- orders.status is the generator's internal intent (the customer's modelled behaviour: PAID / OVERDUE / WRITTEN_OFF) and
+-- says WRITTEN_OFF from the day the order is created, months before the write-off voucher exists (120 days after the due
+-- date). Read the status from here; Faktury_sprzedazy (Excel + API export) uses this view too.
+--   invoice_status  WRITTEN_OFF  the write-off voucher is booked (orders.write_off_voucher_id; Dr 7830 + Dr 2700 / Cr 1500)
+--                   PAID         a customer payment is booked in the bank
+--                   OVERDUE      unpaid and the due date (moved to a working day) has passed
+--                   OPEN         unpaid and not yet due
+--   write_off_pending / write_off_planned_date: the generator already decided this invoice is bad debt, but the voucher is
+--                   not booked yet - the invoice is still OVERDUE until that day, never WRITTEN_OFF without a voucher.
+-- "Today" is the newest generated date, not the clock.
+CREATE OR REPLACE VIEW v_invoice_status WITH (security_invoker = true) AS
+SELECT o.id AS order_id,
+       s.st AS invoice_status,
+       (s.st = 'OVERDUE') AS is_overdue,
+       (o.invoice_date + o.invoices_due_in) AS payment_due_date,
+       b.date AS paid_date,
+       COALESCE(b.date > (o.invoice_date + o.invoices_due_in) + 7, FALSE) AS paid_late,
+       o.write_off_voucher_id,
+       (o.status = 'WRITTEN_OFF' AND o.write_off_voucher_id IS NULL) AS write_off_pending,
+       CASE WHEN o.status = 'WRITTEN_OFF' AND o.write_off_voucher_id IS NULL
+            THEN (o.invoice_date + o.invoices_due_in + 120
+                  + CASE EXTRACT(ISODOW FROM o.invoice_date + o.invoices_due_in + 120) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END)
+       END AS write_off_planned_date
+FROM orders o
+LEFT JOIN bank_transactions b ON b.order_id = o.id AND b.transaction_type = 'INCOMING'
+CROSS JOIN LATERAL (SELECT CASE WHEN o.write_off_voucher_id IS NOT NULL THEN 'WRITTEN_OFF'
+          WHEN b.date IS NOT NULL THEN 'PAID'
+          WHEN (o.invoice_date + o.invoices_due_in
+                + CASE EXTRACT(ISODOW FROM o.invoice_date + o.invoices_due_in) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END)
+               < GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders)) THEN 'OVERDUE'
+          ELSE 'OPEN' END AS st) s;
+
 -- v_headcount_monthly counts DISTINCT employee_id in hour_entries for the
 -- month. Historically this UNDERESTIMATED the company's true headcount,
 -- because only billable employees (Leveranse/Teknologi) ever had any
@@ -612,4 +646,4 @@ CREATE OR REPLACE VIEW v_headcount_monthly WITH (security_invoker = true) AS
 SELECT TO_CHAR(date, 'YYYY-MM') AS month, COUNT(DISTINCT employee_id) AS active_employees
 FROM hour_entries GROUP BY 1 ORDER BY 1;
 
-GRANT SELECT ON v_sales_flat, v_pl_monthly, v_headcount_monthly TO analyst;
+GRANT SELECT ON v_sales_flat, v_pl_monthly, v_invoice_status, v_headcount_monthly TO analyst;

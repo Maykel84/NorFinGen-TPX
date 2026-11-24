@@ -62,8 +62,14 @@ def test_sales_invoice_export_flags_the_deliberate_test_traps():
     for column in flags:
         assert column in QUERIES["Faktury_sprzedazy"], column
         assert column in _COLUMNS["Faktury_sprzedazy"], column
-    assert "bank_transactions" in QUERIES["Faktury_sprzedazy"]          # paid_date comes from the real payment
-    assert "LEFT JOIN" in QUERIES["Faktury_sprzedazy"].upper()           # an unpaid invoice must not vanish from the export
+    # round 2, point 1: the status is derived in ONE place, the view v_invoice_status; the export joins it per order
+    assert "v_invoice_status" in QUERIES["Faktury_sprzedazy"]
+    from pathlib import Path
+    view_sql = Path("src/norfingen/db/schema.sql").read_text(encoding="utf-8")
+    view_sql = view_sql[view_sql.index("CREATE OR REPLACE VIEW v_invoice_status"):]
+    view_sql = view_sql[:view_sql.index("v_headcount_monthly counts")]
+    assert "bank_transactions" in view_sql                               # paid_date comes from the real payment
+    assert "LEFT JOIN bank_transactions" in view_sql                     # an unpaid invoice must not vanish
     # the REST API copy lists exactly the columns of the local query
     for column in _COLUMNS["Faktury_sprzedazy"]:
         assert column in QUERIES["Faktury_sprzedazy"], column

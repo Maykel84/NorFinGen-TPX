@@ -54,6 +54,7 @@ QUERIES = {
     #   payment_due_date  invoice_date + payment terms
     #   paid_date         date of the customer's payment in the bank; NULL = not paid (yet, or never)
     # "Today" is the newest generated date, not the clock, so a database that stopped yesterday is still consistent.
+    # The derivation itself lives in the view v_invoice_status (schema.sql) - one definition for the export, the API and the dashboard.
     "Faktury_sprzedazy": """
         SELECT o.id AS order_id, o.customer_id, o.order_date, o.invoice_date,
                c.name AS customer_name, c.customer_number, c.city, c.postal_code,
@@ -61,21 +62,15 @@ QUERIES = {
                ol.unit_price_excluding_vat_currency,
                ol.amount_excluding_vat_currency,
                ol.amount_currency,
-               s.st AS invoice_status,
-               (s.st = 'OVERDUE') AS is_overdue,
-               (o.invoice_date + o.invoices_due_in) AS payment_due_date,
-               b.date AS paid_date,
-               COALESCE(b.date > (o.invoice_date + o.invoices_due_in) + 7, FALSE) AS paid_late
+               s.invoice_status,
+               s.is_overdue,
+               s.payment_due_date,
+               s.paid_date,
+               s.paid_late
         FROM orders o
         JOIN customers c ON c.id = o.customer_id
         JOIN order_lines ol ON ol.order_id = o.id
-        LEFT JOIN bank_transactions b ON b.order_id = o.id AND b.transaction_type = 'INCOMING'
-        CROSS JOIN LATERAL (SELECT CASE WHEN o.write_off_voucher_id IS NOT NULL THEN 'WRITTEN_OFF'
-                  WHEN b.date IS NOT NULL THEN 'PAID'
-                  WHEN (o.invoice_date + o.invoices_due_in
-                        + CASE EXTRACT(ISODOW FROM o.invoice_date + o.invoices_due_in) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END)
-                       < GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders)) THEN 'OVERDUE'
-                  ELSE 'OPEN' END AS st) s
+        JOIN v_invoice_status s ON s.order_id = o.id
         ORDER BY o.order_date, o.id
     """,
     "Faktury_zakupu": """

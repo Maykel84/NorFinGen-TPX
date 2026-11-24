@@ -1456,3 +1456,53 @@ Płatność listy płac (BANK) rozlicza 2930/2600/2770 (stałe w jednym miejscu:
 - **Czego eksport nie naprawi:** `customer_id`/`supplier_id` w `Postingi_GL` są w pliku liczbami całkowitymi z pustymi komórkami; `float64` w pandas to jego własna reguła dla kolumny z brakami (użyć `dtype="Int64"`). Eksport CSV (`export_csv.py`) nie ma typów: kod pocztowy z zerem trzeba czytać jako tekst (`dtype={"postal_code": str}`).
 - **`count` ułamkowe:** 6 wierszy, wszystkie produkt P06 „Consulting and Digitalization” (dodatkowe godziny konsultingu 1-200, rozdzielczość 0,1 h, np. 115,5, 174,4, 82,1). To zamierzone (godziny), nie błąd generatora; pozostałe produkty mają zawsze 1,00. `count` zostaje NUMERIC.
 - **Testy:** 570 passed, 1 skipped; gl_checks 23/23, verify 38/38 (dane bez zmian, to zmiana wyłącznie eksportu).
+
+---
+
+## 2026-11-17 - runda 2 poprawek (przegląd dashboardu i eksportu z 15.11)
+
+Stan: KOD GOTOWY I ZWERYFIKOWANY LOKALNIE, produkcja jeszcze na wersji sprzed rundy 2 (regeneracja czeka na zgodę).
+Lokalnie po pełnej regeneracji do 2026-11-16: gl_checks 26/26 PASS (T1-T23 + REG), verify_regeneration 38/38 (`VERIFY_AS_OF=2026-11-16`).
+
+1. **Płatności COGS "przeskakiwały" miesiące.** Termin = `accrual + 30 dni` przy księgowaniu 28-31 dawał miesiące bez płatności i miesiące z dwiema.
+   Teraz `opex_generator.cogs_payment_due_date`: ostatni dzień ROBOCZY następnego miesiąca (jest dniem roboczym, więc płatność nie wychodzi z miesiąca).
+   Jedna płatność na dostawcę na miesiąc (gl_checks T21; na starych danych produkcyjnych T21 daje 84 naruszenia). Zmieniają się tylko daty:
+   hash kwot (`cogs_payable_amounts`) nie ruszył się przy tej zmianie. Saldo banku nadal nigdy < 0 (min 893 255,52 na 2019-10-01).
+2. **Zamówienie 1761: WRITTEN_OFF bez vouchera.** Przyczyna: surowe `orders.status` to ZAMIAR generatora (WRITTEN_OFF od chwili utworzenia),
+   a voucher odpisu powstaje 120 dni po terminie (1761: 2026-12-23). Eksporty i API już liczyły status z vouchera; wyjątek siedział tylko
+   w surowej kolumnie, z której mógł korzystać dashboard. Decyzja: widok `v_invoice_status` (jedno źródło prawdy, w `schema.sql`, GRANT dla `analyst`),
+   z `write_off_pending` i `write_off_planned_date`; `Faktury_sprzedazy` (Excel i API) robi JOIN do widoku. Nowy test T22: każda faktura WRITTEN_OFF
+   ma voucher z 7830 (netto), 2700 (brutto - netto) i 1500 (-brutto) i odwrotnie; sprawdzony negatywnie na sfałszowanym odpisie.
+   Różnica 6 963,79 między GL (7830: 1 396 006,90) a sumą faktur WRITTEN_OFF z eksportu 15.11 (1 402 970,69) to dokładnie zamówienie 1761.
+3. **COGS rozbity na 6 dostawców** (decyzja: tak). 4291: L01 Microsoft Norge 55 %, L10 Crayon Group AS 25 %, L11 SoftwareOne AS 20 %;
+   4292: L09 Ingram Micro 45 %, L12 Atea AS 35 %, L13 Proact IT Norge AS 20 % (`roster.COGS_SUPPLIER_SHARES`, udziały bazowe + deterministyczny rozrzut +-8 %
+   na miesiąc w `split_cogs`, ostatni dostawca bierze resztę). Nazwy i org.nr zweryfikowane w data.brreg.no 2026-11-17 (uwaga: nazwa prawna to
+   "Crayon Group AS", nie "Crayon AS"); adresy w `SUPPLIER_ADDRESSES`, wpisy w `docs/DATA_SAFETY.md`. Największy dostawca: Ingram Micro 33,1 %.
+   Dowód, że kwoty się nie ruszyły: nowe zamrożone hashe liczone na STARYM kodzie, nadal zielone: `cogs_month_net_totals` (61a6792a23427970),
+   `opex_non_cogs` (6497c363a8d01072). Re-pinned (zmieniły się z założenia, 546 zobowiązań = 182 x 3): `opex_net_amounts`, `opex_amounts`, `opex_vouchers`,
+   `cogs_payable_amounts`, `cogs_payables`. VAT liczony osobno na każdym voucherze, więc miesięczny VAT naliczony może się różnić o grosze zaokrągleń.
+   T23: żaden dostawca > 50 %, co najmniej 4 dostawców, brak NULL.
+4. **Thomas Berg (E05)** bez godzin: świadomy, udokumentowany wyjątek (`NON_BILLABLE_OVERRIDES`, nadal ma listy płac). Zostaje (decyzja).
+   Typy nieobecności są kompletne w generatorze: SICK, VACATION, PARENTAL_LEAVE, FLEX_LEAVE, CHILD_CARE_LEAVE, WELFARE_LEAVE.
+5. **Odsetki 8150** (794 791,61) poza wynikiem operacyjnym: celowo, bez zmian.
+
+Wpływ na dane: liczba voucherów rośnie (6 526 -> 7 258 do 2026-11-16, bo COGS jest rozbity na 3 vouchery), więc `voucher_number` (= `vouchers.id`) od pierwszego
+COGS (2019) przesuwa się. Po wdrożeniu regeneracji produkcji numery dokumentów w BI się zmienią.
+Jak wdrożyć: wyłączyć `daily.yml`, backup (`pg_dump`), `scripts/prod_regen.sh`, porównać odcisk z lokalnym wzorcem (`tests/db_fingerprint.py` vs `.local/fp_prod.py`),
+commit/push/deploy, włączyć cron. Dashboard: korzystać z `v_invoice_status` zamiast surowego `orders.status`.
+
+---
+
+## 2026-11-24 - runda 3 (weryfikacja eksportu z 24.11)
+
+Stan: KOD GOTOWY LOKALNIE, wymaga tylko `fly deploy` (zmiana w `export_excel.py` i `api/export_data.py`; baza i generator bez zmian, regeneracja NIE jest potrzebna).
+
+1. **Typy kolumn.** Baza jest poprawna: `postal_code` TEXT (0 rekordów krótszych niż 4 znaki), `customer_id`/`supplier_id` INTEGER NULL, daty DATE, `count` NUMERIC(10,2).
+   Wiodące zera: 341 wierszy sprzedaży i 633 zakupu (2 klientów i 11 dostawców z kodem na 0) - w xlsx to komórki tekstowe z formatem `@`, w CSV tekst `0150`;
+   zero ginie przy czytaniu CSV (pandas `read_csv` / Excel), nie w pliku. `count` ułamkowy tylko w 6 fakturach P06 (godziny konsultingu 82,10-194,60): zamierzone, zostaje float.
+   **Prawdziwy błąd był w xlsx:** NULL zapisywany jako pusty TEKST (`""`), więc `customer_id` (12 522 pustych), `supplier_id` (11 660), `paid_date` itd. były kolumnami o mieszanych typach.
+   Teraz NULL = pusta komórka (`_excel_cell(None) is None`), a `customer_id`, `supplier_id`, `voucher_number` mają format `0`. Test `test_null_is_an_empty_cell...`,
+   sprawdzone na prawdziwym xlsx z lokalnej bazy: każda kolumna ma jeden typ.
+2. **Zamówienie 1761:** odpis zaplanowany na 2026-12-23, do sprawdzenia PO tej dacie: `SELECT COUNT(*) FROM gl WHERE account_number = 7830` -> 9
+   (dziś 8), status WRITTEN_OFF w `v_invoice_status`, a gl_checks T22 przechodzi (T22 sprawdza voucher odpisu w obie strony).
+
