@@ -281,6 +281,24 @@ class FakeStore:
     def save_salary(self, transaction, vouchers):
         return self._next_id
 
+    # --- round 4, step 2: what the new pipeline steps read back from the ledger (mirrors repository.py) ---
+    def get_asset_additions(self, up_to):
+        return sorted((v.date, round(p.amount, 2)) for v in self.vouchers.values() if v.date <= up_to
+                      for p in v.postings if p.account.number == 1200 and p.amount > 0)
+
+    def get_credit_total(self, account_number, start, end):
+        return round(sum(-p.amount for v in self.vouchers.values() if start <= v.date <= end
+                         for p in v.postings if p.account.number == account_number and p.amount < 0), 2)
+
+    def get_results_before_tax_by_year(self, up_to):
+        out = {}
+        for v in self.vouchers.values():
+            if v.date <= up_to:
+                for p in v.postings:
+                    if 3000 <= p.account.number <= 8299:
+                        out[v.date.year] = round(out.get(v.date.year, 0.0) - p.amount, 2)
+        return out
+
     def patches(self):
         return dict(
             ensure_schema=MagicMock(), seed_reference_data=MagicMock(),
@@ -295,6 +313,8 @@ class FakeStore:
             get_unpaid_vat_settlements=self.get_unpaid_vat_settlements,
             save_orders=self.save_orders, save_all=self.save_all, save_bank_transactions=self.save_bank_transactions,
             save_hour_entries=MagicMock(), save_salary=self.save_salary,
+            get_asset_additions=self.get_asset_additions, get_credit_total=self.get_credit_total,
+            get_results_before_tax_by_year=self.get_results_before_tax_by_year,
         )
 
 

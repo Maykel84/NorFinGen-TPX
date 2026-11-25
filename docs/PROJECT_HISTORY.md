@@ -104,6 +104,13 @@ Decisions taken on 2026-11-25, before any implementation:
   period-end revaluation, rates in `ref_currencies`.
 - **D4, tax:** yes: 22 % income tax with losses carried forward (the 2019 loss reduces 2020-21), no deferred tax.
 
+Step 2 is done: the structure a real set of books has and the generator lacked. Fixed assets (account 1200) are depreciated
+straight line over five years; 2 % mandatory pension (OTP) is accrued with every payroll and paid quarterly; 22 % income tax is booked
+on 31 December with losses carried forward (the 2019 start-up loss covers 2020 and part of 2021) and paid in two equal instalments
+on 15 February and 15 April; and a new sheet `Bilans_miesiecznie` gives the balance sheet at every month end, which balances to the
+cent. The P&L gained depreciation, EBITDA, financial result, tax and net result. Pension and depreciation take the EBIT margin of
+2024-25 to -0.5 % and -1.0 %, as anticipated in D1: the margin recalibration is the next step. Ledger checks: 37.
+
 Step 1 is done: `tools/verify.py`, a read-only script (it runs against production as safely as against a local database) that
 prints PASS/FAIL for every ledger invariant (all of `tests/gl_checks.sql`) and for the data-quality fields of an ERP quality
 report (vouchers without lines, unbalanced vouchers by count and by sum, invoices without lines, P&L = ledger in every month) and

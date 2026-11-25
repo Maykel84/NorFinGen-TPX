@@ -22,6 +22,8 @@ from norfingen.generators.backfill import months_range
 from norfingen.generators.hours_generator import generate_daily_hours, is_working_day
 from norfingen.generators.opex_generator import cogs_payable_for, generate_monthly_opex
 from norfingen.generators.order_generator import generate_monthly_orders
+from norfingen.generators import depreciation as depreciation_mod
+from norfingen.generators import pension as pension_mod
 from norfingen.generators.salary_generator import generate_monthly_salary
 from norfingen.generators.sales_voucher import build_sales_voucher
 from norfingen.generators.supplier_invoice_generator import generate_monthly_supplier_invoices
@@ -46,6 +48,8 @@ def build(cutoff: date = CUTOFF) -> dict:
     orders, invoices, opex, opex_amounts, cogs_amounts, salary_v, salary_v_legacy, hours, sales_v, cogs, opex_net = ([] for _ in range(11))
     cogs_month_net: dict[tuple[str, int], float] = {}  # (month, account) -> net COGS, whoever the supplier is
     opex_non_cogs = []
+    otp_v = []
+    asset_additions = []  # (date, cost) of the capitalised L05 invoices: the base of the depreciation
     gross = 0.0
     gl_revenue = 0.0
     for year, month in months_range(START, cutoff):
@@ -63,6 +67,8 @@ def build(cutoff: date = CUTOFF) -> dict:
         for i in generate_monthly_supplier_invoices(year, month):
             if is_date_generatable(i.invoiceDate, cutoff):
                 invoices.append((i.invoiceNumber, i.invoiceDate.isoformat(), round(i.amountCurrency, 2)))
+                if i.invoiceNumber.startswith("L05-") and i.amountExcludingVatCurrency >= 30_000.0:
+                    asset_additions.append((i.invoiceDate, round(i.amountExcludingVatCurrency, 2)))
         for v in generate_monthly_opex(year, month):
             if is_date_generatable(v.date, cutoff):
                 opex.append((v.date.isoformat(), v.description, tuple((p.account.number, p.amount) for p in v.postings)))
@@ -83,6 +89,9 @@ def build(cutoff: date = CUTOFF) -> dict:
                                          payable.amount_excluding_vat_currency))
         if should_generate_monthly_salary(year, month, cutoff):
             txn, vouchers = generate_monthly_salary(year, month)
+            otp = pension_mod.otp_voucher(txn.date, pension_mod.otp_base(txn))  # round 4, step 2
+            if otp is not None:
+                otp_v.append((otp.date.isoformat(), otp.description, tuple((p.account.number, p.amount) for p in otp.postings)))
             for v in vouchers:
                 salary_v.append((v.date.isoformat(), v.description, tuple((p.account.number, p.amount) for p in v.postings)))
                 salary_v_legacy.append((v.date.isoformat(), v.description, tuple(
@@ -91,6 +100,13 @@ def build(cutoff: date = CUTOFF) -> dict:
                 for spec in payslip.specifications:
                     if spec.wageType.id in (100, 260):  # Fast lønn + Feriepenger
                         gross += spec.amount
+
+    depreciation_v = []  # round 4, step 2: one voucher a month on the last working day, from the additions above
+    for year, month in months_range(START, cutoff):
+        voucher = depreciation_mod.depreciation_voucher(depreciation_mod.last_working_day(year, month), asset_additions)
+        if voucher is not None and voucher.date <= cutoff:
+            depreciation_v.append((voucher.date.isoformat(), voucher.description,
+                                   tuple((p.account.number, p.amount) for p in voucher.postings)))
 
     day = START
     while day <= cutoff:
@@ -112,6 +128,8 @@ def build(cutoff: date = CUTOFF) -> dict:
         # operating-cost voucher, are frozen - splitting may only change WHO is owed, never how much or what else is booked
         "cogs_month_net_totals": (len(cogs_month_net), digest(sorted(cogs_month_net.items()))),
         "opex_non_cogs": (len(opex_non_cogs), digest(opex_non_cogs)),
+        "otp_vouchers": (len(otp_v), digest(otp_v)),  # round 4, step 2: 2 % of the gross pay, Dr 5420 / Cr 2950 (new, frozen)
+        "depreciation_vouchers": (len(depreciation_v), digest(depreciation_v)),  # round 4, step 2: Dr 6015 / Cr 1209 (new, frozen)
         "sales_vouchers": (len(sales_v), digest(sales_v)),  # phase 3: Dr 1500 / Cr 3000 / Cr 2700 per invoice
         "revenue_in_gl": round(gl_revenue, 2),
         "salary_vouchers": (len(salary_v_legacy), digest(salary_v_legacy)),  # accounts mapped back: the pre-phase-1 hash

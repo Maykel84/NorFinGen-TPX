@@ -306,6 +306,7 @@ def test_excel_export_produces_valid_workbook_with_expected_sheets():
         "Payroll_miesiecznie",
         "Payroll_per_pracownik",
         "Postingi_GL",
+        "Bilans_miesiecznie",  # round 4, step 2
     }
     ws = wb["PL_miesiecznie"]
     assert [c.value for c in next(ws.iter_rows(max_row=1))] == [
@@ -316,6 +317,11 @@ def test_excel_export_produces_valid_workbook_with_expected_sheets():
         "cogs",
         "operating_result",
         "is_partial",
+        "depreciation",  # round 4, step 2: appended after is_partial, never reordered
+        "ebitda",
+        "financial_result",
+        "tax",
+        "net_result",
     ]
 
 

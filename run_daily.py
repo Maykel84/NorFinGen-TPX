@@ -64,8 +64,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from norfingen.db.repository import (  # noqa: E402
     ensure_schema,
+    get_asset_additions,
+    get_credit_total,
     get_orders_for_payment_window,
     get_orders_to_write_off,
+    get_results_before_tax_by_year,
     get_unpaid_cogs_payables,
     get_unpaid_supplier_invoices,
     get_unpaid_vat_settlements,
@@ -86,6 +89,15 @@ from norfingen.db.repository import (  # noqa: E402
 from norfingen.generators.backfill import FOUNDING_CAPITAL_DATE, founding_capital_voucher  # noqa: E402
 from norfingen.generators.owner_loan import loan_drawdown_voucher, loan_service_voucher  # noqa: E402
 from norfingen.generators.write_off import build_write_off_voucher  # noqa: E402
+from norfingen.generators.depreciation import depreciation_voucher  # noqa: E402
+from norfingen.generators.income_tax import advance_tax_payment_voucher, instalment_dates, tax_voucher  # noqa: E402
+from norfingen.generators.pension import (  # noqa: E402
+    ACCOUNT_PENSION_LIABILITY,
+    otp_base,
+    otp_payment_voucher,
+    otp_voucher,
+    quarter_paid_on,
+)
 from norfingen.generators.bank_transaction_generator import (  # noqa: E402
     generate_daily_bank_transactions,
     generate_payroll_bank_transaction,
@@ -222,10 +234,36 @@ def process_day(target_date: date, skip_setup: bool = False) -> dict:
             save_bank_transactions([payroll_payment])
             stats["bank_transactions"] += 1
 
+        # 5a. Obowiązkowa składka OTP (runda 4, krok 2): 2 % brutto płac z tego miesiąca, zobowiązanie do kwartalnej wpłaty.
+        otp = otp_voucher(target_date, otp_base(salary_txn))
+        if otp is not None:
+            save_all(otp)
+
     # 6. Obsługa pożyczki od właściciela (audyt, faza 3): odsetki (+ rata od 2021) w ostatnim dniu roboczym miesiąca.
     loan_voucher = loan_service_voucher(target_date)
     if loan_voucher is not None:
         save_all(loan_voucher)
+
+    # 7. Amortyzacja środków trwałych (runda 4, krok 2): liniowo 5 lat, jeden voucher w ostatnim dniu roboczym miesiąca.
+    if target_date == last_working_day(year, month):
+        depreciation = depreciation_voucher(target_date, get_asset_additions(target_date))
+        if depreciation is not None:
+            save_all(depreciation)
+
+    # 8. Kwartalna wpłata składki OTP: to, co naliczono w minionym kwartale (nie saldo konta, więc ponowny przebieg dnia nic nie zmienia).
+    quarter = quarter_paid_on(target_date)
+    if quarter is not None:
+        otp_payment = otp_payment_voucher(target_date, get_credit_total(ACCOUNT_PENSION_LIABILITY, quarter[0], quarter[1]))
+        if otp_payment is not None:
+            save_all(otp_payment)
+
+    # 9. Podatek dochodowy 22 % (runda 4, krok 2): rezerwa 31.12 (NA KOŃCU dnia: wynik roku musi już zawierać wszystkie
+    #    vouchery tego dnia) i dwie równe raty zaliczki 15.02 i 15.04 roku następnego. Tylko w te dni czytamy wyniki roczne.
+    if (month, day) == (12, 31) or target_date in instalment_dates(year):
+        results = get_results_before_tax_by_year(target_date)
+        tax = tax_voucher(target_date, results) or advance_tax_payment_voucher(target_date, results)
+        if tax is not None:
+            save_all(tax)
 
     logger.info("run_daily %s: %s", target_date.isoformat(), stats)
     return stats

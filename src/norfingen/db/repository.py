@@ -65,12 +65,17 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 # (number, name, type, vat_type_id)
 ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (1200, "Maskiner og anlegg", "ASSETS", None),
+    # Round 4, step 2 (2026-11-25): the structure a real set of books has and the generator lacked. The numbers follow
+    # NS 4102 as commonly used (Tripletex-style charts) but were NOT confirmed against a source in this project - they are
+    # constants of ONE place (generators/depreciation.py, pension.py, income_tax.py), easy to renumber.
+    (1209, "Akkumulerte avskrivninger maskiner og anlegg", "ASSETS", None),
     (1500, "Kundefordringer", "ASSETS", None),
     (1910, "Bankinnskudd, driftskonto", "ASSETS", None),
     (1940, "Bankinnskudd, skattetrekkskonto", "ASSETS", None),
     (2000, "Aksjekapital", "EQUITY_AND_LIABILITY", None),
     (2290, "Annen langsiktig gjeld (lån fra eier)", "EQUITY_AND_LIABILITY", None),
     (2400, "Leverandørgjeld", "EQUITY_AND_LIABILITY", None),
+    (2500, "Betalbar skatt", "EQUITY_AND_LIABILITY", None),
     # Phase 1 (docs/SPEC_poprawki_ksiegowe.md) - the 27xx/29xx liabilities follow NS 4102. Until
     # then the payroll liabilities sat on the VAT accounts (2700/2710/2740) and the VAT account
     # (2770) was named after VAT; both are renamed here and payroll moves to its own accounts:
@@ -85,6 +90,7 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (2770, "Skyldig arbeidsgiveravgift", "EQUITY_AND_LIABILITY", None),
     (2930, "Skyldig lønn", "EQUITY_AND_LIABILITY", None),
     (2940, "Skyldige feriepenger", "EQUITY_AND_LIABILITY", None),
+    (2950, "Skyldig pensjonspremie (OTP)", "EQUITY_AND_LIABILITY", None),
     (3000, "Salgsinntekter, IT-tjenester", "OPERATING_INCOME", 3),
     (3100, "Lisensintekter", "OPERATING_INCOME", 3),
     (5000, "Lønn, fast", "OPERATING_EXPENSE", None),
@@ -94,7 +100,9 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     # June (see seed/payroll.py::calc_feriepenger_provision).
     (5099, "Avsetning feriepenger", "OPERATING_EXPENSE", None),
     (5400, "Arbeidsgiveravgift", "OPERATING_EXPENSE", None),
+    (5420, "Innskuddspensjon (OTP)", "OPERATING_EXPENSE", None),
     (5900, "Annen personalkostnad", "OPERATING_EXPENSE", None),
+    (6015, "Avskrivning på maskiner og anlegg", "OPERATING_EXPENSE", None),
     (6300, "Husleie og leie av lokaler", "OPERATING_EXPENSE", 1),
     (6410, "Lisenser og programvare", "OPERATING_EXPENSE", 1),
     (6540, "Inventar og utstyr", "OPERATING_EXPENSE", 1),
@@ -120,6 +128,8 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (7830, "Tap på krav", "OPERATING_EXPENSE", None),
     # Audit 2026-11-16, phase 3: interest on the owner loan - a financial cost, outside the 4000-7999 operating result.
     (8150, "Annen rentekostnad", "FINANCIAL_EXPENSE", None),
+    # Round 4, step 2: income tax (22 %), a tax cost BELOW the financial result - outside the 4000-7999 operating result.
+    (8300, "Skattekostnad på ordinært resultat", "TAX_EXPENSE", None),
 ]
 
 # (id, name, number, percentage, vat_code) — id matches the TripletexRef(id=...)
@@ -744,6 +754,52 @@ def get_vat_period_totals(period_start: date, period_end: date) -> tuple[float, 
         output_vat, input_vat = cur.fetchone()
     conn.commit()
     return round(float(output_vat), 2), round(float(input_vat), 2)
+
+
+def get_asset_additions(up_to: date) -> list[tuple[date, float]]:
+    """(date, cost) of every addition to the fixed asset account 1200 booked on or before `up_to`: the debit postings of the
+    capitalised purchase invoices. Depreciation is a pure function of this list and of the month (generators/depreciation.py)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT v.date, p.amount FROM postings p JOIN vouchers v ON v.id = p.voucher_id
+               WHERE p.account_number = 1200 AND p.amount > 0 AND v.date <= %s ORDER BY v.date, p.id""",
+            (up_to,),
+        )
+        rows = [(d, round(float(a), 2)) for d, a in cur.fetchall()]
+    conn.commit()
+    return rows
+
+
+def get_credit_total(account_number: int, start: date, end: date) -> float:
+    """Credit turnover (positive) of one account in [start, end]. Used for the quarterly pension payment: what was ACCRUED in
+    the quarter, which does not change when the payment itself is booked (so re-running a day cannot change the amount)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT COALESCE(SUM(-p.amount), 0) FROM postings p JOIN vouchers v ON v.id = p.voucher_id
+               WHERE p.account_number = %s AND p.amount < 0 AND v.date BETWEEN %s AND %s""",
+            (account_number, start, end),
+        )
+        total = cur.fetchone()[0]
+    conn.commit()
+    return round(float(total), 2)
+
+
+def get_results_before_tax_by_year(up_to: date) -> dict[int, float]:
+    """Result before income tax per calendar year (accounts 3000-8299, so the tax cost 83xx itself is left out): profit
+    positive, loss negative. The input of generators/income_tax.py (tax for a year and the loss carried forward)."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT EXTRACT(YEAR FROM v.date)::int, COALESCE(SUM(-p.amount), 0)
+               FROM postings p JOIN vouchers v ON v.id = p.voucher_id
+               WHERE p.account_number BETWEEN 3000 AND 8299 AND v.date <= %s GROUP BY 1 ORDER BY 1""",
+            (up_to,),
+        )
+        rows = {int(year): round(float(result), 2) for year, result in cur.fetchall()}
+    conn.commit()
+    return rows
 
 
 def save_vat_settlement(voucher: Voucher, settlement: VatSettlement) -> None:

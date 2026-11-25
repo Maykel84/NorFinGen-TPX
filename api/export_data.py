@@ -40,6 +40,12 @@ from api.db import data_pool
 _COLUMNS: dict[str, list[str]] = {
     "PL_miesiecznie": [
         "month", "revenue", "labor_cost", "operating_cost", "cogs", "operating_result", "is_partial",
+        "depreciation", "ebitda", "financial_result", "tax", "net_result",
+    ],
+    "Bilans_miesiecznie": [
+        "month", "fixed_assets_net", "receivables", "cash", "other_assets", "total_assets", "long_term_debt",
+        "trade_payables", "tax_payable", "vat_net", "payroll_and_pension", "other_liabilities", "total_liabilities",
+        "share_capital", "retained_earnings", "result_ytd", "total_equity", "balance_check", "is_partial",
     ],
     "Faktury_sprzedazy": [
         "order_id", "customer_id", "order_date", "invoice_date", "customer_name",
@@ -93,7 +99,10 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
                 SELECT DATE_TRUNC('month', v.date) AS month,
                        SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 5000 AND 5999) AS labor_cost,
                        SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 6000 AND 7999) AS operating_cost,
-                       SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 4000 AND 4999) AS cogs
+                       SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 4000 AND 4999) AS cogs,
+                       SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 6000 AND 6099) AS depreciation,
+                       SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 8000 AND 8299) AS financial_cost,
+                       SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 8300 AND 8399) AS tax_cost
                 FROM vouchers v JOIN postings p ON p.voucher_id = v.id
                 WHERE v.date BETWEEN $1 AND $2
                 GROUP BY 1
@@ -108,9 +117,31 @@ def _queries(date_from: date, date_to: date) -> dict[str, tuple[str, list]]:
                        - COALESCE(c.operating_cost, 0)
                        - COALESCE(c.cogs, 0))                           AS operating_result,
                    ((COALESCE(r.month, c.month)::date + INTERVAL '1 month' - INTERVAL '1 day')::date
-                       > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial
+                       > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial,
+                       ROUND(COALESCE(c.depreciation, 0))                   AS depreciation,
+                       ROUND(COALESCE(r.revenue, 0)
+                           - COALESCE(c.labor_cost, 0)
+                           - COALESCE(c.operating_cost, 0)
+                           - COALESCE(c.cogs, 0)
+                           + COALESCE(c.depreciation, 0))                   AS ebitda,
+                       ROUND(-COALESCE(c.financial_cost, 0))                AS financial_result,
+                       ROUND(COALESCE(c.tax_cost, 0))                       AS tax,
+                       ROUND(COALESCE(r.revenue, 0)
+                           - COALESCE(c.labor_cost, 0)
+                           - COALESCE(c.operating_cost, 0)
+                           - COALESCE(c.cogs, 0)
+                           - COALESCE(c.financial_cost, 0)
+                           - COALESCE(c.tax_cost, 0))                       AS net_result
             FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month = c.month
             ORDER BY 1
+            """,
+            params,
+        ),
+        "Bilans_miesiecznie": (
+            """
+            SELECT * FROM v_balance_monthly
+            WHERE month BETWEEN TO_CHAR($1::date, 'YYYY-MM') AND TO_CHAR($2::date, 'YYYY-MM')
+            ORDER BY month
             """,
             params,
         ),

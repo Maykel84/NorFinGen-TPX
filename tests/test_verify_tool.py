@@ -15,7 +15,7 @@ def test_every_statement_of_gl_checks_has_a_description():
     sql_text = (ROOT / "tests" / "gl_checks.sql").read_text(encoding="utf-8")
     described = verify.descriptions(sql_text)
     ids = [test_id for test_id, _ in _statements(sql_text)]
-    assert len(ids) == 26 and ids[0] == "T1" and "T23" in ids and "REG_B" in ids
+    assert len(ids) == 32 and ids[0] == "T1" and "T29" in ids and "REG_B" in ids
     assert all(described.get(i) for i in ids), [i for i in ids if not described.get(i)]
 
 

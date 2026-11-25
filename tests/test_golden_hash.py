@@ -41,6 +41,10 @@ GOLDEN = {
     # the TOTAL net COGS per month and account (91 months x 2 accounts) and every operating-cost voucher that is not a COGS accrual.
     "cogs_month_net_totals": (182, "61a6792a23427970"),
     "opex_non_cogs": (287, "6497c363a8d01072"),
+    # Round 4, step 2 (2026-11-25): the new structure, additive - no existing hash above moved. 93 payroll months of OTP (2 % of the
+    # gross pay) and 92 monthly depreciation vouchers from the capitalised L05 invoices (60 months straight line, last working day).
+    "otp_vouchers": (93, "3026f6f49091e15a"),
+    "depreciation_vouchers": (92, "57968d02a477743f"),
     "cogs_payable_amounts": (546, "8bd8a746be0f615c"),  # no dates; was (182, 5488bc97aba376c9) before the split
     # Phase 3: the sales voucher of every invoice (Dr 1500 / Cr 3000 / Cr 2700). Same count as the orders, and the
     # revenue it books equals the 209 030 662 of the regression rule (to the cent: the exact figure is 661.93).

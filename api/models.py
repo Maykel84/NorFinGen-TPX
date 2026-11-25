@@ -28,6 +28,15 @@ class PLMonthly(BaseModel):
         description="True dla miesiąca, który jeszcze się nie skończył (koszty płac i COGS księgowane są na koniec "
         "miesiąca, więc wynik jest zawyżony). Wskaźniki 12M/YTD pomijają takie miesiące.",
     )
+    depreciation: float | None = Field(
+        default=None, description="Amortyzacja (konta 60xx). Zawarta w operating_cost, więc operating_result to EBIT."
+    )
+    ebitda: float | None = Field(default=None, description="operating_result + depreciation")
+    financial_result: float | None = Field(
+        default=None, description="Wynik finansowy (konta 8000-8299, np. odsetki od pożyczki): przychód dodatni, koszt ujemny."
+    )
+    tax: float | None = Field(default=None, description="Podatek dochodowy (konta 83xx), kwota dodatnia; księgowany 31.12.")
+    net_result: float | None = Field(default=None, description="operating_result + financial_result - tax")
 
 
 class PLTrailing(BaseModel):

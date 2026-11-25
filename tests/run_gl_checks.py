@@ -72,6 +72,7 @@ def main() -> int:
     cur.execute(f"CREATE VIEW cogs AS {_strip_order_by(QUERIES['Zobowiazania_COGS'])}")
     cur.execute(f"CREATE VIEW vat AS {_strip_order_by(QUERIES['Rozliczenia_MVA'])}")
     cur.execute(f"CREATE VIEW pay AS {_strip_order_by(QUERIES['Payroll_per_pracownik'])}")
+    cur.execute(f"CREATE VIEW bs AS {_strip_order_by(QUERIES['Bilans_miesiecznie'])}")
 
     results = []
     for test_id, sql in _statements((ROOT / "tests" / "gl_checks.sql").read_text(encoding="utf-8")):

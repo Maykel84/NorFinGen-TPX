@@ -49,7 +49,8 @@ async def pl_monthly(
     pool = data_pool()
     rows = await pool.fetch(
         """
-        SELECT month, revenue, labor_cost, operating_cost, cogs, operating_result, is_partial
+        SELECT month, revenue, labor_cost, operating_cost, cogs, operating_result, is_partial,
+               depreciation, ebitda, financial_result, tax, net_result
         FROM v_pl_monthly
         WHERE month >= $1 AND month <= $2
         ORDER BY month

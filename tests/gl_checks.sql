@@ -287,6 +287,82 @@ SELECT 'T23', NULL, COUNT(*) FROM by_supplier HAVING COUNT(*) < 4
 UNION ALL
 SELECT 'T23', NULL, COUNT(*) FROM cogs WHERE supplier_id IS NULL HAVING COUNT(*) > 0;
 
+-- T24 (runda 4, krok 2): bilans zgadza się co do øre w KAŻDYM miesiącu. Aktywa = zobowiązania + kapitał (kapitał zakładowy + wyniki lat
+--     poprzednich + wynik bieżącego roku do końca miesiąca). Skoro każdy voucher się bilansuje, brak zgodności oznacza konto spoza
+--     klasyfikacji w v_balance_monthly. Sprawdza też, że sumy częściowe dają total_assets / total_liabilities. PASS = 0 wierszy.
+SELECT 'T24' AS test, month, balance_check
+FROM bs
+WHERE ABS(balance_check) > 0.005
+   OR ABS(total_assets - (fixed_assets_net + receivables + cash + other_assets)) > 0.005
+   OR ABS(total_liabilities - (long_term_debt + trade_payables + tax_payable + vat_net + payroll_and_pension + other_liabilities)) > 0.005;
+
+-- T25 (runda 4, krok 2): amortyzacja środków trwałych. (a) skumulowana amortyzacja na 1209 = suma kosztu 6015 (co do grosza);
+--     (b) wartość księgowa netto (1200 + 1209) nigdy nie jest ujemna; (c) środki starsze niż 61 miesięcy są w pełni zamortyzowane
+--     (dolne ograniczenie: umorzenie >= koszt tych środków). PASS = 0 wierszy.
+SELECT 'T25' AS test, 'a: 1209 vs 6015' AS warunek, ROUND(SUM(amount) FILTER (WHERE account_number = 1209) + SUM(amount) FILTER (WHERE account_number = 6015), 2) AS roznica
+FROM gl
+HAVING ABS(COALESCE(SUM(amount) FILTER (WHERE account_number = 1209), 0) + COALESCE(SUM(amount) FILTER (WHERE account_number = 6015), 0)) > 0.005
+UNION ALL
+SELECT 'T25', 'b: wartosc netto < 0 w ' || month, fixed_assets_net FROM bs WHERE fixed_assets_net < -0.005
+UNION ALL
+SELECT 'T25', 'c: srodki starsze niz 61 mies. nie sa w pelni zamortyzowane',
+       ROUND(old_cost + COALESCE(SUM(g.amount) FILTER (WHERE g.account_number = 1209), 0), 2)
+FROM (SELECT COALESCE(SUM(amount), 0) AS old_cost FROM gl
+      WHERE account_number = 1200 AND amount > 0 AND date <= (SELECT MAX(date) FROM gl) - INTERVAL '61 months') o
+CROSS JOIN gl g
+GROUP BY old_cost
+HAVING old_cost + COALESCE(SUM(g.amount) FILTER (WHERE g.account_number = 1209), 0) > 0.01;
+
+-- T26 (runda 4, krok 2, D4): podatek dochodowy 22 % co do grosza. Dla każdego ZAKOŃCZONEGO roku: zaksięgowany podatek (8300) = 22 % x max(0,
+--     wynik przed podatkiem - strata do przeniesienia z lat poprzednich); wynik = konta 3000-8299. Strata do przeniesienia liczona wzorem
+--     cf(y) = max(0, cf(y-1) - wynik(y)), czyli cf = C(y-1) - min(0, min C(k<y)), gdzie C to skumulowana strata. Podatek nigdy ujemny. PASS = 0 wierszy.
+WITH yearly AS (
+    SELECT EXTRACT(YEAR FROM date)::int AS y,
+           -SUM(amount) FILTER (WHERE account_number BETWEEN 3000 AND 8299) AS result,
+           COALESCE(SUM(amount) FILTER (WHERE account_number = 8300), 0) AS booked
+    FROM gl GROUP BY 1
+), cum AS (
+    SELECT y, result, booked, SUM(-result) OVER (ORDER BY y) AS c FROM yearly
+), cf AS (
+    SELECT y, result, booked,
+           COALESCE(LAG(c) OVER (ORDER BY y), 0)
+             - LEAST(0, COALESCE(MIN(c) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0)) AS carried
+    FROM cum
+)
+SELECT 'T26' AS test, y, ROUND(booked, 2) AS zaksiegowany,
+       ROUND(0.22 * GREATEST(0, result - carried), 2) AS oczekiwany
+FROM cf
+WHERE y < (SELECT EXTRACT(YEAR FROM MAX(date)) FROM gl)
+  AND (booked < 0 OR ABS(booked - ROUND(0.22 * GREATEST(0, result - carried), 2)) > 0.01);
+
+-- T27 (runda 4, krok 2): składka OTP = 2 % brutto płac (typy 100 + 260) w każdym miesiącu z listą płac; konto 5420. PASS = 0 wierszy.
+WITH o AS (
+    SELECT TO_CHAR(date, 'YYYY-MM') AS m, SUM(amount) AS otp FROM gl WHERE account_number = 5420 GROUP BY 1
+), b AS (
+    SELECT month AS m, ROUND(SUM(gross_amount) * 0.02, 2) AS expected FROM pay GROUP BY 1
+)
+SELECT 'T27' AS test, COALESCE(o.m, b.m) AS miesiac, o.otp, b.expected
+FROM o FULL OUTER JOIN b ON o.m = b.m
+WHERE ABS(COALESCE(o.otp, 0) - COALESCE(b.expected, 0)) > 0.02;
+
+-- T28 (runda 4, krok 2): zobowiązanie z tytułu OTP (2950) nigdy nie ma salda debetowego (wpłata nie przekracza naliczenia). PASS = 0 wierszy.
+SELECT 'T28' AS test, date AS dzien, ROUND(running, 2) AS saldo_2950
+FROM (SELECT date, SUM(SUM(amount)) OVER (ORDER BY date) AS running FROM gl WHERE account_number = 2950 GROUP BY date) x
+WHERE running > 0.005;
+
+-- T29 (runda 4, krok 2): podatek do zapłaty (2500) nigdy nie ma salda debetowego, a po zapłacie rat (15.02 i 15.04) saldo na 31.05 każdego roku = 0
+--     (podatek roku poprzedniego jest w całości zapłacony, nowy powstaje dopiero 31.12). PASS = 0 wierszy.
+SELECT 'T29' AS test, date AS dzien, ROUND(running, 2) AS saldo_2500
+FROM (SELECT date, SUM(SUM(amount)) OVER (ORDER BY date) AS running FROM gl WHERE account_number = 2500 GROUP BY date) x
+WHERE running > 0.005
+UNION ALL
+SELECT 'T29', make_date(y, 5, 31), ROUND(SUM(g.amount), 2)
+FROM (SELECT DISTINCT EXTRACT(YEAR FROM date)::int AS y FROM gl) years
+JOIN gl g ON g.account_number = 2500 AND g.date <= make_date(years.y, 5, 31)
+WHERE make_date(years.y, 5, 31) <= (SELECT MAX(date) FROM gl)
+GROUP BY years.y
+HAVING ABS(SUM(g.amount)) > 0.01;
+
 -- REGRESJA (faza 0.5a; reguła z decyzji (c) w SPEC, zastępuje pierwotne 211 624 547 na 2026-10-30,
 -- które nie uwzględniało faktur weekendowych gubionych przez przebieg dzienny).
 -- PASS = 0 wierszy.

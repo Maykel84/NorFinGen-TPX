@@ -41,6 +41,7 @@ class VoucherType(str, Enum):
     SALARY = "SALARY"  # SalaryTransaction + feriepenger — created explicitly by the generator
     BANK = "BANK"  # bank payments — Tier 4
     MANUAL = "MANUAL"  # founding capital, corrections — backfill
+    ADJUSTMENT = "ADJUSTMENT"  # round 4, step 2 - period-end accounting entries: depreciation, income tax, pension (OTP) accrual
     OPERATING_COST = "OPERATING_COST"  # Phase 3 — canteen/representation/transport/implementation equipment: a cash cost with no separate source document (not a SupplierInvoice)
 
 

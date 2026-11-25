@@ -33,6 +33,9 @@ def _patch_repository(**overrides):
         save_bank_transactions=MagicMock(),
         save_hour_entries=MagicMock(),
         save_salary=MagicMock(),
+        get_asset_additions=MagicMock(return_value=[]),
+        get_credit_total=MagicMock(return_value=0.0),
+        get_results_before_tax_by_year=MagicMock(return_value={}),
     )
     defaults.update(overrides)
     return defaults

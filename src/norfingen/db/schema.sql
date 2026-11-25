@@ -575,7 +575,12 @@ cost_cte AS (
     SELECT DATE_TRUNC('month', v.date) AS month_start,
            SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 5000 AND 5999) AS labor_cost,
            SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 6000 AND 7999) AS operating_cost,
-           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 4000 AND 4999) AS cogs
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 4000 AND 4999) AS cogs,
+           -- Round 4, step 2: depreciation is INSIDE operating_cost (6000-7999), so operating_result is EBIT; these four are
+           -- memo / below-the-line items, appended after is_partial (a view may only grow at the end).
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 6000 AND 6099) AS depreciation,
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 8000 AND 8299) AS financial_cost,
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 8300 AND 8399) AS tax_cost
     FROM vouchers v JOIN postings p ON p.voucher_id = v.id
     GROUP BY 1
 )
@@ -592,9 +597,80 @@ SELECT TO_CHAR(COALESCE(r.month_start, c.month_start), 'YYYY-MM') AS month,
        -- date) is flagged, NOT pro-rated. Payroll and COGS are booked at month end, as in Tripletex, so the open
        -- month shows revenue without its costs. Every trailing/YTD KPI must filter NOT is_partial.
        ((COALESCE(r.month_start, c.month_start)::date + INTERVAL '1 month' - INTERVAL '1 day')::date
-        > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial
+        > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial,
+       -- depreciation: the part of operating_cost that is 60xx;  ebitda = operating_result + depreciation
+       ROUND(COALESCE(c.depreciation, 0), 2)    AS depreciation,
+       ROUND(COALESCE(r.revenue, 0) - COALESCE(c.labor_cost, 0) - COALESCE(c.operating_cost, 0) - COALESCE(c.cogs, 0)
+             + COALESCE(c.depreciation, 0), 2)  AS ebitda,
+       -- financial_result: interest etc. (8000-8299), income positive, cost negative; tax: income tax cost (83xx), positive;
+       -- net_result = operating_result + financial_result - tax
+       ROUND(-COALESCE(c.financial_cost, 0), 2) AS financial_result,
+       ROUND(COALESCE(c.tax_cost, 0), 2)        AS tax,
+       ROUND(COALESCE(r.revenue, 0) - COALESCE(c.labor_cost, 0) - COALESCE(c.operating_cost, 0) - COALESCE(c.cogs, 0)
+             - COALESCE(c.financial_cost, 0) - COALESCE(c.tax_cost, 0), 2) AS net_result
 FROM revenue_cte r FULL OUTER JOIN cost_cte c ON r.month_start = c.month_start
 ORDER BY 1;
+
+-- v_balance_monthly: the balance sheet at the END of every month (round 4, step 2), cumulative since the first voucher.
+--   assets      = every 1xxx account (debit balance): fixed assets net of depreciation (1200 + 1209), receivables (1500), cash
+--                 (19xx), anything else
+--   liabilities = 21xx-29xx (credit balance): long-term debt (22xx: the owner loan), trade payables (24xx), income tax payable
+--                 (25xx), VAT net (2700 + 2710 + 2740), payroll and pension liabilities (26xx, 2770-2799, 29xx), the rest
+--   equity      = share capital (20xx) + retained earnings (the results of the EARLIER calendar years, nothing is closed in the
+--                 ledger) + the result of the current year to the month end
+--   balance_check = assets - liabilities - equity: ZERO in every month, because every voucher balances (gl_checks T24).
+CREATE OR REPLACE VIEW v_balance_monthly WITH (security_invoker = true) AS
+WITH bounds AS (
+    SELECT DATE_TRUNC('month', MIN(date))::date AS first_month, DATE_TRUNC('month', MAX(date))::date AS last_month FROM vouchers
+), months AS (
+    SELECT GENERATE_SERIES(first_month, last_month, INTERVAL '1 month')::date AS month_start FROM bounds
+), base AS (
+    SELECT mo.month_start,
+           SUM(p.amount) FILTER (WHERE p.account_number IN (1200, 1209)) AS fixed_assets_net,
+           SUM(p.amount) FILTER (WHERE p.account_number = 1500) AS receivables,
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 1900 AND 1999) AS cash,
+           SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 1000 AND 1999) AS total_assets,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 2200 AND 2299) AS long_term_debt,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 2400 AND 2499) AS trade_payables,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 2500 AND 2599) AS tax_payable,
+           -SUM(p.amount) FILTER (WHERE p.account_number IN (2700, 2710, 2740)) AS vat_net,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 2600 AND 2699
+                                     OR p.account_number IN (2770, 2780, 2790) OR p.account_number BETWEEN 2900 AND 2999) AS payroll_and_pension,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 2100 AND 2999) AS total_liabilities,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 2000 AND 2099) AS share_capital,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 3000 AND 8999 AND v.date < DATE_TRUNC('year', mo.month_start)) AS retained_earnings,
+           -SUM(p.amount) FILTER (WHERE p.account_number BETWEEN 3000 AND 8999 AND v.date >= DATE_TRUNC('year', mo.month_start)) AS result_ytd
+    FROM months mo
+    JOIN vouchers v ON v.date < (mo.month_start + INTERVAL '1 month')
+    JOIN postings p ON p.voucher_id = v.id
+    GROUP BY mo.month_start
+)
+SELECT TO_CHAR(month_start, 'YYYY-MM') AS month,
+       ROUND(COALESCE(fixed_assets_net, 0), 2) AS fixed_assets_net,
+       ROUND(COALESCE(receivables, 0), 2) AS receivables,
+       ROUND(COALESCE(cash, 0), 2) AS cash,
+       ROUND(COALESCE(total_assets, 0) - COALESCE(fixed_assets_net, 0) - COALESCE(receivables, 0) - COALESCE(cash, 0), 2) AS other_assets,
+       ROUND(COALESCE(total_assets, 0), 2) AS total_assets,
+       ROUND(COALESCE(long_term_debt, 0), 2) AS long_term_debt,
+       ROUND(COALESCE(trade_payables, 0), 2) AS trade_payables,
+       ROUND(COALESCE(tax_payable, 0), 2) AS tax_payable,
+       ROUND(COALESCE(vat_net, 0), 2) AS vat_net,
+       ROUND(COALESCE(payroll_and_pension, 0), 2) AS payroll_and_pension,
+       ROUND(COALESCE(total_liabilities, 0) - COALESCE(long_term_debt, 0) - COALESCE(trade_payables, 0) - COALESCE(tax_payable, 0)
+             - COALESCE(vat_net, 0) - COALESCE(payroll_and_pension, 0), 2) AS other_liabilities,
+       ROUND(COALESCE(total_liabilities, 0), 2) AS total_liabilities,
+       ROUND(COALESCE(share_capital, 0), 2) AS share_capital,
+       ROUND(COALESCE(retained_earnings, 0), 2) AS retained_earnings,
+       ROUND(COALESCE(result_ytd, 0), 2) AS result_ytd,
+       ROUND(COALESCE(share_capital, 0) + COALESCE(retained_earnings, 0) + COALESCE(result_ytd, 0), 2) AS total_equity,
+       ROUND(COALESCE(total_assets, 0) - COALESCE(total_liabilities, 0)
+             - COALESCE(share_capital, 0) - COALESCE(retained_earnings, 0) - COALESCE(result_ytd, 0), 2) AS balance_check,
+       -- the month that is not over yet (same convention as v_pl_monthly.is_partial): payroll and COGS are booked at month end, so its
+       -- equity and cash are not final
+       ((month_start + INTERVAL '1 month' - INTERVAL '1 day')::date
+        > GREATEST((SELECT MAX(date) FROM vouchers), (SELECT MAX(order_date) FROM orders))) AS is_partial
+FROM base
+ORDER BY month_start;
 
 -- v_invoice_status: ONE row per sales invoice (order), the single source of truth for "what happened to this invoice"
 -- (round 2, review 2026-11-17, point 1). The status is DERIVED from the ledger and the bank, NEVER copied from orders.status:
@@ -646,4 +722,4 @@ CREATE OR REPLACE VIEW v_headcount_monthly WITH (security_invoker = true) AS
 SELECT TO_CHAR(date, 'YYYY-MM') AS month, COUNT(DISTINCT employee_id) AS active_employees
 FROM hour_entries GROUP BY 1 ORDER BY 1;
 
-GRANT SELECT ON v_sales_flat, v_pl_monthly, v_invoice_status, v_headcount_monthly TO analyst;
+GRANT SELECT ON v_sales_flat, v_pl_monthly, v_invoice_status, v_balance_monthly, v_headcount_monthly TO analyst;

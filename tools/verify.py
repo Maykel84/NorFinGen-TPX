@@ -5,7 +5,7 @@ Prints PASS/FAIL for every invariant of the ledger and for the data-quality fiel
 writes the result to docs/verify_<date of the newest data>.md.
 
 What it checks
-  * all of tests/gl_checks.sql (T1..T23 + the REG_* regression pins): every voucher balances, account 3000 = sales invoices
+  * all of tests/gl_checks.sql (T1..T29 + the REG_* regression pins): every voucher balances, account 3000 = sales invoices
     without VAT, the VAT sheet = accounts 2700/2710/2740, 2400 = unpaid purchase invoices + COGS payables, 1500 = open and
     overdue invoices, the bank (1910) never below zero, loan, write-offs, invoice status ...
   * Q1..Q5, the quality fields of an ERP data-quality report: vouchers without lines, unbalanced vouchers (count AND sum),
@@ -47,6 +47,7 @@ EXPORT_TABLES = {
     "cogs": "Zobowiazania_COGS",
     "vat": "Rozliczenia_MVA",
     "pay": "Payroll_per_pracownik",
+    "bs": "Bilans_miesiecznie",
 }
 
 # Data-quality checks beyond gl_checks.sql: (id, description, SQL returning the VIOLATIONS; no rows = PASS)

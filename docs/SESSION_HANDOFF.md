@@ -1538,3 +1538,34 @@ Po kazdej regeneracji (lokalnej i produkcyjnej) uruchamiac `tools/verify.py` zam
   odwrotne obciazenie VAT zmienia T6/T14, a miesieczne sumy COGS w NOK musza zostac takie same.
 - Krok 6: dzialy/projekty na liniach to zmiana schematu (`postings`), wiec nowe kolumny + ponowny backfill.
 
+---
+
+## 2026-11-25 - runda 4, KROK 2: brakujaca struktura ksiegowa (KOD GOTOWY LOKALNIE, PRODUKCJA NIETKNIETA)
+
+Stan: kod i testy zielone, lokalna regeneracja do 2026-11-24, `tools/verify.py` 37/37 PASS (T1-T29 + REG + Q1-Q5). NIE wdrozone na produkcje
+(wymaga regeneracji produkcji, wiec ustalic z uzytkownikiem, czy razem z krokiem 3/D1).
+
+Co dodano (wszystko to czyste funkcje kalendarza/ksiegi, bez RNG, podpiete w `run_daily.process_day` po kroku pozyczki):
+- `generators/depreciation.py`: amortyzacja 1200, liniowo 60 miesiecy od miesiaca zakupu (zakup po ostatnim dniu roboczym miesiaca startuje miesiac pozniej),
+  `ADJUSTMENT` Dr 6015 / Cr 1209 w ostatnim dniu roboczym, ostatnia rata bierze reszte groszy. Wejscie: `repository.get_asset_additions`.
+- `generators/pension.py`: OTP 2 % brutto (typy plac 100+260): `ADJUSTMENT` Dr 5420 / Cr 2950 w dniu listy plac; kwartalna wplata `BANK` Dr 2950 / Cr 1910
+  15. stycznia/kwietnia/lipca/pazdziernika (przesuniete na dzien roboczy) = to, co naliczono w kwartale (`repository.get_credit_total`, NIE saldo, wiec ponowny przebieg dnia nic nie zmienia).
+  Uproszczenia: tylko 2 % (minimum ustawowe), bez progu 1 G i limitu 12 G, bez AGA od skladki (~0,1 % przychodu).
+- `generators/income_tax.py` (D4): 31.12 `ADJUSTMENT` Dr 8300 / Cr 2500 = 22 % x max(0, wynik przed podatkiem roku - strata do przeniesienia); wynik = konta 3000-8299
+  (`repository.get_results_before_tax_by_year`); dwie rowne raty zaliczki 15.02 i 15.04 nastepnego roku (przesuniete na dzien roboczy) - termin potwierdzony w
+  Skatteetaten: "to like terminer, 15. februar og 15. april i aret etter inntektsaret". Rata liczona z podatku roku, nie z salda (idempotentna).
+  Bez podatku odroczonego; strata (rok bez zysku) = brak vouchera. Krok 9 w `process_day` jest ostatni (wynik roku musi zawierac wszystkie vouchery 31.12).
+- Nowe konta (`ACCOUNTS_SEED`): 1209, 2500, 2950, 5420, 6015, 8300; `AccountType.TAX_EXPENSE`; `VoucherType.ADJUSTMENT`. UWAGA: numery kont NIE zostaly potwierdzone w zrodle
+  (wyszukiwanie ani strona favrit nie potwierdzily 1209/6015/2500/2950/8300; strona favrit okazala sie niewiarygodna). Stale w jednym miejscu na modul, latwa zmiana numeracji.
+- Widoki: `v_pl_monthly` + 5 kolumn na koncu (depreciation, ebitda, financial_result, tax, net_result; `operating_result` = EBIT, bo 6015 jest w 6000-7999);
+  nowy `v_balance_monthly` (bilans na koniec kazdego miesiaca, `balance_check` = 0, `is_partial`); arkusz `Bilans_miesiecznie` (Excel/CSV/API); `PLMonthly` w API ma nowe pola.
+- gl_checks: T24 bilans (aktywa = zobowiazania + kapital w kazdym miesiacu), T25 amortyzacja (1209 = 6015, wartosc netto >= 0, starsze niz 61 mies. w pelni umorzone),
+  T26 podatek 22 % co do grosza ze strata do przeniesienia (wzor Lindleya cf = C(y-1) - min(0, min C)), T27 OTP = 2 % brutto, T28/T29 salda 2950 i 2500 nigdy debetowe, 2500 = 0 na 31.05.
+- Golden (nowe, zamrozone, addytywne; zadne istniejace nie ruszylo): `otp_vouchers` (93, 3026f6f49091e15a), `depreciation_vouchers` (92, 57968d02a477743f).
+
+Wynik lokalny (do 2026-11-24, pelne miesiace): amortyzacja 14 tys. (2019) rosnie do 242 tys. (2025); OTP lacznie 1,65 mln (ok. 0,8 % przychodu); EBIT 2024 -171 tys. (-0,5 %),
+2025 -405 tys. (-1,0 %), 2026 YTD +849 tys. (+2,1 %); podatek: 2021 503 tys., 2022 302 tys., 2023 8 tys., poza tym 0 (strata 2019 oraz straty 2024-25); minimum salda banku 857 822 (nadal >= 0).
+Kapital wlasny w 2019 jest UJEMNY (-2,2 mln na 2019-12): strata startowa 2,7 mln przy kapitale 0,5 mln, finansowanie pozyczka od wlasciciela.
+Nierozstrzygniete: dywidenda (opcjonalna w specyfikacji) NIE zaimplementowana - zalezy od rekalibracji zyskow (D1/krok 3).
+Nastepny krok: rekalibracja top-down (D1) razem z krokiem 3 (zmiennosc), potem jedna regeneracja produkcji dla kroku 2 + 3.
+
