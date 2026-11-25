@@ -1506,3 +1506,35 @@ Stan: KOD GOTOWY LOKALNIE, wymaga tylko `fly deploy` (zmiana w `export_excel.py`
 2. **Zamówienie 1761:** odpis zaplanowany na 2026-12-23, do sprawdzenia PO tej dacie: `SELECT COUNT(*) FROM gl WHERE account_number = 7830` -> 9
    (dziś 8), status WRITTEN_OFF w `v_invoice_status`, a gl_checks T22 przechodzi (T22 sprawdza voucher odpisu w obie strony).
 
+---
+
+## 2026-11-25 - runda 4 (kompletnosc i realizm danych), decyzje D1-D4 + KROK 1
+
+Propozycja: 6 krokow (verify.py -> struktura ksiegowa -> zmiennosc -> brud dokumentow -> waluty -> wymiary). Decyzje (wszystkie wg rekomendacji):
+D1 rekalibracja top-down (marza docelowa 3-7 %, +-2 pkt rocznie, zachowac dolek 2023-24 po utracie K03/Nordkraft i odbicie 2025-26),
+D2 profile `clean` (domyslny, dashboard i niezmienniki) i `dirty` (ten sam seed + anomalie z tabela prawdy `dq_ground_truth`),
+D3 waluty EUR/USD z kursami historycznymi i roznicami kursowymi, D4 straty do przeniesienia bez podatku odroczonego.
+Zasada: przed TRUNCATE/backfill wylaczyc `daily.yml`, regeneracja najpierw lokalnie ("staging"), porownanie z eksportem 24.11.
+Ryzyka kolejnych krokow: patrz lista na koncu tego wpisu.
+
+**KROK 1 GOTOWY:** `tools/verify.py` (+ `tests/test_verify_tool.py`). Tylko odczyt (`readonly=True`), wiec bezpieczny takze na produkcji; adres bazy nigdy
+nie jest drukowany ani zapisywany (tylko "local"/"remote"). Uruchamia WSZYSTKIE testy z `tests/gl_checks.sql` (T1..T23 + REG_A/B/C) oraz Q1..Q5:
+Q1 vouchery bez linii, Q2 vouchery niezbilansowane (liczba i suma), Q3 faktury bez linii, Q4 PL_miesiecznie (`v_pl_monthly`) = GL w kazdym miesiacu,
+Q5 konto 3000 = faktury bez VAT w sumie. Tabele eksportowe (gl, sales, purch, cogs, vat, pay) podstawia jako CTE (sesja read-only nie pozwala na CREATE VIEW),
+z pominieciem CTE zdefiniowanego przez sam test (T21 ma wlasne `pay`). Wynik: tabela PASS/FAIL, `docs/verify_<data>.md`, kod wyjscia 1 przy bledzie.
+Uzycie: `python tools/verify.py` (baza z `DATABASE_URL` albo `.env`), `--no-report`, `--out <katalog>`.
+Test akceptacyjny: lokalnie (dane do 2026-11-16) 31/31 PASS, produkcja (dane do 2026-11-24) 31/31 PASS, raport `docs/verify_2026-11-24.md`.
+Po kazdej regeneracji (lokalnej i produkcyjnej) uruchamiac `tools/verify.py` zamiast osobno `run_gl_checks.py` (ten dziala nadal, ale tylko lokalnie).
+
+**Ryzyka i kolejnosc krokow 2-6 (do potwierdzenia przy kazdym kroku):**
+- Kazdy krok zmieniajacy dane = regeneracja produkcji (ok. 65-75 min, klapa otwarta, zasilacz, wylaczony `daily.yml`, backup) i nowe `voucher_number`. Rozsadnie laczyc kroki w partie: (2 + D1/3) razem, bo oba zmieniaja wynik.
+- Krok 2: konto 1200 powstaje z kapitalizowanych faktur L05 (prog 30 000), nie z 4290 (4290 to koszt, nie srodek trwaly). Podatek: terminy zaliczek (Skatteetaten) trzeba POTWIERDZIC zrodlem przed wdrozeniem.
+  OTP (5420) i amortyzacja obnizaja marze o ok. 1-1,5 pkt, wiec bez D1 lata 2024-25 beda ujemne.
+- Krok 3 (zmiennosc) i D1 zmieniaja przychod, wiec ZMIENIA przypiete regresje REG_A/B/C (przychod do 2026-09-30 = 209 030 662, platy brutto) i wszystkie golden hashe: trzeba je swiadomie przepiac,
+  nie "naprawiac" testami. Nowe losowania tylko z lokalnych `random.Random(seed)`, bez globalnego strumienia.
+- Krok 4: podzial na realne zdarzenia biznesowe (noty kredytowe, platnosci czesciowe, opoznienia, upomnienia 8050; legalne w `clean`) i defekty danych (duplikaty, literowki, vouchery
+  niezbilansowane; tylko w `dirty`). Profil `dirty` wymaga osobnej bazy (lokalnie lub drugi projekt), produkcyjny cron zostaje `clean`.
+- Krok 5: prawdziwi dostawcy zagraniczni (EUR/USD) to inne podmioty niz sprawdzone w brreg (Microsoft Norge AS i Crayon Group AS sa norweskimi spolkami fakturujacymi w NOK);
+  odwrotne obciazenie VAT zmienia T6/T14, a miesieczne sumy COGS w NOK musza zostac takie same.
+- Krok 6: dzialy/projekty na liniach to zmiana schematu (`postings`), wiec nowe kolumny + ponowny backfill.
+

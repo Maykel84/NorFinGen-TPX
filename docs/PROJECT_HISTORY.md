@@ -87,6 +87,28 @@ text and numbers or dates. A NULL is now a truly empty cell and identifiers are 
 all along, the postal codes were stored as text, and the fractional quantities are the deliberate consulting hours. One
 check waits for a date: the write-off of order 1761 is planned for 2026-12-23 and must book on that day.
 
+## Review round 4 (2026-11-25, in progress)
+
+A completeness and realism round: what the generator still lacks compared with a real ERP / bookkeeping system (balance sheet,
+depreciation, income tax, mandatory pension, currencies, analytical dimensions) and a controlled amount of the dirt real data
+carries. Six steps, each with its own acceptance test, run in this order: (1) a verification script, (2) the missing
+accounting structure, (3) natural variability in the clean data, (4) document-level dirt, (5) currencies, (6) dimensions.
+
+Decisions taken on 2026-11-25, before any implementation:
+- **D1, target margin:** recalibrate top-down (target EBIT margin 3-7 % with a +-2 point yearly spread, then the cost budget, then
+  headcount), keeping the dip after the loss of the large client in 2023-24 and the recovery in 2025-26. Depreciation and pension
+  take about 1-1.5 points off the margin, so without this 2024-25 would turn negative.
+- **D2, dirt:** two profiles of the same seed: `clean` (default, for the dashboard and the invariants) and `dirty` (the same data
+  plus injected anomalies with a ground-truth table `dq_ground_truth`). Production stays clean.
+- **D3, currencies:** yes: EUR and USD supplier invoices with historical NOK rates, realised gains and losses (8060 / 8160) and
+  period-end revaluation, rates in `ref_currencies`.
+- **D4, tax:** yes: 22 % income tax with losses carried forward (the 2019 loss reduces 2020-21), no deferred tax.
+
+Step 1 is done: `tools/verify.py`, a read-only script (it runs against production as safely as against a local database) that
+prints PASS/FAIL for every ledger invariant (all of `tests/gl_checks.sql`) and for the data-quality fields of an ERP quality
+report (vouchers without lines, unbalanced vouchers by count and by sum, invoices without lines, P&L = ledger in every month) and
+writes `docs/verify_<date>.md`. On the data of 2026-11-24 it reports 31/31 PASS.
+
 ## Current state
 
 Latest tag `v5.13-faza7c-major-incidents`, with the data-safety audit
