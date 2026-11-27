@@ -34,6 +34,7 @@ whole series of sessions started."""
 from __future__ import annotations
 
 import calendar
+import random
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
@@ -69,19 +70,27 @@ def calc_brutto(employee: EmployeeSeed) -> float:
     return employee.annual_salary / 12
 
 
+def individual_raise_rate(employee_number: str, year: int) -> float:
+    """The raise an employee gets in July of `year` (round 4, step 3, 2026-11-25): between 1 % and 5 %, mean 3.0 % - the same average
+    as the flat 3 % it replaces, so the payroll as a whole does not move, but nobody gets exactly the same every year. A local
+    `random.Random` per (employee, year): history and the daily cron agree and no other stream moves."""
+    return round(random.Random(f"raise-{employee_number}-{year}").uniform(0.01, 0.05), 4)
+
+
 def calc_brutto_with_raises(employee: EmployeeSeed, year: int, month: int,
-                             raise_rate: float = 0.03, raise_month: int = 7) -> float:
+                             raise_rate: Optional[float] = None, raise_month: int = 7) -> float:
     """Calculates gross salary including annual raises.
 
-    A +raise_rate raise happens every year in raise_month (default July),
-    the first one in the year following hiring."""
+    A raise happens every year in raise_month (default July), the first one in the year following hiring. By default every
+    employee gets an INDIVIDUAL raise each year (individual_raise_rate: 1-5 %, mean 3 %); pass raise_rate to apply one flat rate
+    instead (the old behaviour, kept for tests and what-if runs)."""
     base = employee.annual_salary / 12
     start_year = employee.start_date.year
-    raises = 0
+    factor = 1.0
     for y in range(start_year + 1, year + 1):
         if y < year or (y == year and month >= raise_month):
-            raises += 1
-    return round(base * ((1 + raise_rate) ** raises), 2)
+            factor *= 1 + (raise_rate if raise_rate is not None else individual_raise_rate(employee.number, y))
+    return round(base * factor, 2)
 
 
 def calc_skattetrekk(brutto: float) -> float:

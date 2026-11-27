@@ -51,15 +51,14 @@ def test_target_headcount_tracks_actual_hiring_within_tolerance():
             f"{year}: actual={actual} target={target} (revenue={revenue:.0f})"
 
 
-def test_only_one_new_hire_after_merger():
-    """Faza 6 (2. kalibracja) ZASTĘPUJE Fazę 4 — zespół przestaje rosnąć z
-    portfelem klientów po jednym dociążeniu tuż po fuzji (E17). Poprzednie 21
-    dalsze rekrutacje (E18-E38) usunięte: kalibracja rynkowa (Brønnøysundregistrene)
-    pokazała, że porównywalne firmy IT drift/support obsługują duży portfel
-    małym zespołem, bo koszt obsługi jest głównie kosztem materiałowym (COGS
-    pass-through S01/S02), nie osobowym — zob. roster.py, komentarz przy
-    calc_s01_cogs_monthly."""
+def test_hires_after_the_merger():
+    """Faza 6 (2. kalibracja) zatrzymała zespół na E17 tuż po fuzji (22 dalsze rekrutacje Fazy 4 usunięte). Runda 4, krok 3 (decyzja D1)
+    dodaje pięciu pracowników PO 2023 (E18-E22, faza "scaling2": 1 w 2024, 1 w 2025, 3 w 2026), top-down z celu marży, żeby udźwignąć
+    przychód portfela, który podwoił się od fuzji. Do końca 2023 skład nadal się nie zmienia."""
     new_hires = [e for e in EMPLOYEES if int(e.number[1:]) >= 17]
-    assert len(new_hires) == 1
-    assert new_hires[0].number == "E17"
+    assert [e.number for e in new_hires] == ["E17", "E18", "E19", "E20", "E21", "E22"]
     assert new_hires[0].department_number == 2  # Leveranse, billable
+    later = new_hires[1:]
+    assert all(e.phase == "scaling2" and e.start_date.year >= 2024 for e in later)
+    assert [e.start_date.year for e in later] == [2024, 2025, 2026, 2026, 2026]
+    assert all(e.department_number in (2, 3) for e in later)  # billable departments

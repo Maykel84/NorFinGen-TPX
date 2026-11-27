@@ -109,7 +109,9 @@ def test_price_reflects_customer_multiplier():
 
     s01 = service_by_code("S01")
     expected_base_price = apply_annual_inflation(s01.base_price_enterprise, 2024)
-    expected_price = round(expected_base_price * CUSTOMER_PRICE_MULTIPLIER["K01"], 2)
+    from norfingen.generators.revenue_variability import usage_factor
+    # round 4, step 3: the price of a subscription line also carries the month's usage / seasonality factor of its service (S01)
+    expected_price = round(expected_base_price * CUSTOMER_PRICE_MULTIPLIER["K01"] * usage_factor("S01", 2024, 1), 2)
     assert line.unitPriceExcludingVatCurrency == expected_price
 
 

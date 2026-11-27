@@ -1569,3 +1569,31 @@ Kapital wlasny w 2019 jest UJEMNY (-2,2 mln na 2019-12): strata startowa 2,7 mln
 Nierozstrzygniete: dywidenda (opcjonalna w specyfikacji) NIE zaimplementowana - zalezy od rekalibracji zyskow (D1/krok 3).
 Nastepny krok: rekalibracja top-down (D1) razem z krokiem 3 (zmiennosc), potem jedna regeneracja produkcji dla kroku 2 + 3.
 
+---
+
+## 2026-11-25 - runda 4, KROK 3 + D1: rekalibracja marzy i naturalna zmiennosc (KOD GOTOWY LOKALNIE, PRODUKCJA NIETKNIETA)
+
+Stan: 625 testow zielonych, lokalna regeneracja do 2026-11-24, `tools/verify.py` 37/37, `tests/verify_regeneration.py` 38/38. NIE wdrozone na produkcje
+(wymaga jednej regeneracji produkcji lacznie z krokiem 2; 2 + 3 razem, jak ustalono).
+
+Co sie stalo i dlaczego (diagnoza): "rowny spadek" marzy 16 % -> 0 % NIE wynikal z utraty K03, tylko z tego, ze COGS to stala stawka na klienta (S01/S02) + 3 %
+inflacji, a klientow przybylo z 16 (2022) do 46 (2026): COGS 31 % -> 56 % przychodu, przy zespole stojacym na 17 od 2022 (placa 50 % -> 36 %). Dzialania:
+- **COGS: rabat wolumenowy** `roster.cogs_volume_discount`: 1.00 do 2022, 0.93 (2023), 0.85 (2024), 0.75 (2025), 0.72 (2026+); mnoznik na stawki S01 i S02.
+- **Zmiennosc przychodu** `generators/revenue_variability.py`: czynnik miesieczny S01 (sezon + szum 4 %), S02 (zuzycie, lipiec -15 %, szum 10 %), S03 (projekty, lipiec -20 %,
+  szum 12 %), znormalizowany do sredniej 1 w roku (rocznie +0,003 % = +5 521 NOK na 209 mln); ten sam czynnik S02 skaluje COGS Azure (zuzycie fakturowane klientowi i Microsoftowi).
+  Zmierzona zmiennosc (odchylenie od sredniej kroczacej 3-miesiecznej): ok. 3-5 %, nie 6-12 % z pierwotnej specyfikacji: subskrypcje (64 % przychodu) sa z natury stabilne.
+- **Koszty z kolcami** `generators/opex_extras.py`: budzet roczny netto (`EXTRA_OPEX_NET_BY_YEAR`: 2020 780 tys., 2021 560, 2022 50, 2023 480, 2024 1000, 2025 1170, 2026 1500)
+  rozbity na: licencje roczne (styczen, 6410), audyt (kwiecien/maj, 6700), marketing (4 miesiace bez lipca, 7320), naprawy (3 miesiace, 6600), rekrutacja (20 % pensji nowego
+  pracownika, miesiac przed startem, 6700). Zakupy gotowkowe z VAT 25 %. Nowe konta 6600, 7320 (numeracja niepotwierdzona zrodlem).
+- **Zespol**: E18-E22 (2024-03-01, 2025-06-02, 2026-03-02, 2026-06-01, 2026-09-01), faza `scaling2`. **Podwyzki indywidualne** 1-5 % (srednia 3 %) zamiast stalych 3 % (`payroll.individual_raise_rate`).
+- **`tools/calibrate.py`**: roczny P&L liczony w pamieci (te same funkcje co potok), zgodny z baza co do dziesiatej; `--target` pokazuje roznice do krzywej docelowej.
+- Testy przepiete SWIADOMIE: golden (orders, sales_vouchers, salary, opex, cogs, otp, hours), REG_A (209 036 183), REG_C (85 780 527), REG_B (213 048 512,23) w SQL i `verify_regeneration.py`,
+  marze 2019-22 w test_faza7c, liczba pracownikow (22), podwyzki, kontrola VAT T6/T14 (zakupy gotowkowe), father-quota (kto dostaje blok zalezy od skladu zespolu).
+  NIE ruszylo sie: `supplier_invoices`, `depreciation_vouchers`, a roczny przychod (+0,003 %).
+
+Wynik lokalny (pelne miesiace do 2026-10): EBIT % 2019..2026 = -35,2 / 10,9 / 9,7 / 5,7 / 1,1 / 0,7 / 4,9 / 6,7 (cel -35 / 11 / 9,5 / 6 / 1,3 / 1,0 / 4,5 / 6,5), srednia wazona 3,70 %.
+COGS % = 35,8 / 30,9 / 30,6 / 31,9 / 34,9 / 39,4 / 39,3 / 40,8; place % = 73,6 / 41,6 / 44,0 / 50,6 / 54,9 / 50,3 / 46,7 / 43,6; opex % = 25,6 / 16,5 / 15,3 / 11,1 / 8,5 / 9,0 / 8,5 / 8,3.
+Podatek: 2021 178 tys., 2022 267, 2023 53, 2024 44, 2025 424 (strata 2019 pokrywa 2020 i czesc 2021). Minimum salda banku 832 794. Pracownicy z godzinami: 5/7/9/16/16/17/18/21.
+Nierozstrzygniete / pominiete: odejscia pracownikow, okres wypowiedzenia, nadgodziny (z pierwotnej specyfikacji kroku 3); dywidenda z kroku 2.
+Nastepne: krok 4 (brud na poziomie dokumentow: realne zdarzenia biznesowe w `clean`, defekty w `dirty`), potem 5 (waluty), 6 (wymiary). PRZED krokiem 4: jedna regeneracja produkcji dla krokow 2+3.
+

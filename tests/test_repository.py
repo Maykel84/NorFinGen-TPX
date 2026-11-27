@@ -288,20 +288,20 @@ def test_prune_orphaned_employees_deletes_stale_ids():
     referencyjne), bo ON CONFLICT DO NOTHING w seed_reference_data() tylko
     dodaje nowych pracowników, nigdy nie usuwa tych, którzy wypadli z
     roster.EMPLOYEES. Mockowany kursor (bez żywej bazy, zob. nagłówek pliku)
-    — symuluje bazę z 3 dodatkowymi ID (18, 19, 20) spoza aktualnego 17-osobowego
+    — symuluje bazę z 3 dodatkowymi ID (23, 24, 25) spoza aktualnego 22-osobowego
     rosteru i sprawdza, że _prune_orphaned_employees() wydaje poprawne DELETE."""
     from norfingen.db import repository
     from norfingen.seed.roster import EMPLOYEES, numeric_id
 
     current_ids = {numeric_id(e.number) for e in EMPLOYEES}
-    fake_db_ids = sorted(current_ids | {18, 19, 20})
+    fake_db_ids = sorted(current_ids | {23, 24, 25})  # runda 4: E18-E22 są już w rosterze
 
     cur = FakeCursor()
     cur.fetchall_queue = [[(i,) for i in fake_db_ids]]
 
     orphaned = repository._prune_orphaned_employees(cur)
 
-    assert orphaned == [18, 19, 20]
+    assert orphaned == [23, 24, 25]
     delete_statements = [sql for sql, _ in cur.executed if sql.strip().upper().startswith("DELETE")]
     assert any("employments" in sql for sql in delete_statements)
     assert any("FROM employees" in sql for sql in delete_statements)

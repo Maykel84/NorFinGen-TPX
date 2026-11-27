@@ -53,6 +53,7 @@ import random
 from datetime import date
 from typing import Optional
 
+from norfingen.generators.revenue_variability import usage_factor
 from norfingen.generators.client_events import (
     LARGE_PROJECT_HOURS_MAX,
     LARGE_PROJECT_HOURS_MIN,
@@ -227,7 +228,8 @@ def build_order_lines(customer: CustomerSeed, order_date: date) -> list[OrderLin
         service = service_by_code_for_customer(customer, code)
         base_price = service_base_price(service, customer.segment)
         product = product_for_service(code)
-        price = round(apply_annual_inflation(base_price, order_date.year) * multiplier, 2)
+        price = round(apply_annual_inflation(base_price, order_date.year) * multiplier
+                      * usage_factor(code, order_date.year, order_date.month), 2)  # round 4, step 3: seasonality / usage
         lines.append(OrderLine(
             product=TripletexRef(id=numeric_id(product.number)),
             count=1.0,

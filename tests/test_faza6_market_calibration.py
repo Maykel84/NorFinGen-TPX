@@ -67,7 +67,7 @@ def test_headcount_matches_realistic_target():
     rynkowych (Garnes Data AS: 17 pracowników) ląduje w rozsądnym przedziale,
     nie w poprzednim 38-osobowym (Faza 4)."""
     active = [e for e in EMPLOYEES]
-    assert 14 <= len(active) <= 20
+    assert 14 <= len(active) <= 24  # runda 4, krok 3: 17 do końca 2023, 22 na koniec 2026 (decyzja D1)
 
 
 def test_margin_within_safety_threshold_2025_2026():

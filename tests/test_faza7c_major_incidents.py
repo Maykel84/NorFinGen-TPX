@@ -104,7 +104,9 @@ def test_no_other_years_affected():
 
     run_backfill(start_date=DEFAULT_START_DATE, end_date=date(2022, 12, 31), persist_fn=collect)
 
-    expected_margins = {2019: -0.3340, 2020: 0.1778, 2021: 0.1647, 2022: 0.1021}
+    # Runda 4, krok 3 (rekalibracja D1): koszty z kolcami (opex_extras), zmienność użycia S01-S03 i indywidualne podwyżki zmieniły marże
+    # lat 2019-2022 (przedtem -0.3340 / 0.1778 / 0.1647 / 0.1021). Roczny PRZYCHÓD się nie zmienił (zmienność jest zerowa w skali roku).
+    expected_margins = {2019: -0.3384, 2020: 0.1316, 2021: 0.1338, 2022: 0.0953}
     for year, expected in expected_margins.items():
         r = revenue[year]
         total_cost = payroll.get(year, 0.0) + opex.get(year, 0.0) + cogs.get(year, 0.0)

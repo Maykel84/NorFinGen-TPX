@@ -47,6 +47,8 @@ from norfingen.models.base import TripletexRef
 from norfingen.models.supplier_invoice import PURCHASE_VAT_TYPE_REF
 from norfingen.models.cogs_payable import CogsPayable
 from norfingen.seed.payroll import active_employees, first_working_day_of_month, last_working_day
+from norfingen.generators.opex_extras import extra_costs
+from norfingen.generators.revenue_variability import usage_factor
 from norfingen.seed.workdays import is_working_day, next_working_day, previous_working_day
 from norfingen.seed.roster import (
     CONFERENCE_HOTEL_RATES,
@@ -58,6 +60,7 @@ from norfingen.seed.roster import (
     calc_client_visit_transport,
     calc_representation_cost,
     calc_s01_cogs_monthly,
+    cogs_volume_discount,
     COGS_SUPPLIER_SHARES,
     numeric_id,
 )
@@ -360,7 +363,9 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     ]
     azure_cogs_base = calc_azure_cogs_monthly(s02_customers)
     if azure_cogs_base > 0:
-        azure_cogs_cost = apply_annual_inflation(azure_cogs_base, year)
+        # round 4, step 3: volume discount (D1) and the usage factor of S02 - Azure consumption is billed to the customer AND to Microsoft
+        azure_cogs_cost = round(apply_annual_inflation(azure_cogs_base, year) * cogs_volume_discount(year)
+                                * usage_factor("S02", year, month), 2)
         for supplier_number, description, part in split_cogs(ACCOUNT_AZURE_COGS, year, month, azure_cogs_cost):
             vouchers.append(_cogs_accrual_voucher(
                 month_end, ACCOUNT_AZURE_COGS, f"{description or 'Videresalgskostnad Microsoft/Azure'} {month_label}", part,
@@ -371,7 +376,7 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     # roster.calc_s01_cogs_monthly for the market-based rationale).
     s01_cogs_base = calc_s01_cogs_monthly(customers)
     if s01_cogs_base > 0:
-        s01_cogs_cost = apply_annual_inflation(s01_cogs_base, year)
+        s01_cogs_cost = round(apply_annual_inflation(s01_cogs_base, year) * cogs_volume_discount(year), 2)
         for supplier_number, description, part in split_cogs(ACCOUNT_S01_COGS, year, month, s01_cogs_cost):
             vouchers.append(_cogs_accrual_voucher(
                 month_end, ACCOUNT_S01_COGS, f"{description or 'Driftskostnad Managed IT Support'} {month_label}", part,
@@ -383,6 +388,12 @@ def generate_monthly_opex(year: int, month: int) -> list[Voucher]:
     if trip is not None:
         vouchers.append(_simple_cost_voucher(
             _random_working_day(year, month, 8, 25, "conference"), ACCOUNT_TRANSPORT, trip["description"], trip["amount"]))
+
+    # Round 4, step 3: the costs with spikes (annual licences in January, audit in spring, marketing, repairs, recruitment fees).
+    for extra in extra_costs(year, month):
+        description = f"{extra.description} {month_label}"
+        vouchers.append(_cash_purchase_voucher(
+            _random_working_day(year, month, 3, 26, f"extra-{extra.kind}-{extra.net}"), extra.account, description, extra.net))
 
     for customer in CUSTOMERS:
         if customer.onboarding_date.year == year and should_generate_service_equipment_purchase(customer, month):

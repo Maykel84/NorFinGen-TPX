@@ -88,7 +88,8 @@ def test_feriepenger_accounts_for_july_raise_in_prior_year():
     e01 = employee_by_number("E01")  # start 2019-01-01 -> pełne lata poprzednie od 2020
     basis_2020 = brutto_earned_in_year(e01, 2020)
     monthly_h1 = e01.annual_salary / 12  # brak podwyżki w 2019 (rok zatrudnienia)
-    monthly_h2 = round(monthly_h1 * 1.03, 2)  # pierwsza podwyżka lipiec 2020
+    from norfingen.seed.payroll import individual_raise_rate
+    monthly_h2 = round(monthly_h1 * (1 + individual_raise_rate("E01", 2020)), 2)  # pierwsza podwyżka lipiec 2020 (runda 4: indywidualna)
     expected = round(monthly_h1 * 6 + monthly_h2 * 6, 2)
     assert abs(basis_2020 - expected) < 0.05
     assert basis_2020 > monthly_h1 * 12  # podstawa wyższa niż "stara stawka x 12"

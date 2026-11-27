@@ -51,17 +51,21 @@ HAVING SUM(CASE WHEN account_number BETWEEN 3000 AND 3999 THEN amount END) IS NU
 --  Żadne księgowanie wierne fakturom nie zmieści się w 1 NOK na 213 mln przychodu; oryginał z progiem 1 NOK
 --  kończyłby się FAIL na poprawnych danych.)
 
--- T6: VAT naliczony (Wn 2710) = VAT z faktur zakupu + VAT z zobowiązań COGS (4291/4292) + VAT z zakupów gotówkowych 4290
---     (audyt 2026-11-16, faza 2: COGS i 4290 mają teraz własny VAT naliczony, wcześniej T6 widział tylko faktury zakupu).
+-- T6: VAT naliczony (Wn 2710) = VAT z faktur zakupu + VAT z zobowiązań COGS (4291/4292) + VAT z zakupów gotówkowych
+--     (audyt 2026-11-16, faza 2: COGS i 4290 mają teraz własny VAT naliczony, wcześniej T6 widział tylko faktury zakupu;
+--     runda 4, krok 3: zakupy gotówkowe to też koszty z kolcami: licencje, audyt, marketing, naprawy, rekrutacja - każda linia
+--     vouchera OPERATING_COST poza 4291/4292, która niesie vat_amount).
 SELECT 'T6' AS test,
        (SELECT ROUND(SUM(amount), 2) FROM gl WHERE account_number = 2710 AND amount > 0) AS vat_in_gl,
        (SELECT ROUND(COALESCE(SUM(vat_amount_currency), 0), 2) FROM purch)
      + (SELECT ROUND(COALESCE(SUM(vat_amount_currency), 0), 2) FROM cogs)
-     + (SELECT ROUND(COALESCE(SUM(vat_amount), 0), 2) FROM gl WHERE account_number = 4290) AS vat_in_documents
+     + (SELECT ROUND(COALESCE(SUM(vat_amount), 0), 2) FROM gl
+        WHERE voucher_type = 'OPERATING_COST' AND account_number NOT IN (4291, 4292) AND vat_amount IS NOT NULL) AS vat_in_documents
 WHERE ABS(COALESCE((SELECT SUM(amount) FROM gl WHERE account_number = 2710 AND amount > 0), 0)
         - COALESCE((SELECT SUM(vat_amount_currency) FROM purch), 0)
         - COALESCE((SELECT SUM(vat_amount_currency) FROM cogs), 0)
-        - COALESCE((SELECT SUM(vat_amount) FROM gl WHERE account_number = 4290), 0)) > 1;
+        - COALESCE((SELECT SUM(vat_amount) FROM gl
+                    WHERE voucher_type = 'OPERATING_COST' AND account_number NOT IN (4291, 4292) AND vat_amount IS NOT NULL), 0)) > 1;
 -- (COALESCE added in phase 0.5a: without it an empty side makes the WHERE NULL and the test passes vacuously.)
 
 -- T7: żadnych postingów płacowych na kontach VAT
@@ -150,11 +154,12 @@ WHERE v.payment_date <= (SELECT MAX(date) FROM gl)
 GROUP BY v.term, v.status
 HAVING ABS(COALESCE(SUM(g.amount), 0)) > 0.005 OR v.status <> 'PAID';
 
--- T14 (audyt 2026-11-16, faza 2): VAT naliczony na COGS. Każda linia kont 4290/4291/4292 ma vat_amount równe 25% kwoty netto
+-- T14 (audyt 2026-11-16, faza 2): VAT naliczony na COGS i zakupach gotówkowych. Każda linia kont 4290/4291/4292 oraz każda linia zakupu
+--     gotówkowego (voucher OPERATING_COST z vat_amount, runda 4 krok 3) ma vat_amount równe 25% kwoty netto
 --     (4290 = zakup gotówkowy z banku, 4291/4292 = zobowiązania wobec dostawców). PASS = 0 wierszy.
 SELECT 'T14' AS test, account_number AS konto, COUNT(*) AS linie_bez_poprawnego_vat
 FROM gl
-WHERE account_number IN (4290, 4291, 4292)
+WHERE (account_number IN (4290, 4291, 4292) OR (voucher_type = 'OPERATING_COST' AND vat_amount IS NOT NULL AND account_number <> 2710))
   AND (vat_amount IS NULL OR ABS(vat_amount - ROUND(amount * 0.25, 2)) > 0.011)  -- Python round() vs PG ROUND(): do 1 grosza
 GROUP BY account_number;
 
@@ -367,19 +372,22 @@ HAVING ABS(SUM(g.amount)) > 0.01;
 -- które nie uwzględniało faktur weekendowych gubionych przez przebieg dzienny).
 -- PASS = 0 wierszy.
 --
--- REG_A: historia do 2026-09-30 jest NIEZMIENIONA. Przychód bez MVA = 209 030 662 NOK.
+-- REG_A: przychód bez MVA do 2026-09-30 = 209 036 183 NOK. (Runda 4, krok 3, 2026-11-25: przepięte z 209 030 662 - zmienność użycia
+--        S01-S03 przesuwa przychód między miesiącami, a w skali roku zmienia go o +5 521 NOK, 0,003 %. Cena z cennika się nie zmieniła.)
 SELECT 'REG_A' AS test, ROUND(SUM(amount_excluding_vat_currency), 0) AS przychod
 FROM sales
 WHERE invoice_date <= DATE '2026-09-30'
-HAVING ABS(SUM(amount_excluding_vat_currency) - 209030662) > 1;
+HAVING ABS(SUM(amount_excluding_vat_currency) - 209036183) > 1;
 
--- REG_C: brutto płac (typy 100 Fast lønn + 260 Feriepenger) do 2026-09-30 = 81 422 455 NOK.
+-- REG_C: brutto płac (typy 100 Fast lønn + 260 Feriepenger) do 2026-09-30 = 85 780 527 NOK. (Runda 4, krok 3: przepięte z 81 422 455,
+--        +5,3 %: pięciu nowych pracowników 2024-26 i indywidualne podwyżki 1-5 % o średniej 3 % zamiast stałych 3 %.)
 SELECT 'REG_C' AS test, ROUND(SUM(gross_amount), 0) AS brutto_plac
 FROM pay
 WHERE date <= DATE '2026-09-30'
-HAVING ABS(SUM(gross_amount) - 81422455) > 1;
+HAVING ABS(SUM(gross_amount) - 85780527) > 1;
 
--- REG_B: przychód do 2026-10-30 = 213 117 314,34 NOK. Składa się z:
+-- REG_B: przychód do 2026-10-30 = 213 048 512,23 NOK (runda 4, krok 3; przedtem 213 117 314,34, różnica -68 802 NOK = zmienność użycia
+--        S01-S03 w niepełnym roku 2026, bo czynniki są zerowe dopiero w skali całego roku). Pierwotny skład (przed rundą 4):
 --   211 624 546,65  przychód w produkcji przed poprawkami (ten sam co 211 624 547 po zaokrągleniu)
 --   +  1 359 615,08 13 faktur subskrypcyjnych z weekendowym invoice_day (3,4,10,11,17,18,24.10), gubionych przez przebieg dzienny
 --   +    133 152,61 4 zamówienia extra consulting z niedzieli 25.10 (K02, K07, K16, K32), których ścieżka dzienna nie tworzyła wcale
@@ -387,4 +395,4 @@ HAVING ABS(SUM(gross_amount) - 81422455) > 1;
 SELECT 'REG_B' AS test, ROUND(SUM(amount_excluding_vat_currency), 2) AS przychod
 FROM sales
 WHERE invoice_date <= DATE '2026-10-30'
-HAVING ABS(SUM(amount_excluding_vat_currency) - 213117314.34) > 1;
+HAVING ABS(SUM(amount_excluding_vat_currency) - 213048512.23) > 1;

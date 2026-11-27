@@ -23,8 +23,8 @@ import psycopg2
 # regenerated up to an earlier day than today (the default is the real current_date).
 _AS_OF = f"DATE '{os.environ['VERIFY_AS_OF']}'" if os.environ.get("VERIFY_AS_OF") else "current_date"
 
-FROZEN_REVENUE = 209_030_662       # net revenue up to 2026-09-30 (docs/SPEC_poprawki_ksiegowe.md, decision (c))
-FROZEN_PAYROLL_GROSS = 81_422_455  # wage types 100 + 260 up to 2026-09-30
+FROZEN_REVENUE = 209_036_183       # net revenue up to 2026-09-30 (docs/SPEC_poprawki_ksiegowe.md, decision (c); re-pinned in round 4 step 3 from 209 030 662: zero-sum usage variability, +0.003 %)
+FROZEN_PAYROLL_GROSS = 85_780_527  # wage types 100 + 260 up to 2026-09-30 (round 4 step 3: was 81 422 455; five hires 2024-26, individual raises)
 
 
 def f(x):
@@ -143,10 +143,12 @@ def main() -> int:
     vat_gl = f(local.one("select sum(amount) from postings where account_number=2710 and amount>0"))
     vat_inv = f(local.one("select sum(vat_amount_currency) from supplier_invoices"))
     vat_cogs = f(local.one("select coalesce(sum(vat_amount_currency),0) from cogs_payables"))
-    vat_cash = f(local.one("select coalesce(sum(vat_amount),0) from postings where account_number=4290"))
-    check("input VAT in the GL == VAT on purchase invoices + COGS payables + 4290 cash purchases (gl_checks T6)",
+    # cash purchases: 4290 and (round 4, step 3) the costs with spikes - every OPERATING_COST posting with VAT except the COGS accruals 4291/4292
+    vat_cash = f(local.one("""select coalesce(sum(p.vat_amount),0) from postings p join vouchers v on v.id=p.voucher_id
+                              where v.voucher_type='OPERATING_COST' and p.account_number not in (4291,4292) and p.vat_amount is not null"""))
+    check("input VAT in the GL == VAT on purchase invoices + COGS payables + cash purchases (4290 and the spiky costs) (gl_checks T6)",
           abs(vat_gl - vat_inv - vat_cogs - vat_cash) <= 1.0,
-          f"GL {vat_gl:,.2f} | invoices {vat_inv:,.2f} + COGS {vat_cogs:,.2f} + 4290 {vat_cash:,.2f} | diff {vat_gl - vat_inv - vat_cogs - vat_cash:+.2f}")
+          f"GL {vat_gl:,.2f} | invoices {vat_inv:,.2f} + COGS {vat_cogs:,.2f} + cash {vat_cash:,.2f} | diff {vat_gl - vat_inv - vat_cogs - vat_cash:+.2f}")
     # ---- phase 3: sales invoices in the ledger
     check("every invoice has exactly one sales voucher dated on its invoice date",
           local.one("""select count(*) from orders o where (select count(*) from vouchers v where v.voucher_type='OUTGOING_INVOICE'

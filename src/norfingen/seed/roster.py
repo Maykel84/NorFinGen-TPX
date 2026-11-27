@@ -26,7 +26,7 @@ class DepartmentSeed:
 
 @dataclass(frozen=True)
 class EmployeeSeed:
-    number: str  # "E01" - "E16"
+    number: str  # "E01" - "E22"
     first_name: str
     last_name: str
     department_number: int  # FK -> DepartmentSeed.number
@@ -144,6 +144,15 @@ EMPLOYEES: list[EmployeeSeed] = [
     # a smooth decline to the 5.5-9% target, never below the safety
     # threshold in mature years.
     EmployeeSeed("E17", "Vegard", "Lien", 2, date(2022, 10, 3), "scaling", "Senior IT Consultant", 950_000),
+    # --- Round 4, step 3 (2026-11-25, decision D1): the team grows again after 2023, top-down from the margin target, to carry the
+    # revenue of a portfolio that has doubled since the merger (headcount had been flat at 17 for four years while labour fell from
+    # 50 % to 36 % of revenue). One hire in 2024, one in 2025, three in 2026; each starts on the first working day of its month and
+    # costs a recruitment fee in the month before (generators/opex_extras.py).
+    EmployeeSeed("E18", "Henrik", "Aasen", 2, date(2024, 3, 1), "scaling2", "IT Consultant", 740_000),
+    EmployeeSeed("E19", "Sofie", "Brekke", 3, date(2025, 6, 2), "scaling2", "Developer", 790_000),
+    EmployeeSeed("E20", "Mathias", "Solheim", 2, date(2026, 3, 2), "scaling2", "IT Specialist", 700_000),
+    EmployeeSeed("E21", "Emilie", "Rønning", 2, date(2026, 6, 1), "scaling2", "Senior IT Consultant", 960_000),
+    EmployeeSeed("E22", "Jonas", "Vik", 3, date(2026, 9, 1), "scaling2", "Developer", 810_000),
 ]
 
 
@@ -937,6 +946,20 @@ def calc_azure_cogs_monthly(customers: list[CustomerSeed]) -> float:
 S01_COGS_PER_ENTERPRISE_CLIENT_MONTHLY = 53_000  # weight 4x
 S01_COGS_PER_MID_CLIENT_MONTHLY = 26_500  # weight 2x
 S01_COGS_PER_SMB_CLIENT_MONTHLY = 13_300  # weight 1x (base unit)
+
+
+# Round 4, step 3 (2026-11-25, decision D1): volume discount at the distributors. The pass-through COGS is a fixed rate per active
+# customer, so it grew from 31 % to 56 % of revenue as the portfolio grew from 16 to 46 customers. With scale a reseller gets better
+# terms from Microsoft, Ingram Micro, Atea and Proact: the multiplier on the COGS rates falls with the year. 1.00 up to 2022 (the
+# history that already had a sensible 31-32 %); applied to BOTH the S02 (Azure) and the S01 (tools, licences, hardware) pass-through.
+COGS_VOLUME_DISCOUNT_BY_YEAR: dict[int, float] = {2023: 0.93, 2024: 0.85, 2025: 0.75}
+COGS_VOLUME_DISCOUNT_FROM_2026 = 0.72
+
+
+def cogs_volume_discount(year: int) -> float:
+    if year < 2023:
+        return 1.0
+    return COGS_VOLUME_DISCOUNT_BY_YEAR.get(year, COGS_VOLUME_DISCOUNT_FROM_2026)
 
 
 def calc_s01_cogs_monthly(customers: list[CustomerSeed]) -> float:

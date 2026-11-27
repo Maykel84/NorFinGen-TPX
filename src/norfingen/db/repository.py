@@ -104,6 +104,10 @@ ACCOUNTS_SEED: list[tuple[int, str, str, Optional[int]]] = [
     (5900, "Annen personalkostnad", "OPERATING_EXPENSE", None),
     (6015, "Avskrivning på maskiner og anlegg", "OPERATING_EXPENSE", None),
     (6300, "Husleie og leie av lokaler", "OPERATING_EXPENSE", 1),
+    # Round 4, step 3: costs with spikes (generators/opex_extras.py): repairs and marketing. Numbers as commonly used in NS 4102
+    # charts, not confirmed against a source (like the round 4 step 2 accounts).
+    (6600, "Reparasjon og vedlikehold", "OPERATING_EXPENSE", 1),
+    (7320, "Reklamekostnad", "OPERATING_EXPENSE", 1),
     (6410, "Lisenser og programvare", "OPERATING_EXPENSE", 1),
     (6540, "Inventar og utstyr", "OPERATING_EXPENSE", 1),
     (6700, "Fremmed tjeneste", "OPERATING_EXPENSE", 1),

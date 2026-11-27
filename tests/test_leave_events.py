@@ -108,14 +108,19 @@ def test_active_leave_period_none_outside_any_period():
 
 
 def test_father_quota_assigned_to_a_different_employee_right_after_primary():
-    # E06's own primary PARENTAL_LEAVE ends 2025-09-04; E16 deterministically
-    # receives a ~3-month father's-quota block starting the very next day.
+    # E06's own primary PARENTAL_LEAVE ends 2025-09-04; SOME other employee deterministically receives a ~3-month father's-quota
+    # block starting the very next day. WHO it is depends on the roster active at the time (round 4, step 3 added E18-E22, so the
+    # draw moved from E16 to another employee): the test pins the rule, not the lottery.
     e06_periods = [p for p in employee_leave_periods(6) if p.activity_type == ActivityType.PARENTAL_LEAVE]
     assert any(p.end == date(2025, 9, 4) for p in e06_periods)
 
-    e16_periods = [p for p in employee_leave_periods(16) if p.activity_type == ActivityType.PARENTAL_LEAVE]
-    father_block = next((p for p in e16_periods if p.start == date(2025, 9, 5)), None)
-    assert father_block is not None
+    receivers = [
+        (emp_id, p) for emp_id in range(1, 23) if emp_id != 6
+        for p in employee_leave_periods(emp_id)
+        if p.activity_type == ActivityType.PARENTAL_LEAVE and p.start == date(2025, 9, 5)
+    ]
+    assert receivers, "nobody received the father's quota that starts the day after E06's leave"
+    father_block = receivers[0][1]
     length_weeks = ((father_block.end - father_block.start).days + 1) / 7
     assert FATHER_QUOTA_MIN_WEEKS <= length_weeks <= FATHER_QUOTA_MAX_WEEKS
 

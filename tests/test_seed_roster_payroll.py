@@ -5,6 +5,7 @@ from norfingen.seed.payroll import (
     calc_aga,
     calc_brutto,
     calc_brutto_with_raises,
+    individual_raise_rate,
     calc_feriepenger,
     calc_netto,
     calc_skattetrekk,
@@ -34,7 +35,7 @@ from norfingen.seed.roster import (
 
 def test_roster_counts_match_docs():
     assert len(DEPARTMENTS) == 4
-    assert len(EMPLOYEES) == 17  # Faza 6: 16 + E17, zespół przestaje rosnąć z portfelem klientów
+    assert len(EMPLOYEES) == 22  # Faza 6: 17 (E17 ostatni); runda 4, krok 3: + E18-E22 (2024-2026)
     assert len(CUSTOMERS) == 50  # Faza 4: 12 + K13-K50
     assert len(SUPPLIERS) == 8
     assert len(PRODUCTS) == 7  # Faza 2: +P07 Cyberbezpieczeństwo (S03)
@@ -190,14 +191,21 @@ def test_calc_brutto_with_raises_no_raise_in_founding_year():
 def test_calc_brutto_with_raises_first_raise_next_july():
     e01 = employee_by_number("E01")  # start 2019-01-01 -> pierwsza podwyżka lipiec 2020
     assert calc_brutto_with_raises(e01, 2020, 6) == round(calc_brutto(e01), 2)
-    assert calc_brutto_with_raises(e01, 2020, 7) == round(calc_brutto(e01) * 1.03, 2)
+    assert calc_brutto_with_raises(e01, 2020, 7, raise_rate=0.03) == round(calc_brutto(e01) * 1.03, 2)  # the flat-rate option
+    assert calc_brutto_with_raises(e01, 2020, 7) == round(calc_brutto(e01) * (1 + individual_raise_rate("E01", 2020)), 2)
 
 
 def test_calc_brutto_with_raises_compounds_annually():
     e01 = employee_by_number("E01")
     # 880 000 NOK/rok w 2019 -> ~1 081 000 NOK/rok (brutto x12) w 2026 po H2 (7 podwyżek).
-    monthly_2026_h2 = calc_brutto_with_raises(e01, 2026, 7)
+    monthly_2026_h2 = calc_brutto_with_raises(e01, 2026, 7, raise_rate=0.03)  # flat 3 %: 7 compounding raises
     assert abs(monthly_2026_h2 * 12 - 1_081_000) < 5_000
+    # individual raises: the same 7 raises, each its own rate, compounding to the product (mean 3 %, so near the flat result)
+    individual = calc_brutto_with_raises(e01, 2026, 7)
+    product = 1.0
+    for year in range(2020, 2027):
+        product *= 1 + individual_raise_rate("E01", year)
+    assert individual == round(e01.annual_salary / 12 * product, 2)
 
 
 def test_projects_seed_data():
@@ -259,3 +267,12 @@ def test_supplier_names_match_brreg_audit():
     # Zadanie 1c — audyt dotyczy WYŁĄCZNIE nazw, nie kwot/kont.
     assert by_number["L08"].amount_min == 38_000 and by_number["L08"].amount_max == 38_000
     assert by_number["L08"].gl_account == 7500
+
+
+def test_individual_raises_are_between_1_and_5_percent_deterministic_and_average_3_percent():
+    rates = [individual_raise_rate(e.number, year) for e in EMPLOYEES for year in range(2020, 2027)]
+    assert all(0.01 <= r <= 0.05 for r in rates)
+    assert abs(sum(rates) / len(rates) - 0.03) < 0.004                      # the flat 3 % it replaces
+    assert len({round(r, 3) for r in rates}) > 20                            # not everyone gets the same raise
+    assert individual_raise_rate("E07", 2023) == individual_raise_rate("E07", 2023)
+    assert individual_raise_rate("E07", 2023) != individual_raise_rate("E08", 2023)

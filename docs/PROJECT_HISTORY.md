@@ -111,6 +111,16 @@ on 15 February and 15 April; and a new sheet `Bilans_miesiecznie` gives the bala
 cent. The P&L gained depreciation, EBITDA, financial result, tax and net result. Pension and depreciation take the EBIT margin of
 2024-25 to -0.5 % and -1.0 %, as anticipated in D1: the margin recalibration is the next step. Ledger checks: 37.
 
+Step 3 is done, together with the margin recalibration of D1. The monthly revenue now breathes (usage-based Azure, project-driven
+security work, a quiet July and December; zero-sum over a year, +0.003 % on the yearly total), the operating costs have spikes (annual
+licences in January, the auditor in spring, marketing, repairs, a recruitment fee for every hire), raises are individual instead of a flat
+3 %, and the team grows again after 2023 (five hires). The pass-through COGS got a volume discount that grows with the portfolio, which was
+the real reason for the old "even slide": COGS had risen from 31 % to 56 % of revenue because it is a fixed rate per customer. The EBIT margin by
+year is now -35.2 / 10.9 / 9.7 / 5.7 / 1.1 / 0.7 / 4.9 / 6.7 % (2019-2026) against the agreed target of -35 / 11 / 9.5 / 6 / 1.3 / 1.0 / 4.5 / 6.5 %,
+3.7 % over the whole period (industry benchmark 4.2 %), with the dip of 2023-24 after the loss of the large client and the recovery
+afterwards. The tool `tools/calibrate.py` computes that curve in memory in a second, which is how the levers were tuned. Departures, notice
+periods and overtime, and the optional dividend, were left out. Ledger checks: 37.
+
 Step 1 is done: `tools/verify.py`, a read-only script (it runs against production as safely as against a local database) that
 prints PASS/FAIL for every ledger invariant (all of `tests/gl_checks.sql`) and for the data-quality fields of an ERP quality
 report (vouchers without lines, unbalanced vouchers by count and by sum, invoices without lines, P&L = ledger in every month) and
